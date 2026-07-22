@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal
+from time import monotonic
 from types import MappingProxyType
 from typing import Any, TypeIs
 
@@ -82,10 +83,22 @@ OPENAI_PRICING_CATALOG: Mapping[str, OpenAITextPricing] = MappingProxyType(
 class OpenAIProvider:
     """Issue exact-counted, synchronous structured Responses API requests."""
 
-    def __init__(self, client: OpenAI | Any | None = None) -> None:
-        self.client = client if client is not None else OpenAI()
+    def __init__(
+        self,
+        client: OpenAI | Any | None = None,
+        *,
+        clock: Callable[[], float] = monotonic,
+    ) -> None:
+        if client is None:
+            self.client = OpenAI(max_retries=0)
+        elif isinstance(client, OpenAI):
+            self.client = client.with_options(max_retries=0)
+        else:
+            self.client = client
+        self.clock = clock
 
     def generate(self, request: ModelRequest, schema: type[T]) -> ModelResponse[T]:
+        deadline = self.clock() + request.timeout_seconds
         pricing = OPENAI_PRICING_CATALOG.get(request.model)
         if pricing is None:
             raise ModelCostAuthorizationError(
@@ -104,9 +117,11 @@ class OpenAIProvider:
             model_input=model_input,
             reasoning=reasoning,
             text_format=text_format,
+            deadline=deadline,
         )
 
         try:
+            timeout = self._remaining_timeout(deadline)
             response = self.client.responses.parse(
                 model=request.model,
                 input=model_input,
@@ -114,7 +129,7 @@ class OpenAIProvider:
                 reasoning=reasoning,
                 max_output_tokens=request.max_output_tokens,
                 store=False,
-                timeout=request.timeout_seconds,
+                timeout=timeout,
             )
         except (APITimeoutError, APIConnectionError, RateLimitError) as exc:
             raise _retryable_provider_error(exc) from exc
@@ -206,16 +221,18 @@ class OpenAIProvider:
         model_input: ResponseInputParam,
         reasoning: Reasoning,
         text_format: ResponseFormatTextConfigParam,
+        deadline: float,
     ) -> BillingAuthorization:
         try:
             count_text: InputTokenCountText = {"format": text_format}
             # Official exact-count endpoint: POST /responses/input_tokens.
+            timeout = self._remaining_timeout(deadline)
             count_response = self.client.responses.input_tokens.count(
                 model=request.model,
                 input=model_input,
                 reasoning=reasoning,
                 text=count_text,
-                timeout=request.timeout_seconds,
+                timeout=timeout,
             )
         except (APITimeoutError, APIConnectionError, RateLimitError) as exc:
             raise _retryable_provider_error(exc) from exc
@@ -244,6 +261,12 @@ class OpenAIProvider:
                 f"({reserved_cost} > {request.cost_authorization.max_cost_usd})"
             )
         return authorization
+
+    def _remaining_timeout(self, deadline: float) -> float:
+        remaining = deadline - self.clock()
+        if remaining <= 0:
+            raise RetryableModelProviderError("model request deadline exhausted")
+        return remaining
 
 
 def _reserved_cost_usd(

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
         if self.lease_seconds <= self.max_experiment_seconds:
             raise ValueError("lease_seconds must exceed max_experiment_seconds")
         validate_database_usd(
+            self.daily_api_budget_usd,
+            field_name="daily_api_budget_usd",
+            positive=True,
+        )
+        validate_database_usd(
             self.max_api_cost_usd_per_experiment,
             field_name="max_api_cost_usd_per_experiment",
             positive=True,

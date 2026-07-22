@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 import httpx
 import openai
 import pytest
-from openai import APIConnectionError, APITimeoutError, RateLimitError
+from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 from openai.lib._parsing._responses import type_to_text_format_param
 from pydantic import BaseModel
 
@@ -35,6 +36,14 @@ from mathloop.providers.openai_sdk_2_47 import (
 
 class AlternateOutput(BaseModel):
     answer: str
+
+
+class ScriptedClock:
+    def __init__(self, *values: float) -> None:
+        self.values = iter(values)
+
+    def __call__(self) -> float:
+        return next(self.values)
 
 
 class FakeInputTokens:
@@ -86,6 +95,7 @@ def fake_provider(
     counted_input_tokens: object = 100,
     parse_error: Exception | None = None,
     count_error: Exception | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> tuple[OpenAIProvider, FakeResponses]:
     responses = FakeResponses(
         response,
@@ -94,7 +104,8 @@ def fake_provider(
         count_error=count_error,
     )
     client = SimpleNamespace(responses=responses)
-    return OpenAIProvider(client=client), responses
+    effective_clock = clock if clock is not None else (lambda: 0.0)
+    return OpenAIProvider(client=client, clock=effective_clock), responses
 
 
 def valid_response(
@@ -211,6 +222,69 @@ def test_openai_count_and_parse_share_exact_request_shape_and_bounded_timeout() 
             "timeout": 17,
         }
     ]
+
+
+def test_single_deadline_reduces_parse_timeout_after_count_and_local_work() -> None:
+    parsed = AlternateOutput(answer="induction")
+    provider, responses = fake_provider(
+        valid_response(parsed),
+        clock=ScriptedClock(100.0, 101.0, 106.0),
+    )
+
+    provider.generate(request(timeout_seconds=10), AlternateOutput)
+
+    assert responses.input_tokens.calls[0]["timeout"] == 9.0
+    assert responses.calls[0]["timeout"] == 4.0
+
+
+def test_deadline_exhausted_after_count_prevents_parse() -> None:
+    provider, responses = fake_provider(
+        valid_response(AlternateOutput(answer="unused")),
+        clock=ScriptedClock(10.0, 11.0, 20.0),
+    )
+
+    with pytest.raises(RetryableModelProviderError, match="deadline") as raised:
+        provider.generate(request(timeout_seconds=10), AlternateOutput)
+
+    assert isinstance(raised.value, TimeoutError)
+    assert responses.events == ["count"]
+    assert responses.calls == []
+
+
+def test_deadline_exactly_exhausted_before_count_prevents_all_sdk_calls() -> None:
+    provider, responses = fake_provider(
+        valid_response(AlternateOutput(answer="unused")),
+        clock=ScriptedClock(10.0, 20.0),
+    )
+
+    with pytest.raises(RetryableModelProviderError, match="deadline"):
+        provider.generate(request(timeout_seconds=10), AlternateOutput)
+
+    assert responses.events == []
+
+
+def test_default_and_injected_real_openai_clients_disable_sdk_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key")
+    default_provider = OpenAIProvider(clock=lambda: 0.0)
+    original = OpenAI(api_key="offline-test-key", max_retries=2)
+    injected_provider = OpenAIProvider(client=original, clock=lambda: 0.0)
+    try:
+        assert default_provider.client.max_retries == 0
+        assert original.max_retries == 2
+        assert injected_provider.client is not original
+        assert injected_provider.client.max_retries == 0
+    finally:
+        default_provider.client.close()
+        injected_provider.client.close()
+        original.close()
+
+
+def test_injected_fake_client_is_not_cloned() -> None:
+    provider, responses = fake_provider(valid_response(AlternateOutput(answer="induction")))
+
+    assert provider.client.responses is responses
 
 
 def test_private_sdk_text_format_adapter_is_versioned_and_parse_equivalent() -> None:
