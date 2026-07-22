@@ -1,13 +1,53 @@
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, NoReturn, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class FrozenDict(dict[str, Any]):
+    """A dict that keeps the familiar mapping API without allowing mutation."""
+
+    @staticmethod
+    def _immutable(*args: object, **kwargs: object) -> NoReturn:
+        raise TypeError("frozen mappings cannot be modified")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return FrozenDict({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
 class FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    def model_post_init(self, __context: Any) -> None:
+        for field_name in type(self).model_fields:
+            object.__setattr__(self, field_name, _freeze_json(getattr(self, field_name)))
+
+    def model_copy(
+        self, *, update: Mapping[str, Any] | None = None, deep: bool = False
+    ) -> Self:
+        copied = super().model_copy(update=update, deep=deep)
+        for field_name in type(copied).model_fields:
+            object.__setattr__(copied, field_name, _freeze_json(getattr(copied, field_name)))
+        return copied
 
 
 class ProblemStatus(StrEnum):
