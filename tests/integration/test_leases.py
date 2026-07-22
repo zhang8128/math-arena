@@ -123,14 +123,10 @@ def test_expired_owner_cannot_heartbeat_or_complete(repository: Repository) -> N
         repository.heartbeat(experiment_id, "worker-a", now=expired_at, lease_seconds=30) is False
     )
 
-    expired_experiment_id = repository.enqueue_raw(
-        problem_id=uuid4(), method_id=uuid4(), lane="completeness", config={}, seed=2
-    )
-    assert repository.claim_next(
-        "worker-a", now=now - timedelta(seconds=2), lease_seconds=1
-    ) is not None
     with pytest.raises(ValueError, match="not leased by this worker"):
-        repository.complete(expired_experiment_id, "worker-a", result={}, cost_usd=0.0)
+        repository.complete(
+            experiment_id, "worker-a", result={}, cost_usd=0.0, now=expired_at
+        )
 
 
 @pytest.mark.parametrize("lease_seconds", [0, -1])
@@ -150,6 +146,8 @@ def test_lease_timestamp_must_be_timezone_aware(repository: Repository) -> None:
         repository.claim_next("worker-a", now=now, lease_seconds=30)
     with pytest.raises(ValueError, match="timezone-aware"):
         repository.heartbeat(uuid4(), "worker-a", now=now, lease_seconds=30)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        repository.complete(uuid4(), "worker-a", result={}, cost_usd=0.0, now=now)
 
 
 def test_complete_rejects_negative_cost(repository: Repository) -> None:

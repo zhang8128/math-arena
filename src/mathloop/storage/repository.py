@@ -380,11 +380,19 @@ class Repository:
             return True
 
     def complete(
-        self, experiment_id: UUID, worker: str, result: dict[str, object], cost_usd: float
+        self,
+        experiment_id: UUID,
+        worker: str,
+        result: dict[str, object],
+        cost_usd: float,
+        *,
+        now: datetime | None = None,
     ) -> None:
         cost = Decimal(str(cost_usd))
         if not cost.is_finite() or cost < 0:
             raise ValueError("experiment cost must be a finite non-negative amount")
+        completed_at = datetime.now(UTC) if now is None else now
+        self._validate_lease_timestamp(completed_at)
         with self.database.transaction() as connection:
             _, appended = self._append_event(
                 connection,
@@ -400,9 +408,9 @@ class Repository:
                 """
                 UPDATE experiments
                 SET status = 'succeeded', result = %(result)s, cost_usd = %(cost_usd)s,
-                    lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+                    lease_owner = NULL, lease_expires_at = NULL, updated_at = %(now)s
                 WHERE id = %(id)s AND status = 'leased' AND lease_owner = %(worker)s
-                  AND lease_expires_at > now()
+                  AND lease_expires_at > %(now)s
                 RETURNING id
                 """,
                 {
@@ -410,6 +418,7 @@ class Repository:
                     "worker": worker,
                     "result": Jsonb(result),
                     "cost_usd": cost,
+                    "now": completed_at,
                 },
             ).fetchone()
             if row is None:
@@ -638,5 +647,9 @@ class Repository:
     def _validate_lease(now: datetime, lease_seconds: int) -> None:
         if lease_seconds <= 0:
             raise ValueError("lease duration must be positive")
+        Repository._validate_lease_timestamp(now)
+
+    @staticmethod
+    def _validate_lease_timestamp(now: datetime) -> None:
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("lease timestamp must be timezone-aware")
