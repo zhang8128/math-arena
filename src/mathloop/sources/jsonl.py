@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,11 @@ class JsonlProblemSource(ProblemSource):
                 if not line.strip():
                     continue
                 try:
-                    record = json.loads(line, parse_constant=_reject_non_finite)
+                    record = json.loads(
+                        line,
+                        parse_constant=_reject_non_finite,
+                        parse_float=_parse_finite_float,
+                    )
                 except json.JSONDecodeError as error:
                     raise ValueError(
                         f"{self.path}:{line_number}: invalid JSON: {error.msg}"
@@ -52,6 +57,13 @@ class JsonlProblemSource(ProblemSource):
 
 def _reject_non_finite(value: str) -> NoReturn:
     raise ValueError(f"non-finite JSON number {value}")
+
+
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite JSON number {value}")
+    return parsed
 
 
 def ingest_source(source: ProblemSource, repository: Repository) -> list[UUID]:

@@ -61,6 +61,21 @@ def test_non_finite_json_numbers_are_rejected_with_source_context(
     assert "non-finite JSON number" in str(error.value)
 
 
+def test_exponent_overflow_is_rejected_with_source_context(tmp_path: Path) -> None:
+    source = tmp_path / "problems.jsonl"
+    source.write_text(
+        "\n"
+        + json.dumps(_record()).replace('"finite_witness": true', '"score": 1e9999')
+        + "\n"
+    )
+
+    with pytest.raises(ValueError) as error:
+        next(JsonlProblemSource(source).read())
+
+    assert f"{source}:2: invalid JSON" in str(error.value)
+    assert "non-finite JSON number 1e9999" in str(error.value)
+
+
 def test_malformed_json_reports_source_path_and_line_number(tmp_path: Path) -> None:
     source = tmp_path / "problems.jsonl"
     source.write_text("\n{not valid json}\n")
