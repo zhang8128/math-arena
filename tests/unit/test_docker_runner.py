@@ -1,4 +1,5 @@
 import json
+import secrets
 import subprocess
 
 import pytest
@@ -17,6 +18,7 @@ def test_run_json_uses_exact_restricted_argv_and_canonical_stdin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(secrets, "token_hex", lambda size: "a" * (size * 2))
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         calls.append((command, kwargs))
@@ -35,6 +37,8 @@ def test_run_json_uses_exact_restricted_argv_and_canonical_stdin(
                 "docker",
                 "run",
                 "--rm",
+                "--name",
+                "mathloop-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "-i",
                 "--network",
                 "none",
@@ -64,13 +68,69 @@ def test_run_json_uses_exact_restricted_argv_and_canonical_stdin(
 
 
 def test_run_json_raises_typed_failure_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    def time_out(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(secrets, "token_hex", lambda size: "b" * (size * 2))
 
-    monkeypatch.setattr("mathloop.tools.docker.subprocess.run", time_out)
+    def time_out_then_clean_up(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append((command, kwargs))
+        if command[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("mathloop.tools.docker.subprocess.run", time_out_then_clean_up)
 
     with pytest.raises(SandboxFailure, match="timed out"):
         _runner().run_json({"operation": "factor", "value": 1681})
+
+    assert calls[1] == (
+        ["docker", "rm", "-f", "mathloop-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+        {
+            "capture_output": True,
+            "check": False,
+            "shell": False,
+            "timeout": 5,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "cleanup_result",
+    [
+        subprocess.CompletedProcess([], 1, stdout=b"", stderr=b"already removed"),
+        subprocess.TimeoutExpired(["docker", "rm"], 5),
+        OSError("docker unavailable"),
+    ],
+)
+def test_timeout_cleanup_failure_does_not_mask_sandbox_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_result: subprocess.CompletedProcess[bytes] | BaseException,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(secrets, "token_hex", lambda size: "c" * (size * 2))
+
+    def time_out_then_fail_cleanup(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append(command)
+        if command[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        if isinstance(cleanup_result, BaseException):
+            raise cleanup_result
+        return cleanup_result
+
+    monkeypatch.setattr("mathloop.tools.docker.subprocess.run", time_out_then_fail_cleanup)
+
+    with pytest.raises(SandboxFailure, match="sandbox timed out after 7 seconds"):
+        _runner().run_json({"operation": "factor", "value": 1681})
+
+    assert calls[1] == [
+        "docker",
+        "rm",
+        "-f",
+        "mathloop-cccccccccccccccccccccccccccccccc",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -103,3 +163,30 @@ def test_runner_rejects_images_outside_the_fixed_allowlist() -> None:
             image="sagemath/sagemath:latest",
             limits=DockerLimits(seconds=7, memory_mb=384, cpus=0.5),
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("seconds", 0),
+        ("seconds", -1),
+        ("seconds", True),
+        ("seconds", 1.5),
+        ("memory_mb", 0),
+        ("memory_mb", 127),
+        ("memory_mb", True),
+        ("memory_mb", 256.0),
+        ("cpus", 0),
+        ("cpus", -0.5),
+        ("cpus", True),
+        ("cpus", float("nan")),
+        ("cpus", float("inf")),
+        ("cpus", float("-inf")),
+    ],
+)
+def test_docker_limits_reject_invalid_or_unsafe_values(field: str, value: object) -> None:
+    values: dict[str, object] = {"seconds": 7, "memory_mb": 384, "cpus": 0.5}
+    values[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        DockerLimits(**values)  # type: ignore[arg-type]

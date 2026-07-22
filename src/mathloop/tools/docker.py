@@ -1,6 +1,8 @@
 """Constrained JSON-over-stdin Docker execution."""
 
 import json
+import math
+import secrets
 import subprocess
 from dataclasses import dataclass
 
@@ -17,6 +19,27 @@ class DockerLimits:
     memory_mb: int
     cpus: float
 
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.seconds, bool)
+            or not isinstance(self.seconds, int)
+            or self.seconds <= 0
+        ):
+            raise ValueError("seconds must be a positive integer")
+        if (
+            isinstance(self.memory_mb, bool)
+            or not isinstance(self.memory_mb, int)
+            or self.memory_mb < 128
+        ):
+            raise ValueError("memory_mb must be an integer of at least 128")
+        if (
+            isinstance(self.cpus, bool)
+            or not isinstance(self.cpus, (int, float))
+            or not math.isfinite(self.cpus)
+            or self.cpus <= 0
+        ):
+            raise ValueError("cpus must be a positive finite number")
+
 
 @dataclass(frozen=True)
 class DockerRunner:
@@ -28,10 +51,13 @@ class DockerRunner:
             raise ValueError(f"sandbox image is not allowlisted: {self.image}")
 
     def run_json(self, payload: dict[str, object]) -> dict[str, object]:
+        container_name = f"mathloop-{secrets.token_hex(16)}"
         command = [
             "docker",
             "run",
             "--rm",
+            "--name",
+            container_name,
             "-i",
             "--network",
             "none",
@@ -59,6 +85,16 @@ class DockerRunner:
                 timeout=self.limits.seconds,
             )
         except subprocess.TimeoutExpired as exc:
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    capture_output=True,
+                    check=False,
+                    shell=False,
+                    timeout=5,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             raise SandboxFailure(
                 f"sandbox timed out after {self.limits.seconds} seconds"
             ) from exc
