@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -27,3 +28,5 @@ def test_settings_create_absolute_artifact_root(tmp_path: Path) -> None:
     )
     assert settings.artifact_root.is_absolute()
     assert settings.lease_seconds > settings.max_experiment_seconds
+    assert isinstance(settings.daily_api_budget_usd, Decimal)
+    assert isinstance(settings.max_api_cost_usd_per_experiment, Decimal)
