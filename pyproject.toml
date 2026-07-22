@@ -1,0 +1,45 @@
+[project]
+name = "mathloop"
+version = "0.1.0"
+description = "Persistent autonomous mathematics solver ecology"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "openai>=2,<3",
+  "psycopg[binary,pool]>=3.2,<4",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.9,<3",
+  "sympy>=1.14,<2",
+  "typer>=0.16,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.15,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1,<2",
+  "ruff>=0.12,<1",
+  "testcontainers[postgres]>=4.10,<5",
+]
+
+[project.scripts]
+mathloop = "mathloop.cli:app"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires Docker", "live_api: incurs an external API call"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["mathloop"]
