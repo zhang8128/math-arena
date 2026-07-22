@@ -24,6 +24,8 @@ class IntegerCounterexampleSearch:
             return self._invalid_config(f"unsupported order: {order}")
         if start > stop:
             return self._invalid_config("start must not exceed stop")
+        if declared_start is not None and start < declared_start:
+            return self._invalid_config("requested interval starts below the declared domain")
         if not self.predicates.contains(predicate_id):
             return self._invalid_config(f"unknown predicate: {predicate_id}")
 
@@ -71,8 +73,6 @@ class IntegerCounterexampleSearch:
             return self._invalid_config("start and stop must be integers")
         if not isinstance(order, str):
             return self._invalid_config("order must be a string")
-        if start < declared_start:
-            return self._invalid_config("requested interval starts below the declared domain")
         return self.search(predicate_id, start, stop, order, declared_start)
 
     @staticmethod

@@ -40,6 +40,8 @@ def test_sum_of_odds_produces_an_induction_certificate() -> None:
         {"kind": "unrelated", "predicate_id": "sum_odds", "start": 0},
         {"kind": "integer_predicate", "predicate_id": "sum_odds"},
         {"kind": "integer_predicate", "predicate_id": "sum_odds", "start": 1},
+        {"kind": "integer_predicate", "predicate_id": "sum_odds", "start": 0.0},
+        {"kind": "integer_predicate", "predicate_id": "sum_odds", "start": False},
     ],
 )
 def test_run_requires_the_complete_sum_odds_checker_contract(

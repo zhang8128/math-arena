@@ -110,3 +110,14 @@ def test_run_rejects_an_interval_below_the_declared_domain_without_evidence() ->
     assert result.claim is None
     assert result.witness is None
     assert result.artifact is None
+
+
+def test_search_rejects_an_interval_below_an_explicit_declared_domain() -> None:
+    method = IntegerCounterexampleSearch(build_calibration_registry())
+
+    result = method.search("sum_odds", start=-1, stop=0, declared_start=0)
+
+    assert result.status == "invalid_config"
+    assert result.claim is None
+    assert result.witness is None
+    assert result.artifact is None

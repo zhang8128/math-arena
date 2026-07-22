@@ -33,7 +33,7 @@ class SymbolicInductionMethod:
         if (
             checker.get("kind") != "integer_predicate"
             or checker.get("predicate_id") != "sum_odds"
-            or isinstance(declared_start, bool)
+            or type(declared_start) is not int
             or declared_start != 0
         ):
             return MethodResult(status="inapplicable", summary="unsupported identity")
