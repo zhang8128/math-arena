@@ -133,6 +133,7 @@ class OpenAIProvider:
             )
         except (APITimeoutError, APIConnectionError, RateLimitError) as exc:
             raise _retryable_provider_error(exc) from exc
+        self._remaining_timeout(deadline)
 
         status = getattr(response, "status", None)
         if status == "incomplete":
@@ -205,13 +206,15 @@ class OpenAIProvider:
             pricing_source=pricing.source,
             authorization=authorization,
         )
-        return ModelResponse(
+        model_response = ModelResponse(
             value=parsed,
             provider_response_id=response_id,
             usage=model_usage,
             billing_authorization=authorization,
             billing_receipt=receipt,
         )
+        self._remaining_timeout(deadline)
+        return model_response
 
     def _authorize_request_cost(
         self,

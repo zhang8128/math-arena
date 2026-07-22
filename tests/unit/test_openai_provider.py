@@ -228,13 +228,39 @@ def test_single_deadline_reduces_parse_timeout_after_count_and_local_work() -> N
     parsed = AlternateOutput(answer="induction")
     provider, responses = fake_provider(
         valid_response(parsed),
-        clock=ScriptedClock(100.0, 101.0, 106.0),
+        clock=ScriptedClock(100.0, 101.0, 106.0, 106.0, 106.0),
     )
 
     provider.generate(request(timeout_seconds=10), AlternateOutput)
 
     assert responses.input_tokens.calls[0]["timeout"] == 9.0
     assert responses.calls[0]["timeout"] == 4.0
+
+
+def test_deadline_exhausted_when_parse_returns_prevents_success() -> None:
+    provider, responses = fake_provider(
+        valid_response(AlternateOutput(answer="too late")),
+        clock=ScriptedClock(100.0, 101.0, 102.0, 110.0),
+    )
+
+    with pytest.raises(RetryableModelProviderError, match="deadline") as raised:
+        provider.generate(request(timeout_seconds=10), AlternateOutput)
+
+    assert isinstance(raised.value, TimeoutError)
+    assert responses.events == ["count", "parse"]
+
+
+def test_deadline_exhausted_during_validation_and_billing_prevents_success() -> None:
+    provider, responses = fake_provider(
+        valid_response(AlternateOutput(answer="locally too late")),
+        clock=ScriptedClock(100.0, 101.0, 102.0, 103.0, 110.0),
+    )
+
+    with pytest.raises(RetryableModelProviderError, match="deadline") as raised:
+        provider.generate(request(timeout_seconds=10), AlternateOutput)
+
+    assert isinstance(raised.value, TimeoutError)
+    assert responses.events == ["count", "parse"]
 
 
 def test_deadline_exhausted_after_count_prevents_parse() -> None:
