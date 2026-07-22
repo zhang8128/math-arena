@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,11 +23,17 @@ from mathloop.domain import (
 )
 from mathloop.sources.jsonl import JsonlProblemSource, ingest_source
 from mathloop.storage.repository import (
+    ClaimNotFoundError,
+    ClaimSnapshotConflictError,
     ClaimStateConflictError,
     EventConflictError,
+    InvalidIdentifierError,
+    ProblemNotFoundError,
     ProjectionConflictError,
     Repository,
 )
+from mathloop.verification import IntegerWitnessVerifier, VerificationService
+from mathloop.verifiers.calibration import build_verifier_registry
 
 
 def _problem(*, version: int = 1, source_id: str = "calibration/euler-prime") -> Problem:
@@ -39,11 +46,36 @@ def _problem(*, version: int = 1, source_id: str = "calibration/euler-prime") ->
         normalized_statement="forall n>=0, prime(n^2+n+41)",
         domain="number_theory",
         features={"finite_witness": True},
-        checker={"kind": "integer_predicate", "predicate_id": "euler_prime"},
+        checker={"kind": "integer_predicate", "predicate_id": "euler_prime", "start": 0},
         status=ProblemStatus.ELIGIBLE,
         cohort="development",
         version=version,
         created_at=datetime.now(UTC),
+    )
+
+
+def _claim(problem_id: UUID, **updates: object) -> CandidateClaim:
+    claim = CandidateClaim(
+        id=uuid4(),
+        problem_id=problem_id,
+        experiment_id=uuid4(),
+        claim_type=ClaimType.DISPROOF,
+        statement="n=40 is a counterexample",
+        witness={"n": 40, "value": 1681},
+        status=ClaimStatus.CANDIDATE,
+        evidence_level=EvidenceLevel.LEAD,
+        created_at=datetime.now(UTC),
+    )
+    return claim.model_copy(update=updates)
+
+
+def _verification(*, version: str = "canonical-1", accepted: bool = True) -> Verification:
+    return Verification(
+        verifier="integer-predicate",
+        verifier_version=version,
+        accepted=accepted,
+        independent=True,
+        details={"n": 40, "computed_value": 1681, "predicate_holds": False},
     )
 
 
@@ -397,4 +429,197 @@ def test_verification_cannot_overwrite_stale_non_candidate_projection(
         ).fetchone()
     assert stored_status == (persisted_status.value,)
     assert evaluations == (0,)
+    assert repository.count_events("claim.verified") == 0
+
+
+def test_repository_reads_canonical_problem_and_claim(repository: Repository) -> None:
+    problem = _problem()
+    claim = _claim(problem.id)
+    repository.add_problem(problem, idempotency_key=f"problem:{problem.id}")
+    repository.save_candidate(claim)
+
+    assert repository.get_problem(problem.id) == problem
+    assert repository.get_claim(claim.id) == claim
+
+
+def test_missing_canonical_rows_raise_typed_errors(repository: Repository) -> None:
+    missing_problem_id = uuid4()
+    missing_claim_id = uuid4()
+
+    with pytest.raises(ProblemNotFoundError, match=str(missing_problem_id)):
+        repository.get_problem(missing_problem_id)
+    with pytest.raises(ClaimNotFoundError, match=str(missing_claim_id)):
+        repository.get_claim(missing_claim_id)
+    with pytest.raises(ClaimNotFoundError, match=str(missing_claim_id)):
+        VerificationService(
+            repository, IntegerWitnessVerifier(build_verifier_registry())
+        ).evaluate(missing_claim_id)
+
+    assert repository.count_events("claim.verified") == 0
+
+
+def test_service_rejects_problem_object_input_and_loads_canonical_problem(
+    repository: Repository,
+) -> None:
+    problem = _problem()
+    forged_problem = problem.model_copy(
+        update={
+            "checker": {
+                "kind": "integer_predicate",
+                "predicate_id": "sum_odds",
+                "start": 0,
+            }
+        }
+    )
+    claim = _claim(problem.id)
+    repository.add_problem(problem, idempotency_key=f"problem:{problem.id}")
+    repository.save_candidate(claim)
+    service = VerificationService(
+        repository, IntegerWitnessVerifier(build_verifier_registry())
+    )
+
+    with pytest.raises(InvalidIdentifierError, match="claim_id"):
+        service.evaluate(cast(UUID, forged_problem))
+
+    assert repository.count_events("claim.verified") == 0
+    promoted = service.evaluate(claim.id)
+    assert promoted.status is ClaimStatus.MACHINE_VERIFIED
+    assert promoted.problem_id == problem.id
+    assert repository.count_events("claim.verified") == 1
+
+
+def test_service_requires_canonical_problem_row(repository: Repository) -> None:
+    claim = _claim(uuid4())
+    repository.save_candidate(claim)
+
+    with pytest.raises(ProblemNotFoundError, match=str(claim.problem_id)):
+        VerificationService(
+            repository, IntegerWitnessVerifier(build_verifier_registry())
+        ).evaluate(claim.id)
+
+    assert repository.get_claim(claim.id) == claim
+    assert repository.count_events("claim.verified") == 0
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"witness": {"n": 40, "value": 1}},
+        {"statement": "forged statement"},
+        {"problem_id": uuid4()},
+    ],
+)
+def test_record_verification_rejects_forged_same_id_claim_snapshot(
+    repository: Repository, updates: dict[str, object]
+) -> None:
+    claim = _claim(uuid4())
+    repository.save_candidate(claim)
+    forged = claim.model_copy(update=updates)
+
+    with pytest.raises(ClaimSnapshotConflictError, match=str(claim.id)):
+        repository.record_verification(forged, _verification())
+
+    assert repository.get_claim(claim.id) == claim
+    assert repository.count_events("claim.verified") == 0
+    with repository.database.transaction() as connection:
+        evaluations = connection.execute(
+            "SELECT count(*) FROM evaluations WHERE claim_id = %(id)s", {"id": claim.id}
+        ).fetchone()
+    assert evaluations == (0,)
+
+
+def test_exact_replay_rejects_altered_caller_snapshot_before_event_lookup(
+    repository: Repository,
+) -> None:
+    claim = _claim(uuid4())
+    verification = _verification()
+    repository.save_candidate(claim)
+    canonical_result = repository.record_verification(claim, verification)
+    forged = claim.model_copy(update={"statement": "altered replay"})
+
+    with pytest.raises(ClaimSnapshotConflictError, match=str(claim.id)):
+        repository.record_verification(forged, verification)
+
+    assert repository.get_claim(claim.id) == canonical_result
+    assert repository.count_events("claim.verified") == 1
+    with repository.database.transaction() as connection:
+        evaluations = connection.execute(
+            "SELECT count(*) FROM evaluations WHERE claim_id = %(id)s", {"id": claim.id}
+        ).fetchone()
+    assert evaluations == (1,)
+
+
+def test_exact_verification_replay_returns_canonical_persisted_projection(
+    repository: Repository,
+) -> None:
+    claim = _claim(uuid4())
+    verification = _verification()
+    repository.save_candidate(claim)
+
+    first = repository.record_verification(claim, verification)
+    replay = repository.record_verification(claim, verification)
+    canonical = repository.get_claim(claim.id)
+
+    assert first == canonical
+    assert replay == canonical
+    assert replay is not claim
+    assert canonical.status is ClaimStatus.MACHINE_VERIFIED
+    assert repository.count_events("claim.verified") == 1
+    with repository.database.transaction() as connection:
+        evaluations = connection.execute(
+            "SELECT count(*) FROM evaluations WHERE claim_id = %(id)s", {"id": claim.id}
+        ).fetchone()
+    assert evaluations == (1,)
+
+
+def test_exact_accepted_replay_preserves_later_canonical_claim_state(
+    repository: Repository,
+) -> None:
+    claim = _claim(uuid4())
+    verification = _verification()
+    repository.save_candidate(claim)
+    repository.record_verification(claim, verification)
+    with repository.database.transaction() as connection:
+        connection.execute(
+            "UPDATE claims SET status = 'novelty_checked' WHERE id = %(id)s",
+            {"id": claim.id},
+        )
+
+    replay = repository.record_verification(claim, verification)
+
+    assert replay == repository.get_claim(claim.id)
+    assert replay.status is ClaimStatus.NOVELTY_CHECKED
+    assert repository.count_events("claim.verified") == 1
+    with repository.database.transaction() as connection:
+        evaluations = connection.execute(
+            "SELECT count(*) FROM evaluations WHERE claim_id = %(id)s", {"id": claim.id}
+        ).fetchone()
+    assert evaluations == (1,)
+
+
+def test_new_verifier_version_against_non_candidate_rolls_back(
+    repository: Repository,
+) -> None:
+    claim = _claim(uuid4())
+    repository.save_candidate(claim)
+    canonical_result = repository.record_verification(claim, _verification(version="v1"))
+
+    with pytest.raises(ClaimStateConflictError, match=str(claim.id)):
+        repository.record_verification(claim, _verification(version="v2", accepted=False))
+
+    assert repository.get_claim(claim.id) == canonical_result
+    assert repository.count_events("claim.verified") == 1
+    with repository.database.transaction() as connection:
+        evaluations = connection.execute(
+            "SELECT count(*) FROM evaluations WHERE claim_id = %(id)s", {"id": claim.id}
+        ).fetchone()
+    assert evaluations == (1,)
+
+
+def test_record_verification_requires_canonical_claim_row(repository: Repository) -> None:
+    claim = _claim(uuid4())
+
+    with pytest.raises(ClaimNotFoundError, match=str(claim.id)):
+        repository.record_verification(claim, _verification())
+
     assert repository.count_events("claim.verified") == 0

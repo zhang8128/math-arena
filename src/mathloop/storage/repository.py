@@ -8,6 +8,8 @@ from psycopg.types.json import Jsonb
 
 from mathloop.domain import (
     CandidateClaim,
+    ClaimStatus,
+    EvidenceLevel,
     Experiment,
     ExperimentStatus,
     MethodVersion,
@@ -30,6 +32,28 @@ class ProjectionConflictError(ValueError):
 
 class ClaimStateConflictError(ValueError):
     """A verification targeted a claim that is no longer a candidate."""
+
+
+class InvalidIdentifierError(ValueError):
+    """A repository identifier was not an exact UUID."""
+
+
+class ProblemNotFoundError(LookupError):
+    """A canonical problem projection does not exist."""
+
+
+class ClaimNotFoundError(LookupError):
+    """A canonical claim projection does not exist."""
+
+
+class ClaimSnapshotConflictError(ValueError):
+    """A caller claim disagrees with its canonical immutable projection."""
+
+
+def _require_uuid(value: object, field_name: str) -> UUID:
+    if type(value) is not UUID:
+        raise InvalidIdentifierError(f"{field_name} must be an exact UUID")
+    return value
 
 
 class Repository:
@@ -96,6 +120,82 @@ class Repository:
     def add_problem(self, problem: Problem, idempotency_key: str) -> UUID:
         with self.database.transaction() as connection:
             return self._store_problem(connection, problem, idempotency_key)
+
+    def get_problem(self, problem_id: UUID) -> Problem:
+        canonical_id = _require_uuid(problem_id, "problem_id")
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT id, source_id, source_uri, source_hash, statement,
+                       normalized_statement, domain, features, checker, status,
+                       cohort, version, created_at
+                FROM problems
+                WHERE id = %(id)s
+                """,
+                {"id": canonical_id},
+            ).fetchone()
+        if row is None:
+            raise ProblemNotFoundError(f"problem {canonical_id} was not found")
+        return self._problem_from_row(row)
+
+    def get_claim(self, claim_id: UUID) -> CandidateClaim:
+        canonical_id = _require_uuid(claim_id, "claim_id")
+        with self.database.transaction() as connection:
+            row = self._read_claim(connection, canonical_id)
+        if row is None:
+            raise ClaimNotFoundError(f"claim {canonical_id} was not found")
+        return self._claim_from_row(row)
+
+    @staticmethod
+    def _problem_from_row(row: tuple[Any, ...]) -> Problem:
+        return Problem(
+            id=row[0],
+            source_id=row[1],
+            source_uri=row[2],
+            source_hash=row[3],
+            statement=row[4],
+            normalized_statement=row[5],
+            domain=row[6],
+            features=row[7],
+            checker=row[8],
+            status=row[9],
+            cohort=row[10],
+            version=row[11],
+            created_at=row[12],
+        )
+
+    @staticmethod
+    def _claim_from_row(row: tuple[Any, ...]) -> CandidateClaim:
+        return CandidateClaim(
+            id=row[0],
+            problem_id=row[1],
+            experiment_id=row[2],
+            claim_type=row[3],
+            statement=row[4],
+            witness=row[5],
+            status=row[6],
+            evidence_level=row[7],
+            created_at=row[8],
+        )
+
+    @staticmethod
+    def _read_claim(
+        connection: Connection[tuple[Any, ...]],
+        claim_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> tuple[Any, ...] | None:
+        lock_clause = " FOR UPDATE" if for_update else ""
+        return connection.execute(
+            """
+            SELECT id, problem_id, experiment_id, claim_type, statement, witness,
+                   status, evidence_level, created_at
+            FROM claims
+            WHERE id = %(id)s
+            """
+            + lock_clause,
+            {"id": claim_id},
+        ).fetchone()
 
     def ingest_problem_snapshot(
         self,
@@ -465,53 +565,115 @@ class Repository:
     def record_verification(
         self, claim: CandidateClaim, verification: Verification
     ) -> CandidateClaim:
-        updated_claim = advance_claim(claim, verification)
+        claim_id = _require_uuid(claim.id, "claim_id")
         verification_payload = verification.model_dump(mode="json")
         with self.database.transaction() as connection:
+            claim_row = self._read_claim(connection, claim_id, for_update=True)
+            if claim_row is None:
+                raise ClaimNotFoundError(f"claim {claim_id} was not found")
+            canonical_claim = self._claim_from_row(claim_row)
+            if not self._same_immutable_claim_snapshot(claim, canonical_claim):
+                raise ClaimSnapshotConflictError(
+                    f"claim {claim_id} conflicts with its canonical snapshot"
+                )
+            if claim.status is not ClaimStatus.CANDIDATE:
+                raise ClaimStateConflictError(
+                    f"claim {claim_id} caller snapshot is not in candidate state"
+                )
+            if not verification.independent:
+                raise ValueError("claim promotion requires an independent verifier")
             _, appended = self._append_event(
                 connection,
                 aggregate_type="claim",
-                aggregate_id=claim.id,
+                aggregate_id=claim_id,
                 event_type="claim.verified",
                 payload=verification_payload,
                 idempotency_key=(
-                    f"verification:{claim.id}:{verification.verifier}:{verification.verifier_version}"
+                    f"verification:{claim_id}:{verification.verifier}:{verification.verifier_version}"
                 ),
             )
-            if appended:
-                connection.execute(
-                    """
-                    INSERT INTO evaluations (
-                        claim_id, verifier, verifier_version, accepted, independent, details
-                    ) VALUES (
-                        %(claim_id)s, %(verifier)s, %(verifier_version)s, %(accepted)s,
-                        %(independent)s, %(details)s
-                    )
-                    """,
-                    {
-                        **verification_payload,
-                        "claim_id": claim.id,
-                        "details": Jsonb(verification_payload["details"]),
-                    },
-                )
-                row = connection.execute(
-                    """
-                    UPDATE claims
-                    SET status = %(status)s, evidence_level = %(evidence_level)s
-                    WHERE id = %(id)s AND status = 'candidate'
-                    RETURNING id
-                    """,
-                    {
-                        "id": claim.id,
-                        "status": updated_claim.status.value,
-                        "evidence_level": updated_claim.evidence_level.value,
-                    },
-                ).fetchone()
-                if row is None:
+            if not appended:
+                if not self._is_expected_verified_projection(canonical_claim, verification):
                     raise ClaimStateConflictError(
-                        f"claim {claim.id} is not in candidate state"
+                        f"claim {claim_id} does not match its replayed verification"
                     )
-        return updated_claim
+                return canonical_claim
+            if canonical_claim.status is not ClaimStatus.CANDIDATE:
+                raise ClaimStateConflictError(
+                    f"claim {claim_id} is not in candidate state"
+                )
+            updated_claim = advance_claim(canonical_claim, verification)
+            connection.execute(
+                """
+                INSERT INTO evaluations (
+                    claim_id, verifier, verifier_version, accepted, independent, details
+                ) VALUES (
+                    %(claim_id)s, %(verifier)s, %(verifier_version)s, %(accepted)s,
+                    %(independent)s, %(details)s
+                )
+                """,
+                {
+                    **verification_payload,
+                    "claim_id": claim_id,
+                    "details": Jsonb(verification_payload["details"]),
+                },
+            )
+            updated_row = connection.execute(
+                """
+                UPDATE claims
+                SET status = %(status)s, evidence_level = %(evidence_level)s
+                WHERE id = %(id)s AND status = 'candidate'
+                RETURNING id, problem_id, experiment_id, claim_type, statement, witness,
+                          status, evidence_level, created_at
+                """,
+                {
+                    "id": claim_id,
+                    "status": updated_claim.status.value,
+                    "evidence_level": updated_claim.evidence_level.value,
+                },
+            ).fetchone()
+            if updated_row is None:
+                raise ClaimStateConflictError(
+                    f"claim {claim_id} is not in candidate state"
+                )
+            return self._claim_from_row(updated_row)
+
+    @staticmethod
+    def _same_immutable_claim_snapshot(
+        supplied: CandidateClaim, canonical: CandidateClaim
+    ) -> bool:
+        return (
+            supplied.id,
+            supplied.problem_id,
+            supplied.experiment_id,
+            supplied.claim_type,
+            supplied.statement,
+            supplied.witness,
+            supplied.created_at,
+        ) == (
+            canonical.id,
+            canonical.problem_id,
+            canonical.experiment_id,
+            canonical.claim_type,
+            canonical.statement,
+            canonical.witness,
+            canonical.created_at,
+        )
+
+    @staticmethod
+    def _is_expected_verified_projection(
+        canonical: CandidateClaim, verification: Verification
+    ) -> bool:
+        if not verification.accepted:
+            return canonical.status is ClaimStatus.REJECTED
+        return canonical.status in {
+            ClaimStatus.MACHINE_VERIFIED,
+            ClaimStatus.NOVELTY_CHECKED,
+            ClaimStatus.HUMAN_REVIEWED,
+        } and canonical.evidence_level in {
+            EvidenceLevel.REPRODUCIBLE_WITNESS,
+            EvidenceLevel.FORMALLY_VERIFIED,
+        }
 
     def count_events(self, event_type: str) -> int:
         with self.database.transaction() as connection:

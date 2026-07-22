@@ -14,11 +14,19 @@ from mathloop.domain import (
     Verification,
 )
 from mathloop.predicates.base import PredicateRegistry
-from mathloop.storage.repository import Repository
+from mathloop.storage.repository import (
+    ClaimStateConflictError,
+    InvalidIdentifierError,
+    Repository,
+)
 
 
 class JsonRunner(Protocol):
     def run_json(self, payload: dict[str, object]) -> dict[str, object]: ...
+
+
+class ClaimVerifier(Protocol):
+    def verify(self, problem: Problem, claim: CandidateClaim) -> Verification: ...
 
 
 @dataclass(frozen=True)
@@ -181,12 +189,18 @@ class SymbolicCertificateVerifier:
 
 
 class VerificationService:
-    def __init__(self, repository: Repository, verifier: IntegerWitnessVerifier) -> None:
+    def __init__(self, repository: Repository, verifier: ClaimVerifier) -> None:
         self.repository = repository
         self.verifier = verifier
 
-    def evaluate(self, problem: Problem, claim: CandidateClaim) -> CandidateClaim:
+    def evaluate(self, claim_id: UUID) -> CandidateClaim:
+        if type(claim_id) is not UUID:
+            raise InvalidIdentifierError("claim_id must be an exact UUID")
+        claim = self.repository.get_claim(claim_id)
         if claim.status is not ClaimStatus.CANDIDATE:
-            raise ValueError("only candidate claims can be verified")
+            raise ClaimStateConflictError(
+                f"claim {claim.id} is not in candidate state"
+            )
+        problem = self.repository.get_problem(claim.problem_id)
         verification = self.verifier.verify(problem, claim)
         return self.repository.record_verification(claim, verification)
