@@ -121,3 +121,21 @@ def test_non_independent_verification_does_not_promote_claim() -> None:
         advance_claim(claim, verification)
 
     assert claim.status is ClaimStatus.CANDIDATE
+
+
+def test_deep_copy_preserves_immutable_verification_details() -> None:
+    verification = Verification(
+        verifier="integer-predicate",
+        verifier_version="1",
+        accepted=True,
+        independent=True,
+        details={"a": {"b": [1]}},
+    )
+
+    copied = verification.model_copy(deep=True)
+
+    assert copied == verification
+    with pytest.raises(TypeError):
+        copied.details["a"]["b"] = ()
+    with pytest.raises(AttributeError):
+        copied.details["a"]["b"].append(2)

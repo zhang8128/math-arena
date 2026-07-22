@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, NoReturn, Self
@@ -22,6 +23,17 @@ class FrozenDict(dict[str, Any]):
     setdefault = _immutable
     update = _immutable
     __ior__ = _immutable
+
+    def __copy__(self) -> Self:
+        return type(self)(self)
+
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        copied = type(self)()
+        active_memo = memo if memo is not None else {}
+        active_memo[id(self)] = copied
+        for key, value in self.items():
+            dict.__setitem__(copied, deepcopy(key, active_memo), deepcopy(value, active_memo))
+        return copied
 
 
 def _freeze_json(value: Any) -> Any:
