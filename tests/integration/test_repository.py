@@ -1,8 +1,10 @@
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -232,3 +234,111 @@ def test_source_reingestion_does_not_allocate_a_version_but_changes_do(
     assert changed != first
     assert repository.count_events("problem.discovered") == 2
     assert repository.next_problem_version("demo/one") == 3
+
+
+def test_concurrent_duplicate_ingestion_is_one_transactional_snapshot(
+    repository: Repository, tmp_path: Path
+) -> None:
+    workers = 6
+    barrier = Barrier(workers)
+    source = tmp_path / "problems.jsonl"
+    source.write_text(
+        '{"source_id":"demo/concurrent","source_uri":"https://example.test/concurrent",'
+        '"statement":"All values are prime","normalized_statement":"forall n, P(n)",'
+        '"domain":"number_theory","features":{"finite_witness":true},'
+        '"checker":{"kind":"integer_predicate","predicate_id":"euler_prime"}}\n'
+    )
+
+    def ingest(_: int) -> UUID:
+        barrier.wait()
+        return ingest_source(JsonlProblemSource(source), repository)[0]
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        ids = list(executor.map(ingest, range(workers)))
+
+    with repository.database.transaction() as connection:
+        versions = connection.execute(
+            "SELECT version FROM problems WHERE source_id = 'demo/concurrent'"
+        ).fetchall()
+        allocator = connection.execute(
+            "SELECT next_version FROM problem_source_versions "
+            "WHERE source_id = 'demo/concurrent'"
+        ).fetchone()
+
+    assert len(set(ids)) == 1
+    assert versions == [(1,)]
+    assert allocator == (2,)
+    assert repository.count_events("problem.discovered") == 1
+
+
+def test_concurrent_changed_snapshots_receive_contiguous_source_versions(
+    repository: Repository, tmp_path: Path
+) -> None:
+    workers = 6
+    barrier = Barrier(workers)
+    sources: list[Path] = []
+    for index in range(workers):
+        source = tmp_path / f"problems-{index}.jsonl"
+        source.write_text(
+            json.dumps(
+                {
+                    "source_id": "demo/changing",
+                    "source_uri": "https://example.test/changing",
+                    "statement": f"Snapshot {index}",
+                    "normalized_statement": f"snapshot({index})",
+                    "domain": "number_theory",
+                    "features": {"finite_witness": True},
+                    "checker": {
+                        "kind": "integer_predicate",
+                        "predicate_id": "euler_prime",
+                    },
+                }
+            )
+            + "\n"
+        )
+        sources.append(source)
+
+    def ingest(source: Path) -> UUID:
+        barrier.wait()
+        return ingest_source(JsonlProblemSource(source), repository)[0]
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        ids = list(executor.map(ingest, sources))
+
+    with repository.database.transaction() as connection:
+        versions = connection.execute(
+            "SELECT version FROM problems WHERE source_id = 'demo/changing' ORDER BY version"
+        ).fetchall()
+
+    assert len(set(ids)) == workers
+    assert [row[0] for row in versions] == list(range(1, workers + 1))
+    assert repository.count_events("problem.discovered") == workers
+
+
+def test_source_cohort_is_stable_across_changed_snapshots(
+    repository: Repository, tmp_path: Path
+) -> None:
+    source_id = "demo/stable-cohort"
+    source = tmp_path / "problems.jsonl"
+    base = {
+        "source_id": source_id,
+        "source_uri": "https://example.test/stable-cohort",
+        "statement": "Snapshot one",
+        "normalized_statement": "snapshot(1)",
+        "domain": "number_theory",
+        "features": {"finite_witness": True},
+        "checker": {"kind": "integer_predicate", "predicate_id": "euler_prime"},
+    }
+    source.write_text(json.dumps(base) + "\n")
+    ingest_source(JsonlProblemSource(source), repository)
+    source.write_text(json.dumps({**base, "statement": "Snapshot two"}) + "\n")
+    ingest_source(JsonlProblemSource(source), repository)
+
+    with repository.database.transaction() as connection:
+        cohorts = connection.execute(
+            "SELECT DISTINCT cohort FROM problems WHERE source_id = %(source_id)s",
+            {"source_id": source_id},
+        ).fetchall()
+
+    expected = "holdout" if hashlib.sha256(source_id.encode()).digest()[0] < 51 else "development"
+    assert cohorts == [(expected,)]

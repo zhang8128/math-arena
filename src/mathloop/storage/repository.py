@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from psycopg import Connection
@@ -12,6 +12,8 @@ from mathloop.domain import (
     ExperimentStatus,
     MethodVersion,
     Problem,
+    ProblemCandidate,
+    ProblemStatus,
     Verification,
     advance_claim,
 )
@@ -88,64 +90,118 @@ class Repository:
         return existing[0], False
 
     def add_problem(self, problem: Problem, idempotency_key: str) -> UUID:
-        payload = problem.model_dump(mode="json")
         with self.database.transaction() as connection:
-            stored_id, appended = self._append_event(
-                connection,
-                aggregate_type="problem",
-                aggregate_id=problem.id,
-                event_type="problem.discovered",
-                payload=payload,
-                idempotency_key=idempotency_key,
+            return self._store_problem(connection, problem, idempotency_key)
+
+    def ingest_problem_snapshot(
+        self,
+        candidate: ProblemCandidate,
+        *,
+        problem_id: UUID,
+        cohort: str,
+        created_at: datetime,
+    ) -> UUID:
+        """Idempotently persist one source snapshot and its next source version."""
+        with self.database.transaction() as connection:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%(source_id)s, 0))",
+                {"source_id": candidate.source_id},
             )
-            if appended:
-                projection = connection.execute(
-                    """
-                    INSERT INTO problems (
-                        id, source_id, source_uri, source_hash, statement,
-                        normalized_statement, domain, features, checker, status,
-                        cohort, version, created_at
-                    ) VALUES (
-                        %(id)s, %(source_id)s, %(source_uri)s, %(source_hash)s,
-                        %(statement)s, %(normalized_statement)s, %(domain)s,
-                        %(features)s, %(checker)s, %(status)s, %(cohort)s,
-                        %(version)s, %(created_at)s
-                    )
-                    ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
-                    WHERE (
-                        problems.source_id, problems.source_uri, problems.source_hash,
-                        problems.statement, problems.normalized_statement, problems.domain,
-                        problems.features, problems.checker, problems.status, problems.cohort,
-                        problems.version, problems.created_at
-                    ) IS NOT DISTINCT FROM (
-                        EXCLUDED.source_id, EXCLUDED.source_uri, EXCLUDED.source_hash,
-                        EXCLUDED.statement, EXCLUDED.normalized_statement, EXCLUDED.domain,
-                        EXCLUDED.features, EXCLUDED.checker, EXCLUDED.status, EXCLUDED.cohort,
-                        EXCLUDED.version, EXCLUDED.created_at
-                    )
-                    RETURNING id
-                    """,
-                    {
-                        **payload,
-                        "features": Jsonb(payload["features"]),
-                        "checker": Jsonb(payload["checker"]),
-                    },
-                ).fetchone()
-                if projection is None:
-                    raise ProjectionConflictError(
-                        f"problem {problem.id} has conflicting immutable projection data"
-                    )
-                connection.execute(
-                    """
-                    INSERT INTO problem_source_versions (source_id, next_version)
-                    VALUES (%(source_id)s, %(next_version)s)
-                    ON CONFLICT (source_id) DO UPDATE
-                    SET next_version = GREATEST(
-                        problem_source_versions.next_version, EXCLUDED.next_version
-                    )
-                    """,
-                    {"source_id": problem.source_id, "next_version": problem.version + 1},
+            existing = connection.execute(
+                "SELECT id FROM problems WHERE source_hash = %(source_hash)s",
+                {"source_hash": candidate.source_hash},
+            ).fetchone()
+            if existing is not None:
+                return cast(UUID, existing[0])
+            allocation = connection.execute(
+                """
+                INSERT INTO problem_source_versions (source_id, next_version)
+                VALUES (%(source_id)s, 2)
+                ON CONFLICT (source_id) DO UPDATE
+                SET next_version = problem_source_versions.next_version + 1
+                RETURNING next_version - 1
+                """,
+                {"source_id": candidate.source_id},
+            ).fetchone()
+            if allocation is None:
+                raise RuntimeError("source version allocation did not return a version")
+            problem = Problem(
+                id=problem_id,
+                **candidate.model_dump(exclude={"expected"}),
+                status=ProblemStatus.ELIGIBLE,
+                cohort=cohort,
+                version=int(allocation[0]),
+                created_at=created_at,
+            )
+            return self._store_problem(
+                connection,
+                problem,
+                idempotency_key=f"problem:{candidate.source_hash}",
+            )
+
+    def _store_problem(
+        self,
+        connection: Connection[tuple[Any, ...]],
+        problem: Problem,
+        idempotency_key: str,
+    ) -> UUID:
+        payload = problem.model_dump(mode="json")
+        stored_id, appended = self._append_event(
+            connection,
+            aggregate_type="problem",
+            aggregate_id=problem.id,
+            event_type="problem.discovered",
+            payload=payload,
+            idempotency_key=idempotency_key,
+        )
+        if appended:
+            projection = connection.execute(
+                """
+                INSERT INTO problems (
+                    id, source_id, source_uri, source_hash, statement,
+                    normalized_statement, domain, features, checker, status,
+                    cohort, version, created_at
+                ) VALUES (
+                    %(id)s, %(source_id)s, %(source_uri)s, %(source_hash)s,
+                    %(statement)s, %(normalized_statement)s, %(domain)s,
+                    %(features)s, %(checker)s, %(status)s, %(cohort)s,
+                    %(version)s, %(created_at)s
                 )
+                ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+                WHERE (
+                    problems.source_id, problems.source_uri, problems.source_hash,
+                    problems.statement, problems.normalized_statement, problems.domain,
+                    problems.features, problems.checker, problems.status, problems.cohort,
+                    problems.version, problems.created_at
+                ) IS NOT DISTINCT FROM (
+                    EXCLUDED.source_id, EXCLUDED.source_uri, EXCLUDED.source_hash,
+                    EXCLUDED.statement, EXCLUDED.normalized_statement, EXCLUDED.domain,
+                    EXCLUDED.features, EXCLUDED.checker, EXCLUDED.status, EXCLUDED.cohort,
+                    EXCLUDED.version, EXCLUDED.created_at
+                )
+                RETURNING id
+                """,
+                {
+                    **payload,
+                    "features": Jsonb(payload["features"]),
+                    "checker": Jsonb(payload["checker"]),
+                },
+            ).fetchone()
+            if projection is None:
+                raise ProjectionConflictError(
+                    f"problem {problem.id} has conflicting immutable projection data"
+                )
+            connection.execute(
+                """
+                INSERT INTO problem_source_versions (source_id, next_version)
+                VALUES (%(source_id)s, %(next_version)s)
+                ON CONFLICT (source_id) DO UPDATE
+                SET next_version = GREATEST(
+                    problem_source_versions.next_version, EXCLUDED.next_version
+                )
+                """,
+                {"source_id": problem.source_id, "next_version": problem.version + 1},
+            )
         return stored_id
 
     def register_method(self, method: MethodVersion, idempotency_key: str) -> UUID:
