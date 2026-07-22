@@ -124,3 +124,55 @@ git diff --cached --check
 
 - The checker schema remains a flexible dictionary; future predicates must document and enforce
   their own declared-domain contract explicitly.
+
+### Strict checker follow-up
+
+#### TDD evidence
+
+RED command:
+
+```text
+uv run pytest tests/unit/test_integer_search.py tests/unit/test_symbolic.py -q
+```
+
+Result before the follow-up fix: `2 failed, 12 passed in 0.13s`. A `start: 0.0` symbolic
+checker issued a certificate and direct search with `declared_start=0` emitted an out-of-domain
+candidate.
+
+GREEN command:
+
+```text
+uv run pytest tests/unit/test_integer_search.py tests/unit/test_symbolic.py -q
+```
+
+Result after the follow-up fix: `14 passed in 0.10s`.
+
+#### Verification
+
+```text
+uv run pytest tests/unit/test_integer_search.py tests/unit/test_symbolic.py -q
+# 14 passed in 0.10s
+uv run pytest -q
+# 64 passed, 1 failed: tests/integration/test_leases.py::test_expired_owner_cannot_heartbeat_or_complete
+uv run ruff check src tests
+# All checks passed!
+uv run mypy src
+# Success: no issues found in 18 source files
+git diff --check
+# exit 0
+git diff --cached --check
+# exit 0
+```
+
+#### Commit
+
+`19bb050e882f891b21e56885238d9a10bcf464a6 fix: close checker contract bypasses`
+
+#### Self-review
+
+- Symbolic certification accepts only a built-in `int` zero start, rejecting both `0.0` and
+  `False` without candidate evidence.
+- The public search entry rejects a request below any supplied declared lower bound before
+  evaluating the predicate, so it cannot emit a witness or artifact.
+- The lone full-suite failure is unrelated to these files; its repository implementation and
+  integration test match the parent commit.
