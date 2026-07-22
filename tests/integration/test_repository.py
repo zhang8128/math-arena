@@ -9,14 +9,20 @@ from uuid import UUID, uuid4
 import pytest
 
 from mathloop.domain import (
+    CandidateClaim,
+    ClaimStatus,
+    ClaimType,
+    EvidenceLevel,
     Experiment,
     ExperimentStatus,
     MethodVersion,
     Problem,
     ProblemStatus,
+    Verification,
 )
 from mathloop.sources.jsonl import JsonlProblemSource, ingest_source
 from mathloop.storage.repository import (
+    ClaimStateConflictError,
     EventConflictError,
     ProjectionConflictError,
     Repository,
@@ -342,3 +348,53 @@ def test_source_cohort_is_stable_across_changed_snapshots(
 
     expected = "holdout" if hashlib.sha256(source_id.encode()).digest()[0] < 51 else "development"
     assert cohorts == [(expected,)]
+
+
+@pytest.mark.parametrize(
+    ("persisted_status", "accepted"),
+    [
+        (ClaimStatus.MACHINE_VERIFIED, False),
+        (ClaimStatus.REJECTED, True),
+    ],
+)
+def test_verification_cannot_overwrite_stale_non_candidate_projection(
+    repository: Repository, persisted_status: ClaimStatus, accepted: bool
+) -> None:
+    claim = CandidateClaim(
+        id=uuid4(),
+        problem_id=uuid4(),
+        experiment_id=uuid4(),
+        claim_type=ClaimType.DISPROOF,
+        statement="candidate snapshot",
+        witness={"n": 40, "value": 1681},
+        status=ClaimStatus.CANDIDATE,
+        evidence_level=EvidenceLevel.LEAD,
+        created_at=datetime.now(UTC),
+    )
+    repository.save_candidate(claim)
+    with repository.database.transaction() as connection:
+        connection.execute(
+            "UPDATE claims SET status = %(status)s WHERE id = %(id)s",
+            {"id": claim.id, "status": persisted_status.value},
+        )
+    verification = Verification(
+        verifier="integer-predicate",
+        verifier_version="stale-state-test",
+        accepted=accepted,
+        independent=True,
+        details={"n": 40},
+    )
+
+    with pytest.raises(ClaimStateConflictError, match=str(claim.id)):
+        repository.record_verification(claim, verification)
+
+    with repository.database.transaction() as connection:
+        stored_status = connection.execute(
+            "SELECT status FROM claims WHERE id = %(id)s", {"id": claim.id}
+        ).fetchone()
+        evaluations = connection.execute(
+            "SELECT count(*) FROM evaluations WHERE claim_id = %(id)s", {"id": claim.id}
+        ).fetchone()
+    assert stored_status == (persisted_status.value,)
+    assert evaluations == (0,)
+    assert repository.count_events("claim.verified") == 0

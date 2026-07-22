@@ -1,14 +1,68 @@
 """Independent verification and verified-claim persistence."""
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Protocol
+from uuid import UUID
 
-from mathloop.domain import CandidateClaim, ClaimType, Verification, advance_claim
+from mathloop.domain import (
+    CandidateClaim,
+    ClaimStatus,
+    ClaimType,
+    Problem,
+    Verification,
+)
 from mathloop.predicates.base import PredicateRegistry
 from mathloop.storage.repository import Repository
 
 
 class JsonRunner(Protocol):
     def run_json(self, payload: dict[str, object]) -> dict[str, object]: ...
+
+
+@dataclass(frozen=True)
+class IntegerVerificationBounds:
+    minimum: int
+    maximum: int
+
+
+INTEGER_VERIFICATION_BOUNDS: Mapping[str, IntegerVerificationBounds] = MappingProxyType(
+    {
+        "euler_prime": IntegerVerificationBounds(minimum=0, maximum=100_000),
+        "fermat_prime": IntegerVerificationBounds(minimum=0, maximum=5),
+        "sum_odds": IntegerVerificationBounds(minimum=0, maximum=1_000_000_000),
+    }
+)
+
+
+def _problem_identity_error(problem: Problem, claim: CandidateClaim) -> str | None:
+    if type(problem.id) is not UUID or type(claim.problem_id) is not UUID:
+        return "invalid problem identity"
+    if claim.problem_id != problem.id:
+        return "claim does not belong to problem"
+    return None
+
+
+def _integer_checker(problem: Problem) -> tuple[str, int] | None:
+    checker = problem.checker
+    if not isinstance(checker, dict) or set(checker) != {
+        "kind",
+        "predicate_id",
+        "start",
+    }:
+        return None
+    kind = checker["kind"]
+    predicate_id = checker["predicate_id"]
+    start = checker["start"]
+    if (
+        type(kind) is not str
+        or kind != "integer_predicate"
+        or type(predicate_id) is not str
+        or type(start) is not int
+    ):
+        return None
+    return predicate_id, start
 
 
 class IntegerWitnessVerifier:
@@ -18,9 +72,21 @@ class IntegerWitnessVerifier:
     def __init__(self, predicates: PredicateRegistry) -> None:
         self.predicates = predicates
 
-    def verify(self, predicate_id: str, claim: CandidateClaim) -> Verification:
+    def verify(self, problem: Problem, claim: CandidateClaim) -> Verification:
+        identity_error = _problem_identity_error(problem, claim)
+        if identity_error is not None:
+            return self._rejected(identity_error)
+        if claim.status is not ClaimStatus.CANDIDATE:
+            return self._rejected("only candidate claims can be verified")
+        checker = _integer_checker(problem)
+        if checker is None:
+            return self._rejected("unsupported checker contract")
+        predicate_id, declared_start = checker
         if claim.claim_type is not ClaimType.DISPROOF:
             return self._rejected("integer witness requires a disproof claim")
+        bounds = INTEGER_VERIFICATION_BOUNDS.get(predicate_id)
+        if bounds is None:
+            return self._rejected("unsupported predicate")
         if not self.predicates.contains(predicate_id):
             return self._rejected("unsupported predicate")
         witness = claim.witness
@@ -32,6 +98,8 @@ class IntegerWitnessVerifier:
         supplied_value = witness["value"]
         if type(supplied_value) is not int:
             return self._rejected("integer witness value must be an exact integer")
+        if n < declared_start or n < bounds.minimum or n > bounds.maximum:
+            return self._rejected("integer witness is outside verifier bounds")
         evaluation = self.predicates.evaluate(predicate_id, n)
         accepted = not evaluation.holds and supplied_value == evaluation.value
         return Verification(
@@ -63,7 +131,15 @@ class SymbolicCertificateVerifier:
     def __init__(self, runner: JsonRunner) -> None:
         self.runner = runner
 
-    def verify(self, claim: CandidateClaim) -> Verification:
+    def verify(self, problem: Problem, claim: CandidateClaim) -> Verification:
+        identity_error = _problem_identity_error(problem, claim)
+        if identity_error is not None:
+            return self._rejected(identity_error)
+        if claim.status is not ClaimStatus.CANDIDATE:
+            return self._rejected("only candidate claims can be verified")
+        checker = _integer_checker(problem)
+        if checker != ("sum_odds", 0):
+            return self._rejected("unsupported checker contract")
         if claim.claim_type is not ClaimType.PROOF:
             return self._rejected("symbolic certificate requires a proof claim")
         witness = claim.witness
@@ -109,7 +185,8 @@ class VerificationService:
         self.repository = repository
         self.verifier = verifier
 
-    def evaluate(self, predicate_id: str, claim: CandidateClaim) -> CandidateClaim:
-        verification = self.verifier.verify(predicate_id, claim)
-        self.repository.record_verification(claim, verification)
-        return advance_claim(claim, verification)
+    def evaluate(self, problem: Problem, claim: CandidateClaim) -> CandidateClaim:
+        if claim.status is not ClaimStatus.CANDIDATE:
+            raise ValueError("only candidate claims can be verified")
+        verification = self.verifier.verify(problem, claim)
+        return self.repository.record_verification(claim, verification)

@@ -171,6 +171,8 @@ class Verification(FrozenModel):
 
 
 def advance_claim(claim: CandidateClaim, verification: Verification) -> CandidateClaim:
+    if claim.status is not ClaimStatus.CANDIDATE:
+        raise ValueError("only candidate claims can transition from verification")
     if not verification.independent:
         raise ValueError("claim promotion requires an independent verifier")
     if verification.accepted:

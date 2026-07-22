@@ -28,6 +28,10 @@ class ProjectionConflictError(ValueError):
     """An aggregate ID was reused with different immutable projection data."""
 
 
+class ClaimStateConflictError(ValueError):
+    """A verification targeted a claim that is no longer a candidate."""
+
+
 class Repository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -458,7 +462,9 @@ class Repository:
                     },
                 )
 
-    def record_verification(self, claim: CandidateClaim, verification: Verification) -> None:
+    def record_verification(
+        self, claim: CandidateClaim, verification: Verification
+    ) -> CandidateClaim:
         updated_claim = advance_claim(claim, verification)
         verification_payload = verification.model_dump(mode="json")
         with self.database.transaction() as connection:
@@ -488,18 +494,24 @@ class Repository:
                         "details": Jsonb(verification_payload["details"]),
                     },
                 )
-                connection.execute(
+                row = connection.execute(
                     """
                     UPDATE claims
                     SET status = %(status)s, evidence_level = %(evidence_level)s
-                    WHERE id = %(id)s
+                    WHERE id = %(id)s AND status = 'candidate'
+                    RETURNING id
                     """,
                     {
                         "id": claim.id,
                         "status": updated_claim.status.value,
                         "evidence_level": updated_claim.evidence_level.value,
                     },
-                )
+                ).fetchone()
+                if row is None:
+                    raise ClaimStateConflictError(
+                        f"claim {claim.id} is not in candidate state"
+                    )
+        return updated_claim
 
     def count_events(self, event_type: str) -> int:
         with self.database.transaction() as connection:

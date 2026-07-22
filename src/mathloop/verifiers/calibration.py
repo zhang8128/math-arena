@@ -26,7 +26,7 @@ def build_verifier_registry() -> PredicateRegistry:
         return PredicateEvaluation(_prime_by_trial_division(value), value)
 
     def odd_sum(n: int) -> PredicateEvaluation:
-        left = sum(range(1, 2 * n, 2))
+        left = n * (1 + (2 * n - 1)) // 2 if n else 0
         right = n * n
         return PredicateEvaluation(left == right, right)
 

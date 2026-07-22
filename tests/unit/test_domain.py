@@ -123,6 +123,31 @@ def test_non_independent_verification_does_not_promote_claim() -> None:
     assert claim.status is ClaimStatus.CANDIDATE
 
 
+@pytest.mark.parametrize("status", [ClaimStatus.MACHINE_VERIFIED, ClaimStatus.REJECTED])
+def test_only_candidate_claims_can_transition_from_verification(status: ClaimStatus) -> None:
+    claim = CandidateClaim(
+        id=uuid4(),
+        problem_id=uuid4(),
+        experiment_id=uuid4(),
+        claim_type=ClaimType.DISPROOF,
+        statement="counterexample",
+        witness={"n": 40},
+        status=status,
+        evidence_level=EvidenceLevel.REPRODUCIBLE_WITNESS,
+        created_at=datetime.now(UTC),
+    )
+    verification = Verification(
+        verifier="integer-predicate",
+        verifier_version="1",
+        accepted=True,
+        independent=True,
+        details={"value": False},
+    )
+
+    with pytest.raises(ValueError, match="only candidate claims"):
+        advance_claim(claim, verification)
+
+
 def test_deep_copy_preserves_immutable_verification_details() -> None:
     verification = Verification(
         verifier="integer-predicate",
