@@ -6,6 +6,7 @@ from typing import Annotated, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from mathloop.billing import validate_database_usd
 from mathloop.config import Settings
 from mathloop.methods.base import MethodContext, MethodResult
 from mathloop.providers.base import (
@@ -98,12 +99,14 @@ class ProofSketchMethod:
                 "cached_input_tokens": response.usage.cached_input_tokens,
                 "cache_write_input_tokens": response.usage.cache_write_input_tokens,
             },
+            "billing_authorization": response.billing_authorization.to_audit_dict(),
             "billing_receipt": response.billing_receipt.to_audit_dict(),
         }
         return MethodResult(
             status="lead",
             summary=response.value.strategy,
             artifact=json.dumps(artifact, sort_keys=True).encode(),
+            billing_authorization=response.billing_authorization,
             billing_receipt=response.billing_receipt,
         )
 
@@ -120,6 +123,14 @@ class ProofSketchMethod:
         except (InvalidOperation, ValueError):
             return None
         if not parsed.is_finite() or parsed <= 0:
+            return None
+        try:
+            validate_database_usd(
+                parsed,
+                field_name="max_api_cost_usd_per_experiment",
+                positive=True,
+            )
+        except (TypeError, ValueError):
             return None
         return parsed
 

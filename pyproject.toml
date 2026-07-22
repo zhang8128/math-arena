@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Persistent autonomous mathematics solver ecology"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-  "openai>=2,<3",
+  "openai==2.47.0",
   "psycopg[binary,pool]>=3.2,<4",
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.9,<3",

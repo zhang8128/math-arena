@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal
@@ -10,8 +9,14 @@ from types import MappingProxyType
 from typing import Any, TypeIs
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
+from openai.types.responses.input_token_count_params import Text as InputTokenCountText
+from openai.types.responses.response_format_text_config_param import (
+    ResponseFormatTextConfigParam,
+)
+from openai.types.responses.response_input_param import ResponseInputParam
+from openai.types.shared_params.reasoning import Reasoning
 
-from mathloop.billing import DATABASE_USD_QUANTUM, BillingReceipt
+from mathloop.billing import DATABASE_USD_QUANTUM, BillingAuthorization, BillingReceipt
 from mathloop.providers.base import (
     IncompleteModelResponseError,
     InvalidModelResponseError,
@@ -24,9 +29,9 @@ from mathloop.providers.base import (
     RetryableModelProviderError,
     T,
 )
+from mathloop.providers.openai_sdk_2_47 import strict_text_format_for_schema
 
 OPENAI_PRICING_VERSION = "2026-07-22"
-OPENAI_CONSERVATIVE_MESSAGE_OVERHEAD_TOKENS = 4096
 OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS = 272_000
 TOKENS_PER_PRICING_UNIT = Decimal(1_000_000)
 
@@ -75,35 +80,44 @@ OPENAI_PRICING_CATALOG: Mapping[str, OpenAITextPricing] = MappingProxyType(
 
 
 class OpenAIProvider:
-    """Issue synchronous, non-persistent structured Responses API requests.
-
-    Optional method registration and API-key capability reporting belong to the
-    runtime wiring layer, not this adapter.
-    """
+    """Issue exact-counted, synchronous structured Responses API requests."""
 
     def __init__(self, client: OpenAI | Any | None = None) -> None:
         self.client = client if client is not None else OpenAI()
 
     def generate(self, request: ModelRequest, schema: type[T]) -> ModelResponse[T]:
-        pricing = _authorize_request_cost(request, schema)
+        pricing = OPENAI_PRICING_CATALOG.get(request.model)
+        if pricing is None:
+            raise ModelCostAuthorizationError(
+                f"OpenAI model is unpriced and cannot be authorized: {request.model}"
+            )
+
+        model_input: ResponseInputParam = [
+            {"role": "system", "content": request.system},
+            {"role": "user", "content": request.prompt},
+        ]
+        reasoning: Reasoning = {"effort": request.effort, "context": "current_turn"}
+        text_format = strict_text_format_for_schema(schema)
+        authorization = self._authorize_request_cost(
+            request=request,
+            pricing=pricing,
+            model_input=model_input,
+            reasoning=reasoning,
+            text_format=text_format,
+        )
 
         try:
             response = self.client.responses.parse(
                 model=request.model,
-                input=[
-                    {"role": "system", "content": request.system},
-                    {"role": "user", "content": request.prompt},
-                ],
+                input=model_input,
                 text_format=schema,
-                reasoning={"effort": request.effort, "context": "current_turn"},
+                reasoning=reasoning,
                 max_output_tokens=request.max_output_tokens,
                 store=False,
                 timeout=request.timeout_seconds,
             )
         except (APITimeoutError, APIConnectionError, RateLimitError) as exc:
-            raise RetryableModelProviderError(
-                f"transient OpenAI Responses API failure: {type(exc).__name__}"
-            ) from exc
+            raise _retryable_provider_error(exc) from exc
 
         status = getattr(response, "status", None)
         if status == "incomplete":
@@ -139,6 +153,14 @@ class OpenAIProvider:
             raise InvalidModelResponseError("model response usage is missing or invalid")
         if not _valid_token_count(cache_write_input_tokens):
             raise InvalidModelResponseError("model response usage is missing or invalid")
+        if input_tokens != authorization.authorized_input_tokens:
+            raise InvalidModelResponseError(
+                "model response input tokens differ from exact authorized input tokens"
+            )
+        if output_tokens > authorization.max_output_tokens:
+            raise InvalidModelResponseError(
+                "model response output tokens exceed authorized maximum"
+            )
         if cached_input_tokens + cache_write_input_tokens > input_tokens:
             raise InvalidModelResponseError("model response usage token details are inconsistent")
 
@@ -149,6 +171,12 @@ class OpenAIProvider:
             cache_write_input_tokens=cache_write_input_tokens,
         )
         actual_cost = _actual_cost_usd(model_usage, pricing)
+        if (
+            actual_cost > authorization.reserved_cost_usd
+            or actual_cost > request.cost_authorization.max_cost_usd
+        ):
+            raise InvalidModelResponseError("actual cost exceeds authorized reserved cost")
+
         receipt = BillingReceipt(
             provider="openai",
             model=request.model,
@@ -160,46 +188,73 @@ class OpenAIProvider:
             actual_cost_usd=actual_cost,
             pricing_version=OPENAI_PRICING_VERSION,
             pricing_source=pricing.source,
+            authorization=authorization,
         )
         return ModelResponse(
             value=parsed,
             provider_response_id=response_id,
             usage=model_usage,
+            billing_authorization=authorization,
             billing_receipt=receipt,
         )
 
+    def _authorize_request_cost(
+        self,
+        *,
+        request: ModelRequest,
+        pricing: OpenAITextPricing,
+        model_input: ResponseInputParam,
+        reasoning: Reasoning,
+        text_format: ResponseFormatTextConfigParam,
+    ) -> BillingAuthorization:
+        try:
+            count_text: InputTokenCountText = {"format": text_format}
+            # Official exact-count endpoint: POST /responses/input_tokens.
+            count_response = self.client.responses.input_tokens.count(
+                model=request.model,
+                input=model_input,
+                reasoning=reasoning,
+                text=count_text,
+                timeout=request.timeout_seconds,
+            )
+        except (APITimeoutError, APIConnectionError, RateLimitError) as exc:
+            raise _retryable_provider_error(exc) from exc
 
-def _authorize_request_cost(request: ModelRequest, schema: type[T]) -> OpenAITextPricing:
-    pricing = OPENAI_PRICING_CATALOG.get(request.model)
-    if pricing is None:
-        raise ModelCostAuthorizationError(
-            f"OpenAI model is unpriced and cannot be authorized: {request.model}"
+        exact_input_tokens = getattr(count_response, "input_tokens", None)
+        if not _valid_token_count(exact_input_tokens):
+            raise InvalidModelResponseError("exact input token count is missing or invalid")
+
+        reserved_cost = _reserved_cost_usd(
+            input_tokens=exact_input_tokens,
+            max_output_tokens=request.max_output_tokens,
+            pricing=pricing,
         )
+        authorization = BillingAuthorization(
+            provider="openai",
+            model=request.model,
+            authorized_input_tokens=exact_input_tokens,
+            max_output_tokens=request.max_output_tokens,
+            reserved_cost_usd=reserved_cost,
+            pricing_version=OPENAI_PRICING_VERSION,
+            pricing_source=pricing.source,
+        )
+        if reserved_cost > request.cost_authorization.max_cost_usd:
+            raise ModelCostAuthorizationError(
+                "reserved request cost exceeds authorized cap "
+                f"({reserved_cost} > {request.cost_authorization.max_cost_usd})"
+            )
+        return authorization
 
-    schema_json = json.dumps(
-        schema.model_json_schema(), ensure_ascii=False, separators=(",", ":"), sort_keys=True
-    )
-    content_bytes = (
-        len(request.system.encode("utf-8"))
-        + len(request.prompt.encode("utf-8"))
-        + len(schema_json.encode("utf-8"))
-    )
-    worst_case_input_tokens = content_bytes + OPENAI_CONSERVATIVE_MESSAGE_OVERHEAD_TOKENS
-    input_multiplier, output_multiplier = _long_context_multipliers(worst_case_input_tokens)
-    worst_case_cost = (
-        Decimal(worst_case_input_tokens)
-        * pricing.cache_write_per_million_usd
-        * input_multiplier
-        + Decimal(request.max_output_tokens)
-        * pricing.output_per_million_usd
-        * output_multiplier
+
+def _reserved_cost_usd(
+    *, input_tokens: int, max_output_tokens: int, pricing: OpenAITextPricing
+) -> Decimal:
+    input_multiplier, output_multiplier = _long_context_multipliers(input_tokens)
+    cost = (
+        Decimal(input_tokens) * pricing.cache_write_per_million_usd * input_multiplier
+        + Decimal(max_output_tokens) * pricing.output_per_million_usd * output_multiplier
     ) / TOKENS_PER_PRICING_UNIT
-    if worst_case_cost > request.cost_authorization.max_cost_usd:
-        raise ModelCostAuthorizationError(
-            "authorized cost cap cannot cover worst-case request cost "
-            f"({worst_case_cost} > {request.cost_authorization.max_cost_usd})"
-        )
-    return pricing
+    return cost.quantize(DATABASE_USD_QUANTUM, rounding=ROUND_CEILING)
 
 
 def _actual_cost_usd(usage: ModelUsage, pricing: OpenAITextPricing) -> Decimal:
@@ -224,6 +279,12 @@ def _long_context_multipliers(input_tokens: int) -> tuple[Decimal, Decimal]:
     if input_tokens > OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS:
         return Decimal("2"), Decimal("1.5")
     return Decimal("1"), Decimal("1")
+
+
+def _retryable_provider_error(exc: Exception) -> RetryableModelProviderError:
+    return RetryableModelProviderError(
+        f"transient OpenAI Responses API failure: {type(exc).__name__}"
+    )
 
 
 def _valid_token_count(value: object) -> TypeIs[int]:

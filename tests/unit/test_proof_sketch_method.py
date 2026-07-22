@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from mathloop.billing import BillingReceipt
+from mathloop.billing import BillingAuthorization, BillingReceipt
 from mathloop.config import Settings
 from mathloop.domain import Problem, ProblemStatus
 from mathloop.methods.base import MethodContext
@@ -57,6 +57,15 @@ def recording_provider() -> RecordingProvider:
         lemmas=["Establish the base case."],
         risks=["The inductive hypothesis may be too weak."],
     )
+    authorization = BillingAuthorization(
+        provider="openai",
+        model="gpt-5.6-terra",
+        authorized_input_tokens=81,
+        max_output_tokens=2048,
+        reserved_cost_usd=Decimal("0.031001"),
+        pricing_version="2026-07-22",
+        pricing_source="https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+    )
     receipt = BillingReceipt(
         provider="openai",
         model="gpt-5.6-terra",
@@ -68,6 +77,7 @@ def recording_provider() -> RecordingProvider:
         actual_cost_usd=Decimal("0.000751"),
         pricing_version="2026-07-22",
         pricing_source="https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+        authorization=authorization,
     )
     return RecordingProvider(
         ModelResponse(
@@ -79,6 +89,7 @@ def recording_provider() -> RecordingProvider:
                 cached_input_tokens=8,
                 cache_write_input_tokens=3,
             ),
+            billing_authorization=authorization,
             billing_receipt=receipt,
         )
     )
@@ -127,7 +138,9 @@ def test_proof_sketch_method_uses_only_normalized_statement_and_returns_lead_art
     assert result.claim is None
     assert result.witness is None
     assert result.billing_receipt is provider.response.billing_receipt
+    assert result.billing_authorization is provider.response.billing_authorization
     assert json.loads(result.artifact or b"{}") == {
+        "billing_authorization": provider.response.billing_authorization.to_audit_dict(),
         "billing_receipt": provider.response.billing_receipt.to_audit_dict(),
         "proof_sketch": {
             "lemmas": ["Establish the base case."],
@@ -246,6 +259,7 @@ def test_proof_sketch_marks_problem_text_as_untrusted_data() -> None:
         ({"max_output_tokens": 128_001}, "max_output_tokens"),
         ({"max_api_cost_usd_per_experiment": 0.1}, "max_api_cost_usd_per_experiment"),
         ({"max_api_cost_usd_per_experiment": "0"}, "max_api_cost_usd_per_experiment"),
+        ({"max_api_cost_usd_per_experiment": "1.0000000"}, "max_api_cost_usd_per_experiment"),
         ({"max_api_cost_usd_per_experiment": True}, "max_api_cost_usd_per_experiment"),
     ],
 )
@@ -264,6 +278,7 @@ def test_proof_sketch_method_rejects_invalid_config_without_calling_provider(
     assert result.claim is None
     assert result.witness is None
     assert result.artifact is None
+    assert result.billing_authorization is None
     assert result.billing_receipt is None
     assert provider.calls == []
 

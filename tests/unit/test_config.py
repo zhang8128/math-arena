@@ -30,3 +30,13 @@ def test_settings_create_absolute_artifact_root(tmp_path: Path) -> None:
     assert settings.lease_seconds > settings.max_experiment_seconds
     assert isinstance(settings.daily_api_budget_usd, Decimal)
     assert isinstance(settings.max_api_cost_usd_per_experiment, Decimal)
+
+
+@pytest.mark.parametrize("value", ["0.0000001", "1.0000000"])
+def test_settings_reject_experiment_cost_caps_beyond_database_precision(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("MATHLOOP_MAX_API_COST_USD_PER_EXPERIMENT", value)
+
+    with pytest.raises(ValidationError, match="six decimal places"):
+        Settings(_env_file=None)  # type: ignore[call-arg]

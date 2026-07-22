@@ -2,10 +2,25 @@ from decimal import Decimal
 
 import pytest
 
-from mathloop.billing import BillingReceipt
+from mathloop.billing import BillingAuthorization, BillingReceipt
+
+
+def valid_authorization(**overrides: object) -> BillingAuthorization:
+    values: dict[str, object] = {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "authorized_input_tokens": 100,
+        "max_output_tokens": 25,
+        "reserved_cost_usd": Decimal("0.001313"),
+        "pricing_version": "2026-07-22",
+        "pricing_source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+    }
+    values.update(overrides)
+    return BillingAuthorization(**values)  # type: ignore[arg-type]
 
 
 def valid_receipt(**overrides: object) -> BillingReceipt:
+    authorization = valid_authorization()
     values: dict[str, object] = {
         "provider": "openai",
         "model": "gpt-5.6-sol",
@@ -17,9 +32,47 @@ def valid_receipt(**overrides: object) -> BillingReceipt:
         "actual_cost_usd": Decimal("0.001198"),
         "pricing_version": "2026-07-22",
         "pricing_source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+        "authorization": authorization,
     }
     values.update(overrides)
     return BillingReceipt(**values)  # type: ignore[arg-type]
+
+
+def test_billing_authorization_exposes_exact_database_safe_reservation() -> None:
+    authorization = valid_authorization()
+
+    assert authorization.to_audit_dict() == {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "authorized_input_tokens": 100,
+        "max_output_tokens": 25,
+        "reserved_cost_usd": "0.001313",
+        "pricing_version": "2026-07-22",
+        "pricing_source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provider", ""),
+        ("model", 1),
+        ("authorized_input_tokens", -1),
+        ("authorized_input_tokens", True),
+        ("max_output_tokens", 0),
+        ("max_output_tokens", False),
+        ("reserved_cost_usd", Decimal("-0.000001")),
+        ("reserved_cost_usd", Decimal("NaN")),
+        ("reserved_cost_usd", Decimal("0.0000001")),
+        ("reserved_cost_usd", Decimal("1.0000000")),
+        ("reserved_cost_usd", 0.1),
+        ("pricing_version", ""),
+        ("pricing_source", None),
+    ],
+)
+def test_billing_authorization_rejects_invalid_fields(field: str, value: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        valid_authorization(**{field: value})
 
 
 def test_billing_receipt_exposes_validated_provider_neutral_audit_data() -> None:
@@ -36,6 +89,7 @@ def test_billing_receipt_exposes_validated_provider_neutral_audit_data() -> None
         "actual_cost_usd": "0.001198",
         "pricing_version": "2026-07-22",
         "pricing_source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+        "authorization": receipt.authorization.to_audit_dict(),
     }
 
 
@@ -71,9 +125,13 @@ def test_billing_receipt_rejects_invalid_fields(field: str, value: object) -> No
         {"cached_input_tokens": 60, "cache_write_input_tokens": 41},
         {"actual_cost_usd": Decimal("0.0000001")},
         {"actual_cost_usd": Decimal("0.0011980")},
+        {"actual_cost_usd": Decimal("0.001314")},
+        {"input_tokens": 99},
+        {"model": "gpt-5.6-terra"},
+        {"pricing_version": "other"},
     ],
 )
-def test_billing_receipt_rejects_impossible_counts_or_sub_database_precision(
+def test_billing_receipt_rejects_impossible_counts_precision_or_authorization_mismatch(
     overrides: dict[str, object],
 ) -> None:
     with pytest.raises(ValueError):

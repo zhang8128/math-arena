@@ -5,6 +5,8 @@ from pathlib import Path
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from mathloop.billing import validate_database_usd
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MATHLOOP_", env_file=".env")
@@ -29,6 +31,11 @@ class Settings(BaseSettings):
         self.incoming_root = self.incoming_root.expanduser().resolve()
         if self.lease_seconds <= self.max_experiment_seconds:
             raise ValueError("lease_seconds must exceed max_experiment_seconds")
+        validate_database_usd(
+            self.max_api_cost_usd_per_experiment,
+            field_name="max_api_cost_usd_per_experiment",
+            positive=True,
+        )
         return self
 
 

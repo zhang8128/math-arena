@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from mathloop.billing import BillingReceipt
+from mathloop.billing import BillingAuthorization, BillingReceipt
 from mathloop.domain import Problem
 
 
@@ -14,6 +14,7 @@ class MethodResult:
     witness: dict[str, object] | None = None
     claim: str | None = None
     artifact: bytes | None = None
+    billing_authorization: BillingAuthorization | None = None
     billing_receipt: BillingReceipt | None = None
 
 

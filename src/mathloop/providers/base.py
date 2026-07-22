@@ -7,7 +7,7 @@ from typing import Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
 
-from mathloop.billing import BillingReceipt
+from mathloop.billing import BillingAuthorization, BillingReceipt, validate_database_usd
 
 ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 SUPPORTED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
@@ -46,10 +46,7 @@ class ModelCostAuthorization:
     max_cost_usd: Decimal
 
     def __post_init__(self) -> None:
-        if type(self.max_cost_usd) is not Decimal:
-            raise TypeError("max_cost_usd must be a Decimal")
-        if not self.max_cost_usd.is_finite() or self.max_cost_usd <= 0:
-            raise ValueError("max_cost_usd must be finite and positive")
+        validate_database_usd(self.max_cost_usd, field_name="max_cost_usd", positive=True)
 
 
 @dataclass(frozen=True)
@@ -120,6 +117,7 @@ class ModelResponse[ResponseT: BaseModel]:
     value: ResponseT
     provider_response_id: str
     usage: ModelUsage
+    billing_authorization: BillingAuthorization
     billing_receipt: BillingReceipt
 
     def __post_init__(self) -> None:
@@ -129,6 +127,8 @@ class ModelResponse[ResponseT: BaseModel]:
             raise ValueError("provider_response_id must not be empty")
         if self.billing_receipt.response_id != self.provider_response_id:
             raise ValueError("billing receipt response id does not match model response")
+        if self.billing_receipt.authorization != self.billing_authorization:
+            raise ValueError("billing receipt does not retain model response authorization")
         if (
             self.billing_receipt.input_tokens != self.usage.input_tokens
             or self.billing_receipt.output_tokens != self.usage.output_tokens
