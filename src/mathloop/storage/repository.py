@@ -444,6 +444,15 @@ class Repository:
             ).fetchone()
         return int(row[0]) if row is not None else 0
 
+    def find_problem_by_source_hash(self, source_hash: str) -> UUID | None:
+        """Return the immutable problem ID for an already ingested source snapshot."""
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT id FROM problems WHERE source_hash = %(source_hash)s",
+                {"source_hash": source_hash},
+            ).fetchone()
+        return row[0] if row is not None else None
+
     def next_problem_version(self, source_id: str) -> int:
         """Atomically allocate a source version; abandoned allocations intentionally leave gaps."""
         with self.database.transaction() as connection:

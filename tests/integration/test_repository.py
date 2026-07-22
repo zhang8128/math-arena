@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Barrier
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ from mathloop.domain import (
     Problem,
     ProblemStatus,
 )
+from mathloop.sources.jsonl import JsonlProblemSource, ingest_source
 from mathloop.storage.repository import (
     EventConflictError,
     ProjectionConflictError,
@@ -202,3 +204,31 @@ def test_concurrent_source_versions_are_unique_and_persistable(
         versions = list(executor.map(allocate_and_persist, range(workers)))
 
     assert sorted(versions) == list(range(1, workers + 1))
+
+
+def test_source_reingestion_does_not_allocate_a_version_but_changes_do(
+    repository: Repository, tmp_path: Path
+) -> None:
+    source = tmp_path / "problems.jsonl"
+    source.write_text(
+        '{"source_id":"demo/one","source_uri":"https://example.test/one",'
+        '"statement":"All values are prime","normalized_statement":"forall n, P(n)",'
+        '"domain":"number_theory","features":{"finite_witness":true},'
+        '"checker":{"kind":"integer_predicate","predicate_id":"euler_prime"}}\n'
+    )
+
+    first = ingest_source(JsonlProblemSource(source), repository)
+    identical = ingest_source(JsonlProblemSource(source), repository)
+    source.write_text(
+        '{"source_id":"demo/one","source_uri":"https://example.test/one",'
+        '"statement":"All nonnegative values are prime",'
+        '"normalized_statement":"forall n, P(n)","domain":"number_theory",'
+        '"features":{"finite_witness":true},'
+        '"checker":{"kind":"integer_predicate","predicate_id":"euler_prime"}}\n'
+    )
+    changed = ingest_source(JsonlProblemSource(source), repository)
+
+    assert identical == first
+    assert changed != first
+    assert repository.count_events("problem.discovered") == 2
+    assert repository.next_problem_version("demo/one") == 3
