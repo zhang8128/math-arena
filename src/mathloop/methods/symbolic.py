@@ -28,6 +28,13 @@ class SymbolicInductionMethod:
         )
 
     def run(self, context: MethodContext) -> MethodResult:
-        if context.problem.checker.get("predicate_id") != "sum_odds":
+        checker = context.problem.checker
+        declared_start = checker.get("start")
+        if (
+            checker.get("kind") != "integer_predicate"
+            or checker.get("predicate_id") != "sum_odds"
+            or isinstance(declared_start, bool)
+            or declared_start != 0
+        ):
             return MethodResult(status="inapplicable", summary="unsupported identity")
         return self.prove_sum_odds()

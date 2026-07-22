@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -32,6 +33,13 @@ def test_euler_prime_counterexample_is_exact() -> None:
 
     assert result.status == "candidate"
     assert result.witness == {"n": 40, "value": 1681}
+    assert json.loads(result.artifact or b"{}") == {
+        "declared_start": 0,
+        "order": "ascending",
+        "predicate_id": "euler_prime",
+        "requested_interval": {"start": 0, "stop": 100},
+        "witness": {"n": 40, "value": 1681},
+    }
 
 
 def test_bounded_success_does_not_become_a_proof() -> None:
@@ -57,7 +65,9 @@ def test_boundary_first_checks_the_upper_boundary_first() -> None:
 def test_invalid_order_returns_structured_non_evidence_result() -> None:
     method = IntegerCounterexampleSearch(build_calibration_registry())
     context = MethodContext(
-        problem=_problem({"kind": "integer_predicate", "predicate_id": "euler_prime"}),
+        problem=_problem(
+            {"kind": "integer_predicate", "predicate_id": "euler_prime", "start": 0}
+        ),
         seed=0,
         config={"order": "random"},
     )
@@ -72,7 +82,9 @@ def test_invalid_order_returns_structured_non_evidence_result() -> None:
 def test_invalid_bounds_return_structured_non_evidence_result() -> None:
     method = IntegerCounterexampleSearch(build_calibration_registry())
     context = MethodContext(
-        problem=_problem({"kind": "integer_predicate", "predicate_id": "euler_prime"}),
+        problem=_problem(
+            {"kind": "integer_predicate", "predicate_id": "euler_prime", "start": 0}
+        ),
         seed=0,
         config={"start": 10, "stop": 0},
     )
@@ -82,3 +94,19 @@ def test_invalid_bounds_return_structured_non_evidence_result() -> None:
     assert result.status == "invalid_config"
     assert result.claim is None
     assert result.witness is None
+
+
+def test_run_rejects_an_interval_below_the_declared_domain_without_evidence() -> None:
+    method = IntegerCounterexampleSearch(build_calibration_registry())
+    context = MethodContext(
+        problem=_problem({"kind": "integer_predicate", "predicate_id": "sum_odds", "start": 0}),
+        seed=0,
+        config={"start": -1, "stop": 2},
+    )
+
+    result = method.run(context)
+
+    assert result.status == "invalid_config"
+    assert result.claim is None
+    assert result.witness is None
+    assert result.artifact is None
