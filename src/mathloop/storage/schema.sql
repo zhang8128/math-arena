@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS events (
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS events_event_id_unique ON events (event_id);
+
 CREATE TABLE IF NOT EXISTS problems (
     id UUID PRIMARY KEY,
     source_id TEXT NOT NULL,
@@ -25,6 +27,23 @@ CREATE TABLE IF NOT EXISTS problems (
     cohort TEXT NOT NULL CHECK (cohort IN ('development', 'holdout')),
     version INTEGER NOT NULL CHECK (version > 0),
     created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS problems_source_id_version_unique
+    ON problems (source_id, version);
+
+CREATE TABLE IF NOT EXISTS problem_source_versions (
+    source_id TEXT PRIMARY KEY,
+    next_version INTEGER NOT NULL CHECK (next_version > 0)
+);
+
+INSERT INTO problem_source_versions (source_id, next_version)
+SELECT source_id, MAX(version) + 1
+FROM problems
+GROUP BY source_id
+ON CONFLICT (source_id) DO UPDATE
+SET next_version = GREATEST(
+    problem_source_versions.next_version, EXCLUDED.next_version
 );
 
 CREATE TABLE IF NOT EXISTS methods (

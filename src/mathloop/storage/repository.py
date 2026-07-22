@@ -18,6 +18,14 @@ from mathloop.domain import (
 from mathloop.storage.db import Database
 
 
+class EventConflictError(ValueError):
+    """An idempotency key was reused for a different event."""
+
+
+class ProjectionConflictError(ValueError):
+    """An aggregate ID was reused with different immutable projection data."""
+
+
 class Repository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -54,11 +62,29 @@ class Repository:
         if row is not None:
             return row[0], True
         existing = connection.execute(
-            "SELECT aggregate_id FROM events WHERE idempotency_key = %(idempotency_key)s",
-            {"idempotency_key": idempotency_key},
+            """
+            SELECT aggregate_id,
+                   aggregate_type = %(aggregate_type)s
+                   AND aggregate_id = %(aggregate_id)s
+                   AND event_type = %(event_type)s
+                   AND payload = %(payload)s AS exact_replay
+            FROM events
+            WHERE idempotency_key = %(idempotency_key)s
+            """,
+            {
+                "aggregate_type": aggregate_type,
+                "aggregate_id": aggregate_id,
+                "event_type": event_type,
+                "payload": Jsonb(payload),
+                "idempotency_key": idempotency_key,
+            },
         ).fetchone()
         if existing is None:
             raise RuntimeError("event idempotency conflict did not return an event")
+        if not existing[1]:
+            raise EventConflictError(
+                f"idempotency key {idempotency_key!r} conflicts with an existing event"
+            )
         return existing[0], False
 
     def add_problem(self, problem: Problem, idempotency_key: str) -> UUID:
@@ -73,7 +99,7 @@ class Repository:
                 idempotency_key=idempotency_key,
             )
             if appended:
-                connection.execute(
+                projection = connection.execute(
                     """
                     INSERT INTO problems (
                         id, source_id, source_uri, source_hash, statement,
@@ -85,13 +111,40 @@ class Repository:
                         %(features)s, %(checker)s, %(status)s, %(cohort)s,
                         %(version)s, %(created_at)s
                     )
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+                    WHERE (
+                        problems.source_id, problems.source_uri, problems.source_hash,
+                        problems.statement, problems.normalized_statement, problems.domain,
+                        problems.features, problems.checker, problems.status, problems.cohort,
+                        problems.version, problems.created_at
+                    ) IS NOT DISTINCT FROM (
+                        EXCLUDED.source_id, EXCLUDED.source_uri, EXCLUDED.source_hash,
+                        EXCLUDED.statement, EXCLUDED.normalized_statement, EXCLUDED.domain,
+                        EXCLUDED.features, EXCLUDED.checker, EXCLUDED.status, EXCLUDED.cohort,
+                        EXCLUDED.version, EXCLUDED.created_at
+                    )
+                    RETURNING id
                     """,
                     {
                         **payload,
                         "features": Jsonb(payload["features"]),
                         "checker": Jsonb(payload["checker"]),
                     },
+                ).fetchone()
+                if projection is None:
+                    raise ProjectionConflictError(
+                        f"problem {problem.id} has conflicting immutable projection data"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO problem_source_versions (source_id, next_version)
+                    VALUES (%(source_id)s, %(next_version)s)
+                    ON CONFLICT (source_id) DO UPDATE
+                    SET next_version = GREATEST(
+                        problem_source_versions.next_version, EXCLUDED.next_version
+                    )
+                    """,
+                    {"source_id": problem.source_id, "next_version": problem.version + 1},
                 )
         return stored_id
 
@@ -107,7 +160,7 @@ class Repository:
                 idempotency_key=idempotency_key,
             )
             if appended:
-                connection.execute(
+                projection = connection.execute(
                     """
                     INSERT INTO methods (
                         id, family, version, spec, parent_id, status, created_at
@@ -115,10 +168,22 @@ class Repository:
                         %(id)s, %(family)s, %(version)s, %(spec)s, %(parent_id)s,
                         %(status)s, %(created_at)s
                     )
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+                    WHERE (
+                        methods.family, methods.version, methods.spec, methods.parent_id,
+                        methods.status, methods.created_at
+                    ) IS NOT DISTINCT FROM (
+                        EXCLUDED.family, EXCLUDED.version, EXCLUDED.spec, EXCLUDED.parent_id,
+                        EXCLUDED.status, EXCLUDED.created_at
+                    )
+                    RETURNING id
                     """,
                     {**payload, "spec": Jsonb(payload["spec"])},
-                )
+                ).fetchone()
+                if projection is None:
+                    raise ProjectionConflictError(
+                        f"method {method.id} has conflicting immutable projection data"
+                    )
         return stored_id
 
     def enqueue(self, experiment: Experiment, idempotency_key: str) -> UUID:
@@ -133,7 +198,7 @@ class Repository:
                 idempotency_key=idempotency_key,
             )
             if appended:
-                connection.execute(
+                projection = connection.execute(
                     """
                     INSERT INTO experiments (
                         id, problem_id, method_id, lane, config, seed, status, created_at,
@@ -142,10 +207,22 @@ class Repository:
                         %(id)s, %(problem_id)s, %(method_id)s, %(lane)s, %(config)s,
                         %(seed)s, %(status)s, %(created_at)s, %(created_at)s
                     )
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+                    WHERE (
+                        experiments.problem_id, experiments.method_id, experiments.lane,
+                        experiments.config, experiments.seed, experiments.created_at
+                    ) IS NOT DISTINCT FROM (
+                        EXCLUDED.problem_id, EXCLUDED.method_id, EXCLUDED.lane,
+                        EXCLUDED.config, EXCLUDED.seed, EXCLUDED.created_at
+                    )
+                    RETURNING id
                     """,
                     {**payload, "config": Jsonb(payload["config"])},
-                )
+                ).fetchone()
+                if projection is None:
+                    raise ProjectionConflictError(
+                        f"experiment {experiment.id} has conflicting immutable projection data"
+                    )
         return stored_id
 
     def enqueue_raw(
@@ -169,6 +246,7 @@ class Repository:
         return self.enqueue(experiment, idempotency_key=f"experiment:{experiment.id}")
 
     def claim_next(self, worker: str, now: datetime, lease_seconds: int) -> Experiment | None:
+        self._validate_lease(now, lease_seconds)
         expires = now + timedelta(seconds=lease_seconds)
         with self.database.transaction() as connection:
             row = connection.execute(
@@ -220,6 +298,7 @@ class Repository:
     def heartbeat(
         self, experiment_id: UUID, worker: str, now: datetime, lease_seconds: int
     ) -> bool:
+        self._validate_lease(now, lease_seconds)
         expires = now + timedelta(seconds=lease_seconds)
         with self.database.transaction() as connection:
             row = connection.execute(
@@ -247,6 +326,9 @@ class Repository:
     def complete(
         self, experiment_id: UUID, worker: str, result: dict[str, object], cost_usd: float
     ) -> None:
+        cost = Decimal(str(cost_usd))
+        if not cost.is_finite() or cost < 0:
+            raise ValueError("experiment cost must be a finite non-negative amount")
         with self.database.transaction() as connection:
             _, appended = self._append_event(
                 connection,
@@ -271,7 +353,7 @@ class Repository:
                     "id": experiment_id,
                     "worker": worker,
                     "result": Jsonb(result),
-                    "cost_usd": Decimal(str(cost_usd)),
+                    "cost_usd": cost,
                 },
             ).fetchone()
             if row is None:
@@ -363,12 +445,15 @@ class Repository:
         return int(row[0]) if row is not None else 0
 
     def next_problem_version(self, source_id: str) -> int:
+        """Atomically allocate a source version; abandoned allocations intentionally leave gaps."""
         with self.database.transaction() as connection:
             row = connection.execute(
                 """
-                SELECT COALESCE(MAX(version), 0) + 1
-                FROM problems
-                WHERE source_id = %(source_id)s
+                INSERT INTO problem_source_versions (source_id, next_version)
+                VALUES (%(source_id)s, 2)
+                ON CONFLICT (source_id) DO UPDATE
+                SET next_version = problem_source_versions.next_version + 1
+                RETURNING next_version - 1
                 """,
                 {"source_id": source_id},
             ).fetchone()
@@ -379,8 +464,12 @@ class Repository:
     ) -> bool:
         amount = Decimal(str(amount_usd))
         limit = Decimal(str(daily_limit_usd))
-        if amount < 0 or limit < 0:
-            raise ValueError("budget amounts must be non-negative")
+        if not amount.is_finite() or not limit.is_finite() or amount < 0 or limit < 0:
+            raise ValueError("budget amounts must be finite and non-negative")
+        event_payload: dict[str, object] = {
+            "amount_usd": amount_usd,
+            "daily_limit_usd": daily_limit_usd,
+        }
         with self.database.transaction() as connection:
             connection.execute("SELECT pg_advisory_xact_lock(hashtext(CURRENT_DATE::text))")
             existing = connection.execute(
@@ -388,6 +477,14 @@ class Repository:
                 {"id": experiment_id},
             ).fetchone()
             if existing is not None:
+                self._append_event(
+                    connection,
+                    aggregate_type="experiment",
+                    aggregate_id=experiment_id,
+                    event_type="budget.reserved",
+                    payload=event_payload,
+                    idempotency_key=f"budget:reserve:{experiment_id}",
+                )
                 return True
             row = connection.execute(
                 """
@@ -406,7 +503,7 @@ class Repository:
                 aggregate_type="experiment",
                 aggregate_id=experiment_id,
                 event_type="budget.reserved",
-                payload={"amount_usd": amount_usd, "daily_limit_usd": daily_limit_usd},
+                payload=event_payload,
                 idempotency_key=f"budget:reserve:{experiment_id}",
             )
             connection.execute(
@@ -420,9 +517,36 @@ class Repository:
 
     def settle_budget(self, experiment_id: UUID, actual_usd: float) -> None:
         amount = Decimal(str(actual_usd))
-        if amount < 0:
-            raise ValueError("budget amounts must be non-negative")
+        if not amount.is_finite() or amount < 0:
+            raise ValueError("budget amounts must be finite and non-negative")
         with self.database.transaction() as connection:
+            reservation = connection.execute(
+                """
+                SELECT reserved_usd, budget_day
+                FROM budget_reservations
+                WHERE experiment_id = %(id)s
+                """,
+                {"id": experiment_id},
+            ).fetchone()
+            if reservation is None:
+                raise ValueError("experiment has no budget reservation")
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%(budget_day)s::text))",
+                {"budget_day": reservation[1]},
+            )
+            reservation = connection.execute(
+                """
+                SELECT reserved_usd, budget_day
+                FROM budget_reservations
+                WHERE experiment_id = %(id)s
+                FOR UPDATE
+                """,
+                {"id": experiment_id},
+            ).fetchone()
+            if reservation is None:
+                raise ValueError("experiment has no budget reservation")
+            if amount > reservation[0]:
+                raise ValueError("actual cost exceeds the reserved maximum")
             _, appended = self._append_event(
                 connection,
                 aggregate_type="experiment",
@@ -444,3 +568,10 @@ class Repository:
             ).fetchone()
             if row is None:
                 raise ValueError("experiment has no budget reservation")
+
+    @staticmethod
+    def _validate_lease(now: datetime, lease_seconds: int) -> None:
+        if lease_seconds <= 0:
+            raise ValueError("lease duration must be positive")
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("lease timestamp must be timezone-aware")
