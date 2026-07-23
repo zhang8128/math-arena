@@ -110,13 +110,114 @@ CREATE TABLE IF NOT EXISTS evaluations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS evaluations_verification_unique
+    ON evaluations (claim_id, verifier, verifier_version);
+
 CREATE TABLE IF NOT EXISTS method_scores (
     domain TEXT NOT NULL,
     method_id UUID NOT NULL,
-    cohort TEXT NOT NULL,
-    trials INTEGER NOT NULL DEFAULT 0,
-    reward DOUBLE PRECISION NOT NULL DEFAULT 0,
-    PRIMARY KEY (domain, method_id, cohort)
+    cohort TEXT NOT NULL CONSTRAINT method_scores_cohort_valid
+        CHECK (cohort IN ('development', 'holdout')),
+    trials BIGINT NOT NULL DEFAULT 0 CONSTRAINT method_scores_trials_nonnegative
+        CHECK (trials >= 0),
+    reward BIGINT NOT NULL DEFAULT 0 CONSTRAINT method_scores_reward_nonnegative
+        CHECK (reward >= 0),
+    false_positives BIGINT NOT NULL DEFAULT 0
+        CONSTRAINT method_scores_false_positives_nonnegative
+        CHECK (false_positives >= 0),
+    cost_usd NUMERIC(14, 6) NOT NULL DEFAULT 0
+        CONSTRAINT method_scores_cost_nonnegative
+        CHECK (cost_usd >= 0),
+    PRIMARY KEY (domain, method_id, cohort),
+    CONSTRAINT method_scores_counts_valid CHECK (reward + false_positives <= trials)
+);
+
+ALTER TABLE method_scores
+    ADD COLUMN IF NOT EXISTS false_positives BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(14, 6) NOT NULL DEFAULT 0;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM method_scores
+        WHERE cohort IS NULL OR cohort NOT IN ('development', 'holdout')
+           OR trials IS NULL OR trials < 0
+           OR reward IS NULL OR reward::TEXT IN ('NaN', 'Infinity', '-Infinity')
+           OR reward < 0 OR reward <> trunc(reward)
+           OR reward > 9223372036854775807::NUMERIC
+           OR false_positives IS NULL OR false_positives < 0
+           OR cost_usd IS NULL OR cost_usd < 0
+           OR reward + false_positives > trials
+    ) THEN
+        RAISE EXCEPTION 'invalid legacy method_scores data cannot be migrated'
+            USING ERRCODE = '23514';
+    END IF;
+END $$;
+
+ALTER TABLE method_scores
+    ALTER COLUMN trials TYPE BIGINT USING trials::BIGINT,
+    ALTER COLUMN reward TYPE BIGINT USING reward::BIGINT;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'method_scores'::regclass
+          AND conname = 'method_scores_cohort_valid'
+    ) THEN
+        ALTER TABLE method_scores ADD CONSTRAINT method_scores_cohort_valid
+            CHECK (cohort IN ('development', 'holdout'));
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'method_scores'::regclass
+          AND conname = 'method_scores_trials_nonnegative'
+    ) THEN
+        ALTER TABLE method_scores ADD CONSTRAINT method_scores_trials_nonnegative
+            CHECK (trials >= 0);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'method_scores'::regclass
+          AND conname = 'method_scores_reward_nonnegative'
+    ) THEN
+        ALTER TABLE method_scores ADD CONSTRAINT method_scores_reward_nonnegative
+            CHECK (reward >= 0);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'method_scores'::regclass
+          AND conname = 'method_scores_false_positives_nonnegative'
+    ) THEN
+        ALTER TABLE method_scores
+            ADD CONSTRAINT method_scores_false_positives_nonnegative
+            CHECK (false_positives >= 0);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'method_scores'::regclass
+          AND conname = 'method_scores_cost_nonnegative'
+    ) THEN
+        ALTER TABLE method_scores ADD CONSTRAINT method_scores_cost_nonnegative
+            CHECK (cost_usd >= 0);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'method_scores'::regclass
+          AND conname = 'method_scores_counts_valid'
+    ) THEN
+        ALTER TABLE method_scores ADD CONSTRAINT method_scores_counts_valid
+            CHECK (reward + false_positives <= trials);
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS completeness_progress (
+    problem_id UUID NOT NULL,
+    method_family TEXT NOT NULL,
+    completed_upper_bound BIGINT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (problem_id, method_family)
 );
 
 CREATE TABLE IF NOT EXISTS budget_reservations (

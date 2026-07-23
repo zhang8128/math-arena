@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
@@ -6,6 +7,7 @@ from uuid import UUID, uuid4
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from mathloop.billing import validate_database_usd
 from mathloop.domain import (
     CandidateClaim,
     ClaimStatus,
@@ -19,6 +21,13 @@ from mathloop.domain import (
     Verification,
     advance_claim,
 )
+from mathloop.evolution import (
+    MAX_INT64,
+    MethodMetrics,
+    MetricsCohort,
+    next_completeness_spec,
+)
+from mathloop.scheduling import MAX_DATABASE_USD
 from mathloop.storage.db import Database
 
 
@@ -50,10 +59,39 @@ class ClaimSnapshotConflictError(ValueError):
     """A caller claim disagrees with its canonical immutable projection."""
 
 
+class EvaluationNotFoundError(LookupError):
+    """A canonical persisted verification evaluation does not exist."""
+
+
+class EvaluationContextError(ValueError):
+    """An evaluation is not backed by consistent canonical repository state."""
+
+
+class CompletenessProgressError(ValueError):
+    """An experiment cannot advance the durable completeness cursor."""
+
+
 def _require_uuid(value: object, field_name: str) -> UUID:
     if type(value) is not UUID:
         raise InvalidIdentifierError(f"{field_name} must be an exact UUID")
     return value
+
+
+def _require_nonempty_string(value: object, field_name: str) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{field_name} must not be empty")
+    return value
+
+
+def _require_database_usd(value: object, field_name: str) -> Decimal:
+    validate_database_usd(value, field_name=field_name, positive=False)  # type: ignore[arg-type]
+    amount = value
+    assert isinstance(amount, Decimal)
+    if amount > MAX_DATABASE_USD:
+        raise ValueError(f"{field_name} exceeds NUMERIC(14, 6) capacity")
+    return amount
 
 
 class Repository:
@@ -145,6 +183,32 @@ class Repository:
         if row is None:
             raise ClaimNotFoundError(f"claim {canonical_id} was not found")
         return self._claim_from_row(row)
+
+    def get_evaluation_id(
+        self, claim_id: UUID, verifier: str, verifier_version: str
+    ) -> UUID:
+        canonical_claim_id = _require_uuid(claim_id, "claim_id")
+        canonical_verifier = _require_nonempty_string(verifier, "verifier")
+        canonical_version = _require_nonempty_string(verifier_version, "verifier_version")
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT id
+                FROM evaluations
+                WHERE claim_id = %(claim_id)s AND verifier = %(verifier)s
+                  AND verifier_version = %(verifier_version)s
+                """,
+                {
+                    "claim_id": canonical_claim_id,
+                    "verifier": canonical_verifier,
+                    "verifier_version": canonical_version,
+                },
+            ).fetchone()
+        if row is None:
+            raise EvaluationNotFoundError(
+                "canonical evaluation was not found for the claim and verifier version"
+            )
+        return cast(UUID, row[0])
 
     @staticmethod
     def _problem_from_row(row: tuple[Any, ...]) -> Problem:
@@ -345,6 +409,308 @@ class Repository:
                         f"method {method.id} has conflicting immutable projection data"
                     )
         return stored_id
+
+    def record_method_outcome(self, evaluation_id: UUID) -> MethodMetrics:
+        canonical_evaluation_id = _require_uuid(evaluation_id, "evaluation_id")
+        with self.database.transaction() as connection:
+            context = connection.execute(
+                """
+                SELECT v.accepted, v.independent, v.claim_id,
+                       c.status, c.problem_id, c.experiment_id,
+                       e.problem_id, e.method_id, e.status, e.cost_usd,
+                       p.domain, p.cohort, m.id
+                FROM evaluations AS v
+                LEFT JOIN claims AS c ON c.id = v.claim_id
+                LEFT JOIN experiments AS e ON e.id = c.experiment_id
+                LEFT JOIN problems AS p ON p.id = c.problem_id
+                LEFT JOIN methods AS m ON m.id = e.method_id
+                WHERE v.id = %(evaluation_id)s
+                """,
+                {"evaluation_id": canonical_evaluation_id},
+            ).fetchone()
+            if context is None:
+                raise EvaluationNotFoundError(
+                    f"evaluation {canonical_evaluation_id} was not found"
+                )
+            if context[1] is not True:
+                raise EvaluationContextError("routing scores require independent verification")
+            if any(value is None for value in context[2:13]):
+                raise EvaluationContextError(
+                    "evaluation is missing its canonical claim, experiment, problem, or method"
+                )
+            accepted = bool(context[0])
+            claim_status = str(context[3])
+            claim_problem_id = cast(UUID, context[4])
+            experiment_id = cast(UUID, context[5])
+            experiment_problem_id = cast(UUID, context[6])
+            method_id = cast(UUID, context[7])
+            experiment_status = str(context[8])
+            cost = _require_database_usd(context[9], "cost_usd")
+            domain = _require_nonempty_string(context[10], "domain")
+            try:
+                cohort = MetricsCohort(context[11])
+            except (TypeError, ValueError) as error:
+                raise EvaluationContextError("evaluation problem has an invalid cohort") from error
+            if claim_problem_id != experiment_problem_id:
+                raise EvaluationContextError("claim and experiment problem IDs do not match")
+            if experiment_status != ExperimentStatus.SUCCEEDED.value:
+                raise EvaluationContextError("evaluation experiment is not succeeded")
+            accepted_statuses = {
+                ClaimStatus.MACHINE_VERIFIED.value,
+                ClaimStatus.NOVELTY_CHECKED.value,
+                ClaimStatus.HUMAN_REVIEWED.value,
+            }
+            if accepted and claim_status not in accepted_statuses:
+                raise EvaluationContextError("accepted evaluation has no verified claim projection")
+            if not accepted and claim_status != ClaimStatus.REJECTED.value:
+                raise EvaluationContextError("rejected evaluation has no rejected claim projection")
+            verified_increment = int(accepted)
+            false_positive_increment = int(not accepted)
+            payload: dict[str, object] = {
+                "evaluation_id": str(canonical_evaluation_id),
+                "claim_id": str(context[2]),
+                "experiment_id": str(experiment_id),
+                "domain": domain,
+                "method_id": str(method_id),
+                "cohort": cohort.value,
+                "accepted": accepted,
+                "cost_usd": format(cost, "f"),
+            }
+            _, appended = self._append_event(
+                connection,
+                aggregate_type="method",
+                aggregate_id=method_id,
+                event_type="method.outcome_recorded",
+                payload=payload,
+                idempotency_key=f"method:outcome:evaluation:{canonical_evaluation_id}",
+            )
+            if appended:
+                row = connection.execute(
+                    """
+                    INSERT INTO method_scores (
+                        domain, method_id, cohort, trials, reward,
+                        false_positives, cost_usd
+                    ) VALUES (
+                        %(domain)s, %(method_id)s, %(cohort)s, 1,
+                        %(reward)s, %(false_positives)s, %(cost_usd)s
+                    )
+                    ON CONFLICT (domain, method_id, cohort) DO UPDATE
+                    SET trials = method_scores.trials + 1,
+                        reward = method_scores.reward + EXCLUDED.reward,
+                        false_positives = (
+                            method_scores.false_positives + EXCLUDED.false_positives
+                        ),
+                        cost_usd = method_scores.cost_usd + EXCLUDED.cost_usd
+                    RETURNING trials, reward, false_positives, cost_usd
+                    """,
+                    {
+                        "domain": domain,
+                        "method_id": method_id,
+                        "cohort": cohort.value,
+                        "reward": verified_increment,
+                        "false_positives": false_positive_increment,
+                        "cost_usd": cost,
+                    },
+                ).fetchone()
+            else:
+                row = self._read_method_metrics(connection, domain, method_id, cohort)
+        if row is None:
+            raise RuntimeError("persisted method outcome has no score projection")
+        return self._method_metrics_from_row(cohort, row)
+
+    def get_method_metrics(
+        self, domain: str, method_id: UUID, cohort: MetricsCohort
+    ) -> MethodMetrics:
+        canonical_domain = _require_nonempty_string(domain, "domain")
+        canonical_method_id = _require_uuid(method_id, "method_id")
+        if type(cohort) is not MetricsCohort:
+            raise TypeError("cohort must be a MetricsCohort")
+        with self.database.transaction() as connection:
+            row = self._read_method_metrics(
+                connection, canonical_domain, canonical_method_id, cohort
+            )
+        if row is None:
+            return MethodMetrics(
+                cohort=cohort,
+                trials=0,
+                verified=0,
+                false_positives=0,
+                cost_usd=Decimal("0"),
+            )
+        return self._method_metrics_from_row(cohort, row)
+
+    @staticmethod
+    def _read_method_metrics(
+        connection: Connection[tuple[Any, ...]],
+        domain: str,
+        method_id: UUID,
+        cohort: MetricsCohort,
+    ) -> tuple[Any, ...] | None:
+        return connection.execute(
+            """
+            SELECT trials, reward, false_positives, cost_usd
+            FROM method_scores
+            WHERE domain = %(domain)s AND method_id = %(method_id)s
+              AND cohort = %(cohort)s
+            """,
+            {"domain": domain, "method_id": method_id, "cohort": cohort.value},
+        ).fetchone()
+
+    @staticmethod
+    def _method_metrics_from_row(cohort: MetricsCohort, row: tuple[Any, ...]) -> MethodMetrics:
+        return MethodMetrics(
+            cohort=cohort,
+            trials=int(row[0]),
+            verified=int(row[1]),
+            false_positives=int(row[2]),
+            cost_usd=Decimal(row[3]),
+        )
+
+    def record_completeness_progress(self, experiment_id: UUID) -> int:
+        canonical_experiment_id = _require_uuid(experiment_id, "experiment_id")
+        with self.database.transaction() as connection:
+            context = connection.execute(
+                """
+                SELECT e.problem_id, e.method_id, e.lane, e.config, e.status, e.result,
+                       p.checker, m.family
+                FROM experiments AS e
+                LEFT JOIN problems AS p ON p.id = e.problem_id
+                LEFT JOIN methods AS m ON m.id = e.method_id
+                WHERE e.id = %(experiment_id)s
+                """,
+                {"experiment_id": canonical_experiment_id},
+            ).fetchone()
+            if context is None:
+                raise CompletenessProgressError(
+                    f"experiment {canonical_experiment_id} was not found"
+                )
+            if context[6] is None or context[7] is None:
+                raise CompletenessProgressError(
+                    "completeness experiment lacks a canonical problem or method"
+                )
+            problem_id = cast(UUID, context[0])
+            method_family = _require_nonempty_string(context[7], "method_family")
+            if context[2] != "completeness":
+                raise CompletenessProgressError("experiment is not in the completeness lane")
+            if context[4] != ExperimentStatus.SUCCEEDED.value:
+                raise CompletenessProgressError("completeness experiment is not succeeded")
+            result = context[5]
+            if not isinstance(result, dict) or result.get("status") != "bounded_no_counterexample":
+                raise CompletenessProgressError(
+                    "completeness experiment did not finish the full interval"
+                )
+            config = context[3]
+            if not isinstance(config, dict) or set(config) != {"start", "stop", "order"}:
+                raise CompletenessProgressError("completeness experiment has an invalid config")
+            start = config["start"]
+            stop = config["stop"]
+            if type(start) is not int or type(stop) is not int:
+                raise CompletenessProgressError("completeness interval bounds must be integers")
+            if config["order"] != "ascending":
+                raise CompletenessProgressError("completeness search order must be ascending")
+            if start >= stop or stop > MAX_INT64:
+                raise CompletenessProgressError("completeness interval bounds are invalid")
+            checker = context[6]
+            declared_start = checker.get("start") if isinstance(checker, dict) else None
+            if type(declared_start) is not int:
+                raise CompletenessProgressError("problem has no exact declared integer start")
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%(key)s, 0))",
+                {"key": f"{problem_id}:{method_family}"},
+            )
+            progress = connection.execute(
+                """
+                SELECT completed_upper_bound
+                FROM completeness_progress
+                WHERE problem_id = %(problem_id)s AND method_family = %(method_family)s
+                FOR UPDATE
+                """,
+                {"problem_id": problem_id, "method_family": method_family},
+            ).fetchone()
+            current = int(progress[0]) if progress is not None else declared_start
+            payload: dict[str, object] = {
+                "experiment_id": str(canonical_experiment_id),
+                "problem_id": str(problem_id),
+                "method_id": str(context[1]),
+                "method_family": method_family,
+                "start": start,
+                "stop": stop,
+            }
+            _, appended = self._append_event(
+                connection,
+                aggregate_type="experiment",
+                aggregate_id=canonical_experiment_id,
+                event_type="completeness.progress_recorded",
+                payload=payload,
+                idempotency_key=f"completeness:experiment:{canonical_experiment_id}",
+            )
+            if not appended:
+                if progress is None:
+                    raise RuntimeError("persisted completeness event has no progress projection")
+                return current
+            if start != current:
+                raise CompletenessProgressError(
+                    f"completeness interval is not contiguous: expected start {current}"
+                )
+            row = connection.execute(
+                """
+                INSERT INTO completeness_progress (
+                    problem_id, method_family, completed_upper_bound
+                ) VALUES (
+                    %(problem_id)s, %(method_family)s, %(stop)s
+                )
+                ON CONFLICT (problem_id, method_family) DO UPDATE
+                SET completed_upper_bound = EXCLUDED.completed_upper_bound,
+                    updated_at = now()
+                WHERE completeness_progress.completed_upper_bound = %(start)s
+                RETURNING completed_upper_bound
+                """,
+                {
+                    "problem_id": problem_id,
+                    "method_family": method_family,
+                    "start": start,
+                    "stop": stop,
+                },
+            ).fetchone()
+            if row is None:
+                raise CompletenessProgressError("completeness cursor changed concurrently")
+            return int(row[0])
+
+    def get_completeness_progress(self, problem_id: UUID, method_family: str) -> int:
+        canonical_problem_id = _require_uuid(problem_id, "problem_id")
+        canonical_family = _require_nonempty_string(method_family, "method_family")
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT cp.completed_upper_bound, p.checker
+                FROM problems AS p
+                LEFT JOIN completeness_progress AS cp
+                  ON cp.problem_id = p.id AND cp.method_family = %(method_family)s
+                WHERE p.id = %(problem_id)s
+                """,
+                {"problem_id": canonical_problem_id, "method_family": canonical_family},
+            ).fetchone()
+        if row is None:
+            raise ProblemNotFoundError(f"problem {canonical_problem_id} was not found")
+        if row[0] is not None:
+            return int(row[0])
+        checker = row[1]
+        declared_start = checker.get("start") if isinstance(checker, dict) else None
+        if type(declared_start) is not int:
+            raise CompletenessProgressError("problem has no exact declared integer start")
+        return declared_start
+
+    def get_next_completeness_spec(
+        self,
+        problem_id: UUID,
+        method_family: str,
+        parent_spec: Mapping[str, object],
+    ) -> dict[str, int | str]:
+        current = self.get_completeness_progress(problem_id, method_family)
+        next_completeness_spec(parent_spec)
+        base_stop = max(current, cast(int, parent_spec["stop"]))
+        grown = next_completeness_spec({"stop": base_stop, "order": "ascending"})
+        return {"start": current, "stop": grown["stop"], "order": "ascending"}
 
     def enqueue(self, experiment: Experiment, idempotency_key: str) -> UUID:
         payload = experiment.model_dump(mode="json")
