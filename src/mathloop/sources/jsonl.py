@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
@@ -12,6 +13,20 @@ from pydantic import ValidationError
 from mathloop.domain import ProblemCandidate
 from mathloop.sources.base import ProblemSource
 from mathloop.storage.repository import Repository
+
+
+@dataclass(frozen=True)
+class IngestResult:
+    problem_ids: tuple[UUID, ...]
+    inserted: int
+
+    @property
+    def processed(self) -> int:
+        return len(self.problem_ids)
+
+    @property
+    def existing(self) -> int:
+        return self.processed - self.inserted
 
 
 class JsonlProblemSource(ProblemSource):
@@ -67,17 +82,25 @@ def _parse_finite_float(value: str) -> float:
 
 
 def ingest_source(source: ProblemSource, repository: Repository) -> list[UUID]:
-    inserted: list[UUID] = []
+    return list(ingest_source_with_result(source, repository).problem_ids)
+
+
+def ingest_source_with_result(
+    source: ProblemSource,
+    repository: Repository,
+) -> IngestResult:
+    problem_ids: list[UUID] = []
+    inserted = 0
     for candidate in source.read():
         cohort_byte = hashlib.sha256(candidate.source_id.encode()).digest()[0]
-        inserted.append(
-            repository.ingest_problem_snapshot(
-                candidate,
-                problem_id=uuid5(
-                    NAMESPACE_URL, f"{candidate.source_id}:{candidate.source_hash}"
-                ),
-                cohort="holdout" if cohort_byte < 51 else "development",
-                created_at=datetime.now(UTC),
-            )
+        problem_id, was_inserted = repository.ingest_problem_snapshot_with_status(
+            candidate,
+            problem_id=uuid5(
+                NAMESPACE_URL, f"{candidate.source_id}:{candidate.source_hash}"
+            ),
+            cohort="holdout" if cohort_byte < 51 else "development",
+            created_at=datetime.now(UTC),
         )
-    return inserted
+        problem_ids.append(problem_id)
+        inserted += int(was_inserted)
+    return IngestResult(tuple(problem_ids), inserted)

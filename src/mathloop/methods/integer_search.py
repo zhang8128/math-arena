@@ -19,6 +19,7 @@ class IntegerCounterexampleSearch:
         stop: int,
         order: str = "ascending",
         declared_start: int | None = None,
+        max_evaluations: int | None = None,
     ) -> MethodResult:
         if order not in {"ascending", "boundary_first"}:
             return self._invalid_config(f"unsupported order: {order}")
@@ -32,7 +33,15 @@ class IntegerCounterexampleSearch:
         values = range(start, stop)
         if order == "boundary_first":
             values = range(stop - 1, start - 1, -1)
-        for n in values:
+        for index, n in enumerate(values):
+            if max_evaluations is not None and index >= max_evaluations:
+                return MethodResult(
+                    status="evaluation_budget_exhausted",
+                    summary=(
+                        f"no counterexample in the first {max_evaluations} "
+                        "allocated evaluations"
+                    ),
+                )
             evaluation = self.predicates.evaluate(predicate_id, n)
             if not evaluation.holds:
                 witness: dict[str, object] = {"n": n, "value": evaluation.value}
@@ -69,11 +78,23 @@ class IntegerCounterexampleSearch:
         start = self._integer_config(context.config, "start", declared_start)
         stop = self._integer_config(context.config, "stop", 100)
         order = context.config.get("order", "ascending")
+        max_evaluations = context.config.get("max_evaluations")
         if start is None or stop is None:
             return self._invalid_config("start and stop must be integers")
         if not isinstance(order, str):
             return self._invalid_config("order must be a string")
-        return self.search(predicate_id, start, stop, order, declared_start)
+        if max_evaluations is not None and (
+            type(max_evaluations) is not int or max_evaluations <= 0
+        ):
+            return self._invalid_config("max_evaluations must be a positive integer")
+        return self.search(
+            predicate_id,
+            start,
+            stop,
+            order,
+            declared_start,
+            max_evaluations,
+        )
 
     @staticmethod
     def _integer_config(config: dict[str, object], name: str, default: object) -> int | None:

@@ -70,13 +70,52 @@ CREATE TABLE IF NOT EXISTS experiments (
     attempt INTEGER NOT NULL DEFAULT 0,
     cost_usd NUMERIC(14, 6) NOT NULL DEFAULT 0,
     result JSONB NULL,
+    failure_kind TEXT NULL,
+    failure_message TEXT NULL,
+    retryable BOOLEAN NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (problem_id, method_id, seed)
 );
 
+ALTER TABLE experiments
+    ADD COLUMN IF NOT EXISTS failure_kind TEXT NULL,
+    ADD COLUMN IF NOT EXISTS failure_message TEXT NULL,
+    ADD COLUMN IF NOT EXISTS retryable BOOLEAN NULL;
+
 CREATE INDEX IF NOT EXISTS experiments_claimable
     ON experiments (status, lease_expires_at, created_at);
+
+DROP INDEX IF EXISTS experiments_completeness_interval_unique;
+DROP INDEX IF EXISTS experiments_semantic_work_unique;
+
+ALTER TABLE experiments
+    ADD COLUMN IF NOT EXISTS semantic_unique_enforced BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE experiments
+    ALTER COLUMN semantic_unique_enforced SET DEFAULT true;
+
+WITH ranked_semantic_work AS (
+    SELECT id,
+           ROW_NUMBER() OVER (
+               PARTITION BY problem_id, method_id, config
+               ORDER BY created_at, id
+           ) AS position
+    FROM experiments
+    WHERE lane <> 'verification'
+)
+UPDATE experiments AS experiment
+SET semantic_unique_enforced = ranked.position = 1
+FROM ranked_semantic_work AS ranked
+WHERE experiment.id = ranked.id;
+
+UPDATE experiments
+SET semantic_unique_enforced = true
+WHERE lane = 'verification';
+
+CREATE UNIQUE INDEX experiments_semantic_work_unique
+    ON experiments (problem_id, method_id, config)
+    WHERE lane <> 'verification' AND semantic_unique_enforced;
 
 CREATE TABLE IF NOT EXISTS artifacts (
     digest TEXT PRIMARY KEY,
@@ -86,6 +125,31 @@ CREATE TABLE IF NOT EXISTS artifacts (
     experiment_id UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+DROP INDEX IF EXISTS artifacts_experiment_unique;
+
+ALTER TABLE artifacts
+    ADD COLUMN IF NOT EXISTS experiment_unique_enforced BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE artifacts
+    ALTER COLUMN experiment_unique_enforced SET DEFAULT true;
+
+WITH ranked_artifacts AS (
+    SELECT digest,
+           ROW_NUMBER() OVER (
+               PARTITION BY experiment_id
+               ORDER BY created_at, digest
+           ) AS position
+    FROM artifacts
+)
+UPDATE artifacts AS artifact
+SET experiment_unique_enforced = ranked.position = 1
+FROM ranked_artifacts AS ranked
+WHERE artifact.digest = ranked.digest;
+
+CREATE UNIQUE INDEX artifacts_experiment_unique
+    ON artifacts (experiment_id)
+    WHERE experiment_unique_enforced;
 
 CREATE TABLE IF NOT EXISTS claims (
     id UUID PRIMARY KEY,
@@ -224,6 +288,10 @@ CREATE TABLE IF NOT EXISTS budget_reservations (
     experiment_id UUID PRIMARY KEY,
     reserved_usd NUMERIC(14, 6) NOT NULL CHECK (reserved_usd >= 0),
     settled_usd NUMERIC(14, 6) NULL CHECK (settled_usd >= 0),
+    execution_dispatched BOOLEAN NOT NULL DEFAULT false,
     budget_day DATE NOT NULL DEFAULT CURRENT_DATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE budget_reservations
+    ADD COLUMN IF NOT EXISTS execution_dispatched BOOLEAN NOT NULL DEFAULT false;

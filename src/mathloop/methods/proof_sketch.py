@@ -72,6 +72,7 @@ class ProofSketchMethod:
             )
         cost_cap = min(context_cost_cap, self.settings.max_api_cost_usd_per_experiment)
 
+        context.mark_external_execution_started()
         response = self.provider.generate(
             ModelRequest(
                 model=self.model,

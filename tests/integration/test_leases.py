@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from threading import Barrier
 from uuid import uuid4
 
@@ -125,7 +126,11 @@ def test_expired_owner_cannot_heartbeat_or_complete(repository: Repository) -> N
 
     with pytest.raises(ValueError, match="not leased by this worker"):
         repository.complete(
-            experiment_id, "worker-a", result={}, cost_usd=0.0, now=expired_at
+            experiment_id,
+            "worker-a",
+            result={},
+            cost_usd=Decimal("0"),
+            now=expired_at,
         )
 
 
@@ -147,7 +152,9 @@ def test_lease_timestamp_must_be_timezone_aware(repository: Repository) -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         repository.heartbeat(uuid4(), "worker-a", now=now, lease_seconds=30)
     with pytest.raises(ValueError, match="timezone-aware"):
-        repository.complete(uuid4(), "worker-a", result={}, cost_usd=0.0, now=now)
+        repository.complete(
+            uuid4(), "worker-a", result={}, cost_usd=Decimal("0"), now=now
+        )
 
 
 def test_complete_rejects_negative_cost(repository: Repository) -> None:
@@ -158,6 +165,11 @@ def test_complete_rejects_negative_cost(repository: Repository) -> None:
     assert repository.claim_next("worker-a", now=now, lease_seconds=30) is not None
 
     with pytest.raises(ValueError, match="non-negative"):
-        repository.complete(experiment_id, "worker-a", result={}, cost_usd=-0.01)
+        repository.complete(
+            experiment_id,
+            "worker-a",
+            result={},
+            cost_usd=Decimal("-0.01"),
+        )
 
     assert repository.count_events("experiment.completed") == 0

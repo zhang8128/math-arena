@@ -27,14 +27,38 @@ class SymbolicInductionMethod:
             artifact=json.dumps(witness, sort_keys=True).encode(),
         )
 
+    def prove_sum_integers(self) -> MethodResult:
+        n = Symbol("n", integer=True, nonnegative=True)
+        base = 0
+        step = expand(
+            ((n + 1) * (n + 2) / 2)
+            - (n * (n + 1) / 2)
+            - (n + 1)
+        )
+        witness: dict[str, object] = {
+            "certificate": "sum_integers_induction",
+            "base": int(base),
+            "step": int(step),
+        }
+        return MethodResult(
+            status="candidate",
+            summary="integer-sum base and induction step normalize to zero",
+            witness=witness,
+            claim="the sum of the first n positive integers equals n(n+1)/2",
+            artifact=json.dumps(witness, sort_keys=True).encode(),
+        )
+
     def run(self, context: MethodContext) -> MethodResult:
         checker = context.problem.checker
         declared_start = checker.get("start")
         if (
             checker.get("kind") != "integer_predicate"
-            or checker.get("predicate_id") != "sum_odds"
             or type(declared_start) is not int
             or declared_start != 0
         ):
             return MethodResult(status="inapplicable", summary="unsupported identity")
-        return self.prove_sum_odds()
+        if checker.get("predicate_id") == "sum_odds":
+            return self.prove_sum_odds()
+        if checker.get("predicate_id") == "sum_integers":
+            return self.prove_sum_integers()
+        return MethodResult(status="inapplicable", summary="unsupported identity")

@@ -1,17 +1,67 @@
+import importlib.util
 import json
 import secrets
 import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from mathloop.provenance import SAGE_IMAGE_DIGEST
 from mathloop.tools.docker import DockerLimits, DockerRunner, SandboxFailure
 
 
 def _runner() -> DockerRunner:
     return DockerRunner(
-        image="mathloop-sage:10.9",
+        image=SAGE_IMAGE_DIGEST,
         limits=DockerLimits(seconds=7, memory_mb=384, cpus=0.5),
     )
+
+
+def _load_sage_runner(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    sage = ModuleType("sage")
+    sage_all = ModuleType("sage.all")
+    sage_all.QQ = object()
+    sage_all.ZZ = int
+    sage_all.PolynomialRing = object
+    sage_all.factor = object
+    sage.all = sage_all  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sage", sage)
+    monkeypatch.setitem(sys.modules, "sage.all", sage_all)
+    path = Path(__file__).parents[2] / "docker" / "sage" / "runner.py"
+    spec = importlib.util.spec_from_file_location("tested_sage_runner", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("predicate_id", "n", "expected_value"),
+    [
+        ("sum_odds", 4, 16),
+        ("sum_integers", 4, 10),
+    ],
+)
+def test_sage_sum_predicates_compare_evaluated_sum_to_closed_form(
+    predicate_id: str,
+    n: int,
+    expected_value: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_sage_runner(monkeypatch)
+    evaluated = SimpleNamespace(calls=0)
+
+    def deliberately_wrong_sum(values: object) -> int:
+        list(values)  # type: ignore[arg-type]
+        evaluated.calls += 1
+        return -1
+
+    monkeypatch.setattr(module, "sum", deliberately_wrong_sum, raising=False)
+
+    assert module._predicate(predicate_id, n) == (False, expected_value)  # type: ignore[attr-defined]
+    assert evaluated.calls == 1
 
 
 def test_run_json_uses_exact_restricted_argv_and_canonical_stdin(
@@ -55,7 +105,7 @@ def test_run_json_uses_exact_restricted_argv_and_canonical_stdin(
                 "64",
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=64m",
-                "mathloop-sage:10.9",
+                SAGE_IMAGE_DIGEST,
             ],
             {
                 "input": json.dumps({"z": 1, "a": 2}, sort_keys=True).encode(),

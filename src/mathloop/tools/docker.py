@@ -6,7 +6,9 @@ import secrets
 import subprocess
 from dataclasses import dataclass
 
-ALLOWED_SANDBOX_IMAGES = frozenset({"mathloop-sage:10.9"})
+from mathloop.provenance import SAGE_IMAGE_DIGEST
+
+ALLOWED_SANDBOX_IMAGES = frozenset({SAGE_IMAGE_DIGEST})
 
 
 class SandboxFailure(RuntimeError):

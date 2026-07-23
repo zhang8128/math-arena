@@ -5,6 +5,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+_DIRECTORY_FSYNC_SUPPORTED = os.name != "nt"
+
 
 @dataclass(frozen=True)
 class StoredArtifact:
@@ -31,6 +33,7 @@ class ArtifactStore:
                     stream.flush()
                     os.fsync(stream.fileno())
                 os.replace(temporary, destination)
+                _fsync_directory_chain(destination.parent, self.root.resolve())
             finally:
                 if os.path.exists(temporary):
                     os.unlink(temporary)
@@ -47,3 +50,25 @@ class ArtifactStore:
         if not destination.is_relative_to(root):
             raise ValueError("artifact path resolves outside artifact root")
         return destination
+
+
+def _fsync_directory(directory: Path) -> None:
+    if not _DIRECTORY_FSYNC_SUPPORTED:
+        return
+    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_directory_chain(directory: Path, root: Path) -> None:
+    current = directory.resolve()
+    boundary = root.resolve()
+    if not current.is_relative_to(boundary):
+        raise ValueError("artifact directory resolves outside artifact root")
+    while True:
+        _fsync_directory(current)
+        if current == boundary:
+            return
+        current = current.parent

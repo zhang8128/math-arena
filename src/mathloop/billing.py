@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 DATABASE_USD_QUANTUM = Decimal("0.000001")
+MAX_DATABASE_USD = Decimal("99999999.999999")
 
 
 def validate_database_usd(value: Decimal, *, field_name: str, positive: bool) -> None:
@@ -15,6 +16,8 @@ def validate_database_usd(value: Decimal, *, field_name: str, positive: bool) ->
     exponent = value.as_tuple().exponent
     if not isinstance(exponent, int) or exponent < -6:
         raise ValueError(f"{field_name} must use at most six decimal places")
+    if value > MAX_DATABASE_USD:
+        raise ValueError(f"{field_name} exceeds NUMERIC(14, 6) capacity")
 
 
 def _validate_nonempty_strings(value: object, names: tuple[str, ...]) -> None:

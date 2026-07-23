@@ -35,6 +35,9 @@ class FrozenDict(dict[str, Any]):
             dict.__setitem__(copied, deepcopy(key, active_memo), deepcopy(value, active_memo))
         return copied
 
+    def __reduce__(self) -> tuple[type[Self], tuple[dict[str, Any]]]:
+        return type(self), (dict(self),)
+
 
 def _freeze_json(value: Any) -> Any:
     if isinstance(value, dict):

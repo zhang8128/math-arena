@@ -9,6 +9,7 @@ from psycopg_pool import ConnectionPool
 
 class Database:
     def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
         self.pool = ConnectionPool(database_url, min_size=1, max_size=8, open=True)
 
     @contextmanager

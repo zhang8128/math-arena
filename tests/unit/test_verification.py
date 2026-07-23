@@ -20,6 +20,7 @@ from mathloop.domain import (
 from mathloop.predicates.base import PredicateRegistry
 from mathloop.storage.repository import InvalidIdentifierError, Repository
 from mathloop.verification import (
+    CalibrationVerificationKernel,
     IntegerWitnessVerifier,
     SymbolicCertificateVerifier,
     VerificationService,
@@ -294,25 +295,41 @@ class RecordingRepository:
         self.reads.append(("problem", problem_id))
         return self.problem
 
-    def record_verification(
-        self, claim: CandidateClaim, verification: Verification
+    def evaluate_and_record_claim(
+        self,
+        claim: CandidateClaim,
+        *,
+        record_method_outcome: bool,
     ) -> CandidateClaim:
+        del record_method_outcome
+        canonical_claim = self.get_claim(claim.id)
+        canonical_problem = self.get_problem(canonical_claim.problem_id)
+        verification = CalibrationVerificationKernel.verify(
+            CalibrationVerificationKernel(),
+            canonical_problem,
+            canonical_claim,
+        )
         self.calls.append((claim, verification))
         return advance_claim(claim, verification)
+
+
+def make_kernel() -> CalibrationVerificationKernel:
+    return CalibrationVerificationKernel()
 
 
 def test_service_persists_original_candidate_once_and_returns_one_promotion() -> None:
     claim = make_claim()
     problem = make_problem()
     repository = RecordingRepository(problem, claim)
-    service = VerificationService(
-        cast(Repository, repository),
-        IntegerWitnessVerifier(build_verifier_registry()),
-    )
+    service = VerificationService(cast(Repository, repository))
 
     promoted = service.evaluate(claim.id)
 
-    assert repository.reads == [("claim", claim.id), ("problem", problem.id)]
+    assert repository.reads == [
+        ("claim", claim.id),
+        ("claim", claim.id),
+        ("problem", problem.id),
+    ]
     assert len(repository.calls) == 1
     persisted_claim, verification = repository.calls[0]
     assert persisted_claim is claim
@@ -327,10 +344,7 @@ def test_service_rejects_malformed_claim_id_before_repository_access(
 ) -> None:
     claim = make_claim()
     repository = RecordingRepository(make_problem(), claim)
-    service = VerificationService(
-        cast(Repository, repository),
-        IntegerWitnessVerifier(build_verifier_registry()),
-    )
+    service = VerificationService(cast(Repository, repository))
 
     with pytest.raises(InvalidIdentifierError, match="claim_id"):
         service.evaluate(cast(UUID, claim_id))
@@ -354,18 +368,17 @@ class RecordingGenericVerifier:
         )
 
 
-def test_service_accepts_generic_verifier_and_passes_only_canonical_models() -> None:
+def test_service_rejects_generic_verifier() -> None:
     problem = make_problem()
     claim = make_claim()
     repository = RecordingRepository(problem, claim)
     verifier = RecordingGenericVerifier()
-    service = VerificationService(cast(Repository, repository), verifier)
 
-    rejected = service.evaluate(claim.id)
+    with pytest.raises(TypeError):
+        VerificationService(cast(Repository, repository), cast(object, verifier))
 
-    assert verifier.calls == [(problem, claim)]
-    assert repository.calls[0][0] is claim
-    assert rejected.status is ClaimStatus.REJECTED
+    assert verifier.calls == []
+    assert repository.calls == []
 
 
 def test_integer_verifier_rejects_problem_identity_mismatch_before_evaluation() -> None:

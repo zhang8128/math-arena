@@ -10,9 +10,8 @@ from enum import StrEnum
 from typing import cast
 from uuid import UUID, uuid4
 
-from mathloop.billing import validate_database_usd
+from mathloop.billing import MAX_DATABASE_USD, validate_database_usd
 from mathloop.domain import MethodVersion
-from mathloop.scheduling import MAX_DATABASE_USD
 
 MIN_INTEGER_STOP = 10
 MAX_INTEGER_STOP = 1_000_000
@@ -94,11 +93,15 @@ def ucb_score(
     return mean + exploration_value * math.sqrt(math.log(total_count + 1) / trial_count)
 
 
-def _validate_integer_search_spec(spec: Mapping[str, object]) -> tuple[int, str]:
+def _validate_integer_search_spec(
+    spec: Mapping[str, object],
+) -> tuple[int, str, object | None]:
     if not isinstance(spec, Mapping):
         raise TypeError("spec must be a mapping")
-    if set(spec) != {"stop", "order"}:
-        raise ValueError("integer search spec must contain exactly stop and order")
+    if set(spec) not in ({"stop", "order"}, {"stop", "order", "provenance"}):
+        raise ValueError(
+            "integer search spec must contain stop, order, and optional provenance"
+        )
     stop = _require_exact_int(spec["stop"], "stop", minimum=MIN_INTEGER_STOP)
     if stop > MAX_INTEGER_STOP:
         raise ValueError(f"stop cannot exceed {MAX_INTEGER_STOP}")
@@ -107,23 +110,27 @@ def _validate_integer_search_spec(spec: Mapping[str, object]) -> tuple[int, str]
         raise TypeError("order must be a string")
     if order not in VALID_INTEGER_ORDERS:
         raise ValueError("order must be ascending or boundary_first")
-    return stop, order
+    return stop, order, spec.get("provenance")
 
 
-def mutate_integer_search(spec: Mapping[str, object], rng: random.Random) -> dict[str, int | str]:
-    stop, order = _validate_integer_search_spec(spec)
+def mutate_integer_search(spec: Mapping[str, object], rng: random.Random) -> dict[str, object]:
+    stop, order, provenance = _validate_integer_search_spec(spec)
     if not isinstance(rng, random.Random):
         raise TypeError("rng must be a random.Random instance")
-    candidates: list[dict[str, int | str]] = []
+    toggled = "boundary_first" if order == "ascending" else "ascending"
+    candidates: list[dict[str, int | str]] = [
+        {"stop": stop, "order": toggled}
+    ]
     doubled = min(stop * 2, MAX_INTEGER_STOP)
     if doubled != stop:
         candidates.append({"stop": doubled, "order": order})
     halved = max(stop // 2, MIN_INTEGER_STOP)
     if halved != stop:
         candidates.append({"stop": halved, "order": order})
-    toggled = "boundary_first" if order == "ascending" else "ascending"
-    candidates.append({"stop": stop, "order": toggled})
-    return dict(rng.choice(candidates))
+    mutated: dict[str, object] = dict(rng.choice(candidates))
+    if provenance is not None:
+        mutated["provenance"] = provenance
+    return mutated
 
 
 def mutate_integer_search_method(parent: MethodVersion, rng: random.Random) -> MethodVersion:
@@ -147,8 +154,10 @@ def mutate_integer_search_method(parent: MethodVersion, rng: random.Random) -> M
 def next_completeness_spec(spec: Mapping[str, object]) -> dict[str, int | str]:
     if not isinstance(spec, Mapping):
         raise TypeError("spec must be a mapping")
-    if set(spec) != {"stop", "order"}:
-        raise ValueError("completeness spec must contain exactly stop and order")
+    if set(spec) not in ({"stop", "order"}, {"stop", "order", "provenance"}):
+        raise ValueError(
+            "completeness spec must contain stop, order, and optional provenance"
+        )
     stop = _require_exact_int(spec["stop"], "stop", minimum=1)
     if stop > MAX_INT64:
         raise ValueError("stop cannot exceed the signed int64 limit")

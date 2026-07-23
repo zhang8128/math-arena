@@ -14,11 +14,14 @@ from mathloop.domain import (
     Verification,
 )
 from mathloop.predicates.base import PredicateRegistry
+from mathloop.provenance import SAGE_IMAGE_DIGEST, verifier_provenance
 from mathloop.storage.repository import (
     ClaimStateConflictError,
     InvalidIdentifierError,
     Repository,
 )
+from mathloop.tools.docker import DockerLimits, DockerRunner
+from mathloop.verifiers.calibration import build_verifier_registry
 
 
 class JsonRunner(Protocol):
@@ -40,6 +43,18 @@ INTEGER_VERIFICATION_BOUNDS: Mapping[str, IntegerVerificationBounds] = MappingPr
         "euler_prime": IntegerVerificationBounds(minimum=0, maximum=100_000),
         "fermat_prime": IntegerVerificationBounds(minimum=0, maximum=5),
         "sum_odds": IntegerVerificationBounds(minimum=0, maximum=1_000_000_000),
+        "quadratic_two_prime": IntegerVerificationBounds(
+            minimum=0,
+            maximum=100_000,
+        ),
+        "quadratic_three_prime": IntegerVerificationBounds(
+            minimum=0,
+            maximum=100_000,
+        ),
+        "sum_integers": IntegerVerificationBounds(
+            minimum=0,
+            maximum=1_000_000_000,
+        ),
     }
 )
 
@@ -146,14 +161,22 @@ class SymbolicCertificateVerifier:
         if claim.status is not ClaimStatus.CANDIDATE:
             return self._rejected("only candidate claims can be verified")
         checker = _integer_checker(problem)
-        if checker != ("sum_odds", 0):
+        if checker not in {("sum_odds", 0), ("sum_integers", 0)}:
             return self._rejected("unsupported checker contract")
         if claim.claim_type is not ClaimType.PROOF:
             return self._rejected("symbolic certificate requires a proof claim")
         witness = claim.witness
-        if not self._is_exact_sum_odds_certificate(witness):
+        predicate_id = checker[0]
+        expected_certificate = (
+            "sum_odds_induction"
+            if predicate_id == "sum_odds"
+            else "sum_integers_induction"
+        )
+        if not self._is_exact_certificate(witness, expected_certificate):
             return self._rejected("unsupported certificate")
-        result = self.runner.run_json({"operation": "verify_sum_odds_induction"})
+        result = self.runner.run_json(
+            {"operation": f"verify_{expected_certificate}"}
+        )
         expected_keys = {"ok", "base", "step"}
         accepted = set(result) == expected_keys and all(
             result[key] is True for key in expected_keys
@@ -167,11 +190,14 @@ class SymbolicCertificateVerifier:
         )
 
     @staticmethod
-    def _is_exact_sum_odds_certificate(witness: dict[str, object] | None) -> bool:
+    def _is_exact_certificate(
+        witness: dict[str, object] | None,
+        expected_certificate: str,
+    ) -> bool:
         return (
             witness is not None
             and set(witness) == {"certificate", "base", "step"}
-            and witness["certificate"] == "sum_odds_induction"
+            and witness["certificate"] == expected_certificate
             and type(witness["base"]) is int
             and witness["base"] == 0
             and type(witness["step"]) is int
@@ -188,10 +214,39 @@ class SymbolicCertificateVerifier:
         )
 
 
+class CalibrationVerificationKernel:
+    """Own the fixed verifier implementations used by repository persistence."""
+
+    __slots__ = ()
+
+    def verify(self, problem: Problem, claim: CandidateClaim) -> Verification:
+        if claim.claim_type is ClaimType.PROOF:
+            verification = SymbolicCertificateVerifier(
+                DockerRunner(
+                    image=SAGE_IMAGE_DIGEST,
+                    limits=DockerLimits(seconds=60, memory_mb=512, cpus=1.0),
+                )
+            ).verify(
+                problem,
+                claim,
+            )
+        else:
+            verification = IntegerWitnessVerifier(build_verifier_registry()).verify(
+                problem,
+                claim,
+            )
+        return verification.model_copy(
+            update={
+                "details": {
+                    **verification.details,
+                    "provenance": verifier_provenance(verification.verifier),
+                }
+            }
+        )
+
 class VerificationService:
-    def __init__(self, repository: Repository, verifier: ClaimVerifier) -> None:
+    def __init__(self, repository: Repository) -> None:
         self.repository = repository
-        self.verifier = verifier
 
     def evaluate(self, claim_id: UUID) -> CandidateClaim:
         if type(claim_id) is not UUID:
@@ -201,6 +256,7 @@ class VerificationService:
             raise ClaimStateConflictError(
                 f"claim {claim.id} is not in candidate state"
             )
-        problem = self.repository.get_problem(claim.problem_id)
-        verification = self.verifier.verify(problem, claim)
-        return self.repository.record_verification(claim, verification)
+        return self.repository.evaluate_and_record_claim(
+            claim,
+            record_method_outcome=False,
+        )
