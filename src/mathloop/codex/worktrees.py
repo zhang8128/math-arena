@@ -3,9 +3,12 @@
 Every worktree is a fresh, detached checkout of a recorded base commit,
 scoped to a single turn, and destroyed when the turn is done. All Git
 operations run as explicit argument vectors with `shell=False` -- never a
-shell string -- and every path the manager is handed back (on `remove`) is
-re-validated before it is used, since a `CodexWorktree` value may have
-crossed a process or storage boundary since it was created.
+shell string -- and every `CodexWorktree` the manager is handed back (in
+`diff` and `remove`) has its `path` and `base_sha` re-validated and
+re-resolved before use, never trusted as-is, since the value may have
+crossed a process or storage boundary since it was created. Every
+subsequent Git call operates on that freshly resolved path, not on the
+possibly-relative or possibly-tampered field the caller supplied.
 """
 
 import hashlib
@@ -64,22 +67,37 @@ class CodexWorktreeManager:
         path = self._validate_managed_path(self.worktree_root / str(turn_id), turn_id)
         self._run(("git", "worktree", "add", "--detach", str(path), base_sha))
         worktree = CodexWorktree(turn_id=turn_id, path=path, base_sha=base_sha)
-        # A freshly checked-out worktree must be byte-identical to base_sha.
-        # It never legitimately isn't, but a dirty initial checkout (e.g. a
-        # content filter mutating files on checkout) must never be handed
-        # back to a caller as though it were a clean starting point.
-        initial_diff = self._capture_patch_bytes(worktree)
-        if initial_diff:
-            self._force_remove(worktree)
-            raise CodexWorktreeError(
-                f"newly created worktree for turn {turn_id} is not clean relative to "
-                f"base_sha {base_sha}"
-            )
-        return worktree
+        should_cleanup = True
+        try:
+            # A freshly checked-out worktree must be byte-identical to
+            # base_sha. It never legitimately isn't, but a dirty initial
+            # checkout (e.g. a content filter mutating files on checkout)
+            # must never be handed back to a caller as though it were a
+            # clean starting point. Cleanup also has to run if this check
+            # itself fails transiently -- an orphaned worktree left behind
+            # by a raised exception is exactly the kind of leak this class
+            # exists to prevent.
+            initial_diff = self._capture_patch_bytes(path, base_sha)
+            if initial_diff:
+                raise CodexWorktreeError(
+                    f"newly created worktree for turn {turn_id} is not clean relative to "
+                    f"base_sha {base_sha}"
+                )
+            should_cleanup = False
+            return worktree
+        finally:
+            if should_cleanup:
+                self._force_remove(path, base_sha)
 
     def diff(self, worktree: CodexWorktree) -> CodexWorktreePatch:
-        self._validate_managed_path(worktree.path, worktree.turn_id)
-        content = self._capture_patch_bytes(worktree)
+        # Re-validate and re-resolve on every call: `worktree` may have
+        # crossed a process or storage boundary since `create` returned it,
+        # and every subsequent git call below must operate on exactly the
+        # path and base_sha that were just validated -- never the raw,
+        # possibly-relative or possibly-tampered fields on the input value.
+        path = self._validate_managed_path(worktree.path, worktree.turn_id)
+        _validate_base_sha(worktree.base_sha)
+        content = self._capture_patch_bytes(path, worktree.base_sha)
         if len(content) > self.max_patch_bytes:
             raise CodexWorktreeError(
                 f"worktree patch of {len(content)} bytes exceeds max_patch_bytes cap of "
@@ -88,45 +106,44 @@ class CodexWorktreeManager:
         return CodexWorktreePatch(content=content, sha256=hashlib.sha256(content).hexdigest())
 
     def remove(self, worktree: CodexWorktree) -> None:
-        self._validate_managed_path(worktree.path, worktree.turn_id)
+        path = self._validate_managed_path(worktree.path, worktree.turn_id)
+        _validate_base_sha(worktree.base_sha)
         # Discard any turn-local edits so the plain `git worktree remove`
         # below (no `--force`) succeeds instead of refusing on a dirty tree.
-        self._run(("git", "-C", str(worktree.path), "reset", "--hard", worktree.base_sha))
-        self._run(("git", "-C", str(worktree.path), "clean", "-fdx"))
-        self._run(("git", "worktree", "remove", str(worktree.path)))
-        if worktree.path.exists():
-            raise CodexWorktreeError(
-                f"worktree directory still exists after removal: {worktree.path}"
-            )
+        self._run(("git", "-C", str(path), "reset", "--hard", worktree.base_sha))
+        self._run(("git", "-C", str(path), "clean", "-fdx"))
+        self._run(("git", "worktree", "remove", str(path)))
+        if path.exists():
+            raise CodexWorktreeError(f"worktree directory still exists after removal: {path}")
         self._run(("git", "worktree", "prune"))
 
-    def _force_remove(self, worktree: CodexWorktree) -> None:
+    def _force_remove(self, path: Path, base_sha: str) -> None:
         # Best-effort cleanup for a worktree this manager is rejecting; unlike
         # `remove`, this may discard a checkout that reset/clean cannot make
         # byte-identical to base_sha (e.g. the dirty-initial-checkout case),
         # so it uses `--force` rather than the plain `remove` argv.
-        self._run(("git", "-C", str(worktree.path), "reset", "--hard", worktree.base_sha))
-        self._run(("git", "-C", str(worktree.path), "clean", "-fdx"))
-        self._run(("git", "worktree", "remove", "--force", str(worktree.path)))
+        self._run(("git", "-C", str(path), "reset", "--hard", base_sha))
+        self._run(("git", "-C", str(path), "clean", "-fdx"))
+        self._run(("git", "worktree", "remove", "--force", str(path)))
         self._run(("git", "worktree", "prune"))
 
-    def _capture_patch_bytes(self, worktree: CodexWorktree) -> bytes:
+    def _capture_patch_bytes(self, path: Path, base_sha: str) -> bytes:
         # `git diff <base_sha>` only reports paths already tracked in the
         # index -- a file the agent newly created is invisible to it until
         # staged. Stage everything in the worktree's own index first so new
         # files appear in the patch alongside edits to existing ones. This
         # only touches the worktree's private index, never the source
         # checkout's.
-        self._run(("git", "-C", str(worktree.path), "add", "-A"))
+        self._run(("git", "-C", str(path), "add", "-A"))
         completed = self._run(
             (
                 "git",
                 "-C",
-                str(worktree.path),
+                str(path),
                 "diff",
                 "--binary",
                 "--no-ext-diff",
-                worktree.base_sha,
+                base_sha,
             )
         )
         return completed.stdout

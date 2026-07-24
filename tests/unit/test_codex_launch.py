@@ -39,6 +39,57 @@ def test_launch_supports_read_only_review_sandbox(tmp_path: Path) -> None:
     assert "workspace-write" not in command
 
 
+def test_command_matches_the_full_ordered_argv_shape(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.json"
+    command = CodexLaunchPolicy(
+        codex_binary=Path("/opt/codex"),
+        codex_home=Path("/safe/codex-home"),
+    ).command(
+        model="gpt-5.6-terra",
+        worktree=tmp_path,
+        schema=schema,
+        prompt="Solve the normalized problem.",
+    )
+    assert command == (
+        "/opt/codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--output-schema",
+        str(schema),
+        "--sandbox",
+        "workspace-write",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--model",
+        "gpt-5.6-terra",
+        "--cd",
+        str(tmp_path),
+        "--config",
+        'web_search="disabled"',
+        "--config",
+        "sandbox_workspace_write.network_access=false",
+        "Solve the normalized problem.",
+    )
+
+
+def test_command_web_search_live_changes_only_the_web_search_config(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.json"
+    command = CodexLaunchPolicy(
+        codex_binary=Path("/opt/codex"),
+        codex_home=Path("/safe/codex-home"),
+    ).command(
+        model="gpt-5.6-luna",
+        worktree=tmp_path,
+        schema=schema,
+        prompt="Find candidate sources.",
+        web_search="live",
+    )
+    assert 'web_search="live"' in command
+    assert 'web_search="disabled"' not in command
+    assert "sandbox_workspace_write.network_access=false" in command
+
+
 def test_environment_drops_repository_and_provider_secrets() -> None:
     env = CodexLaunchPolicy(
         codex_binary=Path("/opt/codex"),

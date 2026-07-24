@@ -5,6 +5,7 @@ throwaway repository under `tmp_path`.
 """
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 from uuid import uuid4
@@ -155,3 +156,102 @@ def test_remove_rejects_path_escaping_the_worktree_root(tmp_path: Path) -> None:
 
     with pytest.raises(CodexWorktreeError, match="outside"):
         manager.remove(escaping)
+
+
+def test_remove_rejects_symlink_planted_inside_root_that_escapes_it(tmp_path: Path) -> None:
+    # A path can be textually "inside" worktree_root and still point
+    # somewhere else entirely once symlinks resolve. Validation and every
+    # subsequent git call must agree on the *resolved* destination, not the
+    # raw path text, or a symlink could smuggle a git command outside the
+    # sandboxed root.
+    manager = CodexWorktreeManager(
+        repo_root=tmp_path / "repo", worktree_root=tmp_path / "worktrees"
+    )
+    turn_id = uuid4()
+    outside_target = tmp_path / "outside-target"
+    outside_target.mkdir()
+    symlinked_path = manager.worktree_root / str(turn_id)
+    symlinked_path.symlink_to(outside_target, target_is_directory=True)
+    escaping = CodexWorktree(turn_id=turn_id, path=symlinked_path, base_sha="a" * 40)
+
+    with pytest.raises(CodexWorktreeError, match="outside"):
+        manager.remove(escaping)
+
+
+def test_diff_resolves_a_relative_worktree_path_before_running_git(tmp_path: Path) -> None:
+    # `_run` executes git with `cwd=repo_root`, so a *relative* path handed
+    # to `-C` would be interpreted by git relative to repo_root -- a
+    # different location than what `Path.resolve()` (relative to the
+    # process cwd) validates. Using the manager on a worktree whose `path`
+    # is relative proves validation and execution now agree on one
+    # location regardless of representation.
+    repo = tmp_path / "repo"
+    base_sha = _init_repo(repo)
+    manager = CodexWorktreeManager(repo_root=repo, worktree_root=tmp_path / "worktrees")
+    turn_id = uuid4()
+    worktree = manager.create(turn_id, base_sha)
+
+    relative_path = Path(os.path.relpath(worktree.path, Path.cwd()))
+    assert not relative_path.is_absolute()
+    relative_worktree = CodexWorktree(turn_id=turn_id, path=relative_path, base_sha=base_sha)
+
+    patch = manager.diff(relative_worktree)
+
+    assert patch.content == b""
+
+    manager.remove(relative_worktree)
+    assert not worktree.path.exists()
+
+
+def test_diff_rejects_flag_shaped_base_sha_before_running_git(tmp_path: Path) -> None:
+    manager = CodexWorktreeManager(
+        repo_root=tmp_path / "repo", worktree_root=tmp_path / "worktrees"
+    )
+    turn_id = uuid4()
+    tampered = CodexWorktree(
+        turn_id=turn_id,
+        path=manager.worktree_root / str(turn_id),
+        base_sha="--exec=echo pwned",
+    )
+
+    with pytest.raises(CodexWorktreeError, match="40"):
+        manager.diff(tampered)
+
+
+def test_remove_rejects_flag_shaped_base_sha_before_running_git(tmp_path: Path) -> None:
+    manager = CodexWorktreeManager(
+        repo_root=tmp_path / "repo", worktree_root=tmp_path / "worktrees"
+    )
+    turn_id = uuid4()
+    tampered = CodexWorktree(
+        turn_id=turn_id,
+        path=manager.worktree_root / str(turn_id),
+        base_sha="--exec=echo pwned",
+    )
+
+    with pytest.raises(CodexWorktreeError, match="40"):
+        manager.remove(tampered)
+
+
+def test_create_removes_worktree_when_the_clean_check_raises_transiently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    base_sha = _init_repo(repo)
+    manager = CodexWorktreeManager(repo_root=repo, worktree_root=tmp_path / "worktrees")
+    turn_id = uuid4()
+
+    def _boom(self: CodexWorktreeManager, path: Path, base_sha: str) -> bytes:
+        raise RuntimeError("transient failure reading the diff")
+
+    monkeypatch.setattr(CodexWorktreeManager, "_capture_patch_bytes", _boom)
+
+    with pytest.raises(RuntimeError, match="transient failure"):
+        manager.create(turn_id, base_sha)
+
+    # The just-created worktree must not be left behind by a raised
+    # exception -- only the caller-visible failure mode (dirty checkout)
+    # was cleaning up before this fix.
+    assert not (tmp_path / "worktrees" / str(turn_id)).exists()
+    listing = _git("worktree", "list", cwd=repo).stdout
+    assert str(turn_id) not in listing
