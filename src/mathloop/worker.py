@@ -19,6 +19,9 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from mathloop.artifacts import ArtifactStore
 from mathloop.billing import BillingAuthorization, BillingReceipt, validate_database_usd
+from mathloop.codex.client import CodexTurnTimedOut
+from mathloop.codex.domain import CodexModelRole, CodexPolicy, CodexTurnStatus
+from mathloop.codex.events import CodexEvent
 from mathloop.config import Settings
 from mathloop.domain import (
     CandidateClaim,
@@ -35,11 +38,24 @@ from mathloop.provenance import require_current_method_provenance
 from mathloop.spawn_guard import SupervisedSpawnRegistry
 from mathloop.storage.repository import (
     ArtifactRecord,
+    CodexTurnConflictError,
+    CodexTurnNotFoundError,
     MethodNotFoundError,
     ProblemNotFoundError,
     Repository,
 )
 from mathloop.tools.docker import SandboxFailure
+
+# The accounting unit recorded for every Codex turn receipt. Codex work is
+# never given a dollar-equivalent cost: it is turns and tokens, settled
+# entirely in `codex_turns`, while `experiments.cost_usd` stays 0.
+_CODEX_ACCOUNTING_UNIT = "chatgpt_codex_turn"
+
+# How much longer the outer process boundary waits beyond a Codex turn's own
+# deadline before it resorts to a hard, uninstrumented kill of the whole
+# forked child. CodexClient enforces the real deadline; this is only a
+# backstop against a child that somehow fails to honor its own timeout.
+_CODEX_OUTER_TIMEOUT_GRACE_SECONDS = 60.0
 
 
 class ClaimVerifier(Protocol):
@@ -50,6 +66,27 @@ class ClaimVerifier(Protocol):
 class ExecutionOutcome:
     result: MethodResult
     external_execution_started: bool
+
+
+@dataclass(frozen=True)
+class ApiDollarReserve:
+    """A dollar-budgeted external reservation (the existing OpenAI API path)."""
+
+    amount: Decimal
+
+
+@dataclass(frozen=True)
+class CodexTurnReserve:
+    """A turn-budgeted external reservation (the Codex path).
+
+    Distinct from `ApiDollarReserve` so the worker can never accidentally
+    settle Codex work through the dollar-budget machinery, or vice versa --
+    the two are a frozen tagged union, not two ways to spell the same thing.
+    """
+
+    role: CodexModelRole
+    model: str
+    policy: CodexPolicy
 
 
 class ExecutionTimedOut(TimeoutError):
@@ -84,9 +121,16 @@ def _execute_in_child(
         if acknowledgement != "external_start_acknowledged":
             raise RuntimeError("external execution gate returned an invalid acknowledgement")
 
+    def emit_external_event(event: CodexEvent) -> None:
+        channel.send(("external_event", event))
+        acknowledgement, _payload = channel.recv()
+        if acknowledgement != "external_event_acknowledged":
+            raise RuntimeError("external event gate returned an invalid acknowledgement")
+
     child_context = replace(
         context,
         external_execution_callback=mark_external_execution_started,
+        emit_external_event=emit_external_event,
     )
     spawn_registry = SupervisedSpawnRegistry(channel, supervisor_channel)
     try:
@@ -123,6 +167,7 @@ class ProcessExecutionBoundary:
         *,
         timeout_seconds: float,
         external_started_callback: Callable[[], None] | None = None,
+        external_event_callback: Callable[[CodexEvent], None] | None = None,
     ) -> ExecutionOutcome:
         if type(timeout_seconds) not in (int, float) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -182,6 +227,28 @@ class ProcessExecutionBoundary:
                                 ) from error
                         external_started = True
                         parent_channel.send(("external_start_acknowledged", None))
+                        continue
+                    if kind == "external_event":
+                        if not isinstance(payload, CodexEvent):
+                            self._stop_child(process, process_group_id, descendant_groups)
+                            raise ExecutionFailed(
+                                RuntimeError("external event payload was not a CodexEvent"),
+                                external_execution_started=external_started,
+                            )
+                        if external_event_callback is not None:
+                            try:
+                                external_event_callback(payload)
+                            except Exception as error:
+                                self._stop_child(
+                                    process,
+                                    process_group_id,
+                                    descendant_groups,
+                                )
+                                raise ExecutionFailed(
+                                    error,
+                                    external_execution_started=external_started,
+                                ) from error
+                        parent_channel.send(("external_event_acknowledged", None))
                         continue
                     if kind == "process_group_ready":
                         process_group_id = int(payload)
@@ -350,6 +417,11 @@ class Worker:
             )
             return True
 
+        if method_version.spec.get("external_provider") == "codex":
+            return self._run_codex_turn(
+                claimed, worker_id, problem, method, method_version.spec, method_identity
+            )
+
         try:
             reserve = self._external_reserve(claimed, method_version.spec)
         except (TypeError, ValueError) as error:
@@ -363,7 +435,7 @@ class Worker:
             return True
         if reserve is not None and not self.repository.reserve_daily_budget(
             claimed.id,
-            reserve,
+            reserve.amount,
             self.settings.daily_api_budget_usd,
         ):
             self.repository.fail(
@@ -559,9 +631,209 @@ class Worker:
             verified += 1
         return verified
 
+    def _run_codex_turn(
+        self,
+        claimed: Experiment,
+        worker_id: str,
+        problem: Problem,
+        method: SolverMethod,
+        method_spec: dict[str, object],
+        method_identity: dict[str, object],
+    ) -> bool:
+        try:
+            reserve = self._resolve_codex_reserve(method_spec, claimed.config)
+        except (TypeError, ValueError) as error:
+            self.repository.fail(
+                claimed.id,
+                worker_id,
+                "method",
+                f"invalid codex turn configuration: {error}",
+                retryable=False,
+            )
+            return True
+
+        reservation = self.repository.reserve_codex_turn(
+            claimed.id,
+            worker_id,
+            reserve.role,
+            reserve.model,
+            reserve.policy,
+            datetime.now(UTC),
+        )
+        if reservation is None:
+            # No new codex_turns row was ever created for a turn this
+            # experiment already consumed (or lease-lapsed while reserved):
+            # reserve_codex_turn's own idempotent-replay logic is the durable
+            # guard against retrying dispatched-or-ambiguous work, so this is
+            # a genuine, non-retryable denial, never a "try again" signal.
+            self.repository.fail(
+                claimed.id,
+                worker_id,
+                "budget",
+                "codex turn reservation denied or already consumed",
+                retryable=False,
+            )
+            return True
+
+        context = MethodContext(
+            problem=problem,
+            seed=claimed.seed,
+            config={**claimed.config, "codex_reservation": reservation},
+            external_execution_id=reservation.id,
+        )
+        outer_timeout_seconds = (
+            float(reservation.deadline_seconds) + _CODEX_OUTER_TIMEOUT_GRACE_SECONDS
+        )
+
+        try:
+            outcome = self.execution_boundary.run(
+                method,
+                context,
+                timeout_seconds=outer_timeout_seconds,
+                external_started_callback=lambda: self.repository.mark_codex_turn_dispatched(
+                    reservation.id, worker_id
+                ),
+                external_event_callback=lambda event: self.repository.append_codex_turn_event(
+                    reservation.id, event
+                ),
+            )
+        except ExecutionTimedOut as error:
+            status = (
+                CodexTurnStatus.AMBIGUOUS
+                if error.external_execution_started
+                else CodexTurnStatus.FAILED
+            )
+            self._fail_codex_turn(reservation.id, status=status, message=str(error))
+            self.repository.fail(
+                claimed.id, worker_id, "infrastructure", str(error), retryable=True
+            )
+            return True
+        except ExecutionFailed as error:
+            if isinstance(error.cause, CodexTurnTimedOut):
+                status = CodexTurnStatus.TIMED_OUT
+            elif error.external_execution_started:
+                status = CodexTurnStatus.AMBIGUOUS
+            else:
+                status = CodexTurnStatus.FAILED
+            self._fail_codex_turn(reservation.id, status=status, message=repr(error.cause))
+            retryable = isinstance(error.cause, (TimeoutError, SandboxFailure, OSError))
+            self.repository.fail(
+                claimed.id,
+                worker_id,
+                "infrastructure" if retryable else "method",
+                repr(error.cause),
+                retryable=retryable,
+            )
+            return True
+
+        result = outcome.result
+        receipt = result.codex_turn_receipt
+        if receipt is None:
+            status = (
+                CodexTurnStatus.AMBIGUOUS
+                if outcome.external_execution_started
+                else CodexTurnStatus.FAILED
+            )
+            self._fail_codex_turn(
+                reservation.id, status=status, message="codex method returned no turn receipt"
+            )
+            self.repository.fail(
+                claimed.id,
+                worker_id,
+                "method",
+                "codex method returned no turn receipt",
+                retryable=False,
+            )
+            return True
+
+        try:
+            self.repository.complete_codex_turn(reservation.id, receipt)
+        except (CodexTurnConflictError, CodexTurnNotFoundError) as error:
+            # The turn ledger row is deliberately left as-is here (dispatched
+            # or running): the receipt itself is untrustworthy, but that does
+            # not mean the underlying turn actually failed, so this must not
+            # be recorded as a clean failure either. Reconciliation is the
+            # only thing allowed to give it a terminal disposition from here.
+            self.repository.fail(
+                claimed.id,
+                worker_id,
+                "method",
+                f"codex turn receipt rejected: {error}",
+                retryable=False,
+            )
+            return True
+
+        artifact_bytes = self._artifact_envelope(claimed, result, method_identity)
+        stored = self.artifacts.put_bytes(artifact_bytes, "application/json")
+        artifact = ArtifactRecord(
+            digest=stored.digest,
+            media_type=stored.media_type,
+            size_bytes=stored.size_bytes,
+            relative_path=stored.path.relative_to(self.artifacts.root.resolve()).as_posix(),
+            experiment_id=claimed.id,
+        )
+        candidate = self._candidate_for_result(claimed, result)
+        result_payload = self._result_payload(result, stored.digest)
+        self.repository.commit_worker_result(
+            claimed.id,
+            worker_id,
+            result=result_payload,
+            cost_usd=Decimal("0"),
+            artifact=artifact,
+            claim=candidate,
+        )
+        if candidate is not None:
+            self._verify_persisted_candidate(candidate.id)
+        return True
+
+    def _fail_codex_turn(
+        self, turn_id: UUID, *, status: CodexTurnStatus, message: str
+    ) -> None:
+        try:
+            self.repository.fail_codex_turn(
+                turn_id,
+                status=status,
+                failure_kind="infrastructure",
+                failure_message=message,
+            )
+        except CodexTurnConflictError:
+            # Already terminal (e.g. a concurrent reconciliation sweep beat
+            # us to it). The experiment-level failure below is still
+            # recorded regardless.
+            pass
+
+    def _resolve_codex_reserve(
+        self, method_spec: dict[str, object], experiment_config: dict[str, object]
+    ) -> CodexTurnReserve:
+        role_value = experiment_config.get("codex_role", method_spec.get("codex_role"))
+        if type(role_value) is not str:
+            raise TypeError("codex_role must be a string")
+        try:
+            role = CodexModelRole(role_value)
+        except ValueError as error:
+            raise ValueError(f"unsupported codex_role: {role_value!r}") from error
+        model_value = experiment_config.get("codex_model", method_spec.get("codex_model"))
+        if type(model_value) is not str or not model_value.strip():
+            raise TypeError("codex_model must be a non-empty string")
+        return CodexTurnReserve(role=role, model=model_value, policy=self._codex_policy())
+
+    def _codex_policy(self) -> CodexPolicy:
+        settings = self.settings
+        return CodexPolicy(
+            daily_turn_limit=settings.codex_daily_turn_limit,
+            concurrent_turn_limit=settings.codex_concurrent_turn_limit,
+            turn_timeout_seconds=settings.codex_turn_timeout_seconds,
+            model_turn_limits={
+                CodexModelRole.LUNA.value: settings.codex_luna_turn_limit,
+                CodexModelRole.TERRA.value: settings.codex_terra_turn_limit,
+                CodexModelRole.SOL.value: settings.codex_sol_turn_limit,
+            },
+            reserved_sol_turns=settings.codex_reserved_sol_turns,
+        )
+
     def _external_reserve(
         self, experiment: Experiment, method_spec: dict[str, object]
-    ) -> Decimal | None:
+    ) -> ApiDollarReserve | None:
         if "external_provider" not in method_spec:
             return None
         value = experiment.config.get(
@@ -571,12 +843,13 @@ class Worker:
                 format(self.settings.max_api_cost_usd_per_experiment, "f"),
             ),
         )
-        return _parse_database_decimal(value, "max_api_cost_usd_per_experiment", positive=True)
+        amount = _parse_database_decimal(value, "max_api_cost_usd_per_experiment", positive=True)
+        return ApiDollarReserve(amount=amount)
 
     def _settle_failed_external(
         self,
         experiment_id: UUID,
-        reserve: Decimal | None,
+        reserve: ApiDollarReserve | None,
         external_started: bool,
         *,
         retryable: bool,
@@ -584,7 +857,7 @@ class Worker:
         if reserve is None:
             return retryable
         if external_started:
-            self.repository.settle_budget(experiment_id, reserve)
+            self.repository.settle_budget(experiment_id, reserve.amount)
             return retryable
         self.repository.settle_budget(experiment_id, Decimal("0"))
         return retryable
@@ -592,7 +865,7 @@ class Worker:
     def _settle_successful_external(
         self,
         experiment_id: UUID,
-        reserve: Decimal | None,
+        reserve: ApiDollarReserve | None,
         authorization: BillingAuthorization | None,
         receipt: BillingReceipt | None,
         external_started: bool,
@@ -605,12 +878,12 @@ class Worker:
             authorization is not None
             and receipt is not None
             and receipt.authorization == authorization
-            and authorization.reserved_cost_usd <= reserve
-            and receipt.actual_cost_usd <= reserve
+            and authorization.reserved_cost_usd <= reserve.amount
+            and receipt.actual_cost_usd <= reserve.amount
         ):
             self.repository.settle_budget(experiment_id, receipt.actual_cost_usd)
             return receipt.actual_cost_usd
-        conservative = reserve if external_started else Decimal("0")
+        conservative = reserve.amount if external_started else Decimal("0")
         self.repository.settle_budget(experiment_id, conservative)
         if external_started:
             raise ValueError("external execution returned no trustworthy billing receipt")
@@ -689,6 +962,20 @@ class Worker:
             payload["billing_authorization"] = result.billing_authorization.to_audit_dict()
         if result.billing_receipt is not None:
             payload["billing_receipt"] = result.billing_receipt.to_audit_dict()
+        if result.codex_turn_receipt is not None:
+            receipt = result.codex_turn_receipt
+            # Codex accounting is turns and tokens, never a dollar-equivalent
+            # receipt: the unit is always "chatgpt_codex_turn", never "usd".
+            payload["codex_turn_receipt"] = {
+                "reservation_id": str(receipt.reservation_id),
+                "experiment_id": str(receipt.experiment_id),
+                "thread_id": receipt.thread_id,
+                "model": receipt.model,
+                "cli_version": receipt.cli_version,
+                "usage": receipt.usage.model_dump(mode="json"),
+                "final_status": receipt.final_status,
+                "accounting_unit": _CODEX_ACCOUNTING_UNIT,
+            }
         return payload
 
 

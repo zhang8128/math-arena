@@ -3,8 +3,11 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
+from uuid import UUID
 
 from mathloop.billing import BillingAuthorization, BillingReceipt
+from mathloop.codex.domain import CodexTurnReceipt
+from mathloop.codex.events import CodexEvent
 from mathloop.domain import Problem
 
 
@@ -17,6 +20,7 @@ class MethodResult:
     artifact: bytes | None = None
     billing_authorization: BillingAuthorization | None = None
     billing_receipt: BillingReceipt | None = None
+    codex_turn_receipt: CodexTurnReceipt | None = None
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,16 @@ class MethodContext:
     seed: int
     config: dict[str, object]
     external_execution_callback: Callable[[], None] | None = None
+    # Correlates this execution with an external system's own record of it
+    # (e.g. a Codex turn reservation id). Set by the worker, read by whatever
+    # concrete method needs to rebuild a request bound to that same turn.
+    external_execution_id: UUID | None = None
+    # Streams one durably-persisted event at a time back to the worker. A
+    # method (or a client it calls, such as CodexClient) invokes this
+    # synchronously per event; the worker persists the event and only then
+    # returns, so the method never observes the next event before the
+    # previous one is safely on the ledger.
+    emit_external_event: Callable[[CodexEvent], None] | None = None
 
     def mark_external_execution_started(self) -> None:
         if self.external_execution_callback is not None:
