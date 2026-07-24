@@ -304,3 +304,89 @@ def test_finish_requires_thread_turn_and_terminal_events() -> None:
     parser = CodexEventParser(max_bytes=4096)
     with pytest.raises(CodexEventError):
         parser.finish()
+
+
+def test_parser_represents_error_terminal_without_final_message() -> None:
+    parser = CodexEventParser(max_bytes=4096)
+    parser.feed(encoded({"type": "thread.started", "thread_id": "thread-3"}))
+    parser.feed(encoded({"type": "turn.started"}))
+    parser.feed(encoded({"type": "error", "message": "stream aborted"}))
+    transcript = parser.finish()
+    assert transcript.terminal_type == "error"
+    assert transcript.final_message is None
+    assert transcript.usage is None
+    assert transcript.dispatched is True
+
+
+def test_parser_dispatched_is_true_before_a_terminal_event_is_seen() -> None:
+    parser = CodexEventParser(max_bytes=4096)
+    parser.feed(encoded({"type": "thread.started", "thread_id": "thread-1"}))
+    parser.feed(encoded({"type": "turn.started"}))
+    # The turn is durably consumed the moment turn.started is accepted, even
+    # though the stream never reaches a terminal event.
+    assert parser.dispatched is True
+    with pytest.raises(CodexEventError):
+        parser.finish()
+
+
+def test_parser_rejects_negative_usage_value() -> None:
+    parser = CodexEventParser(max_bytes=4096)
+    parser.feed(encoded({"type": "thread.started", "thread_id": "thread-1"}))
+    parser.feed(encoded({"type": "turn.started"}))
+    parser.feed(
+        encoded(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "done"},
+            }
+        )
+    )
+    with pytest.raises(CodexEventError):
+        parser.feed(
+            encoded(
+                {
+                    "type": "turn.completed",
+                    "usage": usage_payload(output_tokens=-1),
+                }
+            )
+        )
+
+
+def test_parser_discards_agent_message_captured_before_a_failed_terminal() -> None:
+    parser = CodexEventParser(max_bytes=4096)
+    parser.feed(encoded({"type": "thread.started", "thread_id": "thread-1"}))
+    parser.feed(encoded({"type": "turn.started"}))
+    parser.feed(
+        encoded(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "partial progress"},
+            }
+        )
+    )
+    parser.feed(
+        encoded({"type": "turn.failed", "error": {"message": "model overloaded"}})
+    )
+    transcript = parser.finish()
+    assert transcript.terminal_type == "turn.failed"
+    assert transcript.final_message is None
+
+
+def test_parser_never_infers_missing_fields_on_optional_failed_usage() -> None:
+    parser = CodexEventParser(max_bytes=4096)
+    parser.feed(encoded({"type": "thread.started", "thread_id": "thread-1"}))
+    parser.feed(encoded({"type": "turn.started"}))
+    incomplete_usage = usage_payload()
+    del incomplete_usage["output_tokens"]
+    # turn.failed's usage is optional, but if present it must be complete and
+    # valid -- the parser must never fabricate a zero for a missing field.
+    with pytest.raises(CodexEventError):
+        parser.feed(
+            encoded(
+                {
+                    "type": "turn.failed",
+                    "error": {"message": "model overloaded"},
+                    "usage": incomplete_usage,
+                }
+            )
+        )
