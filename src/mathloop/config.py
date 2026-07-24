@@ -46,7 +46,6 @@ class Settings(BaseSettings):
     def validate_runtime(self) -> "Settings":
         self.artifact_root = self.artifact_root.expanduser().resolve()
         self.incoming_root = self.incoming_root.expanduser().resolve()
-        self.codex_cli_path = self.codex_cli_path.expanduser().resolve()
         self.codex_repo_root = self.codex_repo_root.expanduser().resolve()
         self.codex_worktree_root = self.codex_worktree_root.expanduser().resolve()
         if self.lease_seconds <= self.max_experiment_seconds:

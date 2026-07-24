@@ -55,7 +55,7 @@ def test_codex_settings_defaults() -> None:
         lease_seconds=60,
     )
     assert settings.codex_enabled is False
-    assert settings.codex_cli_path.is_absolute()
+    assert settings.codex_cli_path == Path("codex")
     assert settings.codex_repo_root.is_absolute()
     assert settings.codex_worktree_root.is_absolute()
     assert settings.codex_daily_turn_limit == 100
@@ -74,7 +74,7 @@ def test_codex_settings_defaults() -> None:
 def test_codex_role_limits_must_sum_to_daily_limit() -> None:
     with pytest.raises(
         ValidationError,
-        match="codex role limits.*must sum to codex_daily_turn_limit",
+        match=r"codex role limits.*must sum to codex_daily_turn_limit",
     ):
         Settings(
             database_url="postgresql://mathloop:mathloop@localhost:55432/mathloop",
@@ -92,7 +92,7 @@ def test_codex_role_limits_must_sum_to_daily_limit() -> None:
 def test_codex_reserved_sol_turns_cannot_exceed_sol_limit() -> None:
     with pytest.raises(
         ValidationError,
-        match="codex_reserved_sol_turns.*cannot exceed codex_sol_turn_limit",
+        match=r"codex_reserved_sol_turns.*cannot exceed codex_sol_turn_limit",
     ):
         Settings(
             database_url="postgresql://mathloop:mathloop@localhost:55432/mathloop",
