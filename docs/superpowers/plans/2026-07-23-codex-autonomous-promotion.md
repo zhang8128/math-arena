@@ -20,7 +20,9 @@
 - Existing test edits/deletions are human-gated; new tests may live under `tests/autonomous/`.
 - The operator checkout is never mutated by automatic promotion. The canonical self-modifying runtime uses a dedicated clean clone under `.mathloop/runtime-repo`.
 - The stable supervisor/promotion controller always executes from the operator-approved installation, not from candidate/runtime code.
-- Every merge requires fixed gates, a fresh read-only Sol review, an equal-budget canary, compare-and-swap confirmation of runtime `main`, and rollback metadata.
+- Every merge requires fixed gates, a fresh read-only deep-model review, an equal-budget canary, compare-and-swap confirmation of runtime `main`, and rollback metadata.
+- When more than one agent lane is enabled (see `2026-07-24-claude-code-lane.md`), the fresh review must run on a different provider than the patch-originating turn; a same-provider reserved deep-tier review is the fallback only when a single lane is enabled.
+- The fresh review is a cheap-failure filter, not the safety argument. The load-bearing gates are the fixed checks, the exact independent verifier, and the persisted-outcome canary. Never weaken or skip the canary on the grounds that a review approved.
 - Mathematical publication remains human-gated.
 
 ---
@@ -127,8 +129,8 @@ class PromotionStatus(StrEnum):
 
 `PatchCandidate` binds candidate ID, originating Codex turn, base SHA, patch
 SHA-256, patch size, changed paths/change kinds, task, creation time, and
-status. Reviews bind reviewer turn/model/CLI version, candidate/base/patch
-identity, verdict, findings, and transcript digest. Canaries bind parent and
+status. Reviews bind reviewer provider, turn/model/CLI version,
+candidate/base/patch identity, verdict, findings, and transcript digest. Canaries bind parent and
 candidate commits, problem IDs, seeds, allocations, attempts, turn/token/time
 cost, verified/rejected outcomes, and threshold decision.
 
@@ -519,7 +521,7 @@ git commit -m "feat: verify patches in controlled runtime repo"
 
 ---
 
-### Task 5: Fresh Sol Review Gate
+### Task 5: Fresh Cross-Provider Review Gate
 
 **Files:**
 - Create: `src/mathloop/promotion/review.py`
@@ -545,6 +547,19 @@ def test_reviewer_is_fresh_read_only_and_bound_to_exact_patch() -> None:
 def test_approval_for_another_patch_cannot_be_persisted() -> None:
     with pytest.raises(ReviewIdentityMismatch):
         repository.record_review(candidate.id, other_patch_review)
+
+
+def test_review_runs_on_a_different_provider_than_the_author_turn() -> None:
+    review = dual_lane_reviewer.review(codex_authored_candidate, checks)
+    assert review.reviewer_provider == "claude"
+    review = dual_lane_reviewer.review(claude_authored_candidate, checks)
+    assert review.reviewer_provider == "codex"
+
+
+def test_single_lane_falls_back_to_reserved_deep_tier_same_provider() -> None:
+    review = codex_only_reviewer.review(codex_authored_candidate, checks)
+    assert review.reviewer_provider == "codex"
+    assert "gpt-5.6-sol" in fake_codex.last_command
 ```
 
 Also prove no resume/thread reuse, no candidate worktree writes, no live web,
@@ -575,6 +590,19 @@ quality, checker independence, holdout contamination, resource limits, and
 scope review. The reviewer is not asked to edit. Approval is accepted only
 when `findings` contains no Critical or Important item and every identity
 matches persisted evidence.
+
+Reviewer selection: the reviewer looks up the provider of the candidate's
+originating turn. When the other lane is enabled, the review runs on that
+other provider's deep tier — a Codex-authored patch is reviewed by a Claude
+Code deep-model read-only turn (plan permission mode, `Read`/`Glob`/`Grep`
+only, no MCP, no web), and a Claude-authored patch by a reserved Sol
+`--sandbox read-only` turn. Only when a single lane is enabled may the review
+fall back to the same provider's reserved deep tier. `reviewer_provider` is
+part of persisted review identity, and a same-provider review recorded while
+the other lane was enabled is an `InvalidPromotionTransition`. Same-family
+review is context diversity at best; cross-provider review is the cheapest
+real model diversity available, and the persisted-outcome canary remains the
+structural gate either way.
 
 - [ ] **Step 4: Run focused gates**
 
@@ -887,6 +915,7 @@ explicitly attempt:
 - Patch traversal, rename, binary, symlink, submodule, mixed-scope, test
   weakening, dependency, Docker, and promotion-policy bypass.
 - Reviewer identity/patch substitution.
+- Same-provider self-review while a second agent lane was available.
 - Holdout contamination and unequal canary budgets.
 - Runtime-main race, interrupted merge, false reconciliation, and rollback
   bypass.

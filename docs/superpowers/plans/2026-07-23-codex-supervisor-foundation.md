@@ -12,7 +12,9 @@
 
 - Reuse saved ChatGPT Codex authentication; never set `OPENAI_API_KEY` or `CODEX_API_KEY`.
 - Enforce 100 started turns/day, four concurrent turns, 30 minutes/turn, and model quotas of 40 Luna, 40 Terra, and 20 Sol.
-- Keep at least ten Sol turns reserved for escalation/review.
+- Keep at least ten Sol turns reserved for escalation/review. These reserved
+  turns are deliberately unconsumed in this phase; the promotion plan's fresh
+  review gate is their consumer.
 - Record Codex accounting as turns and tokens; do not manufacture a dollar-equivalent receipt.
 - A durable `turn.started` event consumes the turn; dispatched or ambiguous work is never retried automatically.
 - Run Codex only in a disposable worktree with `--ephemeral`, `--json`, `--output-schema`, explicit model, `workspace-write`, ignored user config/rules, live web search disabled in this foundation phase, and shell network disabled.
@@ -306,6 +308,20 @@ def test_parser_reduces_completed_turn_and_usage() -> None:
     assert transcript.usage.output_tokens == 4
 
 
+def test_parser_represents_failed_turn_without_final_message() -> None:
+    parser = CodexEventParser(max_bytes=4096)
+    parser.feed(encoded({"type": "thread.started", "thread_id": "thread-2"}))
+    parser.feed(encoded({"type": "turn.started"}))
+    parser.feed(
+        encoded({"type": "turn.failed", "error": {"message": "model overloaded"}})
+    )
+    transcript = parser.finish()
+    assert transcript.dispatched is True
+    assert transcript.terminal_type == "turn.failed"
+    assert transcript.final_message is None
+    assert transcript.usage is None
+
+
 def test_parser_rejects_duplicate_start_completion_and_oversize() -> None:
     parser = CodexEventParser(max_bytes=80)
     parser.feed(encoded({"type": "turn.started"}))
@@ -342,8 +358,9 @@ class CodexEvent:
 class CodexTranscript:
     thread_id: str
     dispatched: bool
-    final_message: str
-    usage: CodexUsage
+    terminal_type: str
+    final_message: str | None
+    usage: CodexUsage | None
     events: tuple[CodexEvent, ...]
 
 
@@ -369,8 +386,12 @@ Add `feed(self, line: bytes) -> CodexEvent` and
 - Accept documented `thread.started`, `turn.started`, `turn.completed`,
   `turn.failed`, `error`, and `item.*` events.
 - Preserve unknown events as evidence without treating them as lifecycle state.
-- Require exactly one thread, one turn start, one terminal event, one final
-  agent message, and non-negative integer usage fields.
+- Require exactly one thread, one turn start, and exactly one terminal event.
+- Require exactly one final agent message and non-negative integer usage
+  fields when the terminal event is `turn.completed`. A `turn.failed` or
+  `error` terminal yields `final_message=None` and only the usage the
+  terminal event actually carried (otherwise `None`) — a failed turn must
+  still produce a transcript, because the ledger settles it as evidence.
 - Reject agent messages after terminal completion.
 - Never infer missing token counts or a successful terminal state.
 
@@ -402,7 +423,7 @@ git commit -m "feat: parse Codex execution events"
 - Test: `tests/unit/test_codex_worktrees.py`
 
 **Interfaces:**
-- Produces: `CodexLaunchPolicy.command(model: str, worktree: Path, schema: Path, prompt: str, web_search: Literal["disabled", "live"] = "disabled") -> tuple[str, ...]`.
+- Produces: `CodexLaunchPolicy.command(model: str, worktree: Path, schema: Path, prompt: str, web_search: Literal["disabled", "live"] = "disabled", sandbox: Literal["workspace-write", "read-only"] = "workspace-write") -> tuple[str, ...]`.
 - Produces: `CodexLaunchPolicy.environment(source: Mapping[str, str]) -> dict[str, str]`.
 - Produces: `CodexWorktreeManager.create(turn_id, base_sha) -> CodexWorktree` and `remove(worktree)`.
 
@@ -427,6 +448,22 @@ def test_launch_is_ephemeral_structured_and_offline(tmp_path: Path) -> None:
     assert "--ignore-user-config" in command
     assert "--ignore-rules" in command
     assert "sandbox_workspace_write.network_access=false" in " ".join(command)
+
+
+def test_launch_supports_read_only_review_sandbox(tmp_path: Path) -> None:
+    command = CodexLaunchPolicy(
+        codex_binary=Path("/opt/codex"),
+        codex_home=Path("/safe/codex-home"),
+    ).command(
+        model="gpt-5.6-sol",
+        worktree=tmp_path,
+        schema=tmp_path / "schema.json",
+        prompt="Review the exact patch.",
+        sandbox="read-only",
+    )
+    sandbox_index = command.index("--sandbox")
+    assert command[sandbox_index + 1] == "read-only"
+    assert "workspace-write" not in command
 
 
 def test_environment_drops_repository_and_provider_secrets() -> None:
@@ -475,7 +512,7 @@ Expected: both modules are missing.
     "--output-schema",
     str(schema),
     "--sandbox",
-    "workspace-write",
+    sandbox,
     "--ignore-user-config",
     "--ignore-rules",
     "--model",
@@ -561,6 +598,7 @@ def test_codex_turn_limit_and_concurrency_are_atomic(repository: Repository) -> 
     )
     first = repository.reserve_codex_turn(
         experiment_id=experiment_id_1,
+        worker_id="worker-1",
         role=CodexModelRole.TERRA,
         model="gpt-5.6-terra",
         policy=policy,
@@ -569,6 +607,7 @@ def test_codex_turn_limit_and_concurrency_are_atomic(repository: Repository) -> 
     assert first is not None
     assert repository.reserve_codex_turn(
         experiment_id=experiment_id_2,
+        worker_id="worker-2",
         role=CodexModelRole.TERRA,
         model="gpt-5.6-terra",
         policy=policy,

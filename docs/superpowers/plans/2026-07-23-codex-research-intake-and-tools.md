@@ -17,6 +17,7 @@
 - Persist canonical URL, retrieval time, title, quoted statement, exact excerpt, excerpt hash, Codex turn, and search event evidence.
 - Do not schedule a discovered item until deterministic quarantine and formalization checks pass.
 - Only allowlisted exact checker kinds may produce machine-verifiable candidates; unsupported statements are `lead_only`.
+- Every `lead_only` output must have a consumer: leads are re-mined when the checker allowlist version changes and the top active leads surface in the human queue. Lead-producing lanes are never allowed to become write-only.
 - Keep holdouts scheduler-unseen and preserve a nonzero completeness allocation.
 - Expose Sage through typed bounded MCP tools; never expose a generic shell, Docker socket, database, arbitrary file path, or network fetch.
 - Pin `mcp==1.12.4` and update `uv.lock` only in the explicit human-reviewed dependency task.
@@ -35,6 +36,7 @@
 - `src/mathloop/codex/math_mcp.py` — typed FastMCP server entrypoint.
 - `src/mathloop/codex/mcp_policy.py` — generated fixed MCP configuration and provenance.
 - `src/mathloop/research/portfolio.py` — balanced category floor and adaptive allocation.
+- `src/mathloop/research/leads.py` — deterministic lead re-mining and the human lead queue.
 - `src/mathloop/storage/schema.sql` and `repository.py` — source/proposal projections.
 - `src/mathloop/runtime.py`, `scheduling.py`, and `cli.py` — research-cycle composition and status.
 
@@ -49,6 +51,7 @@ Tests:
 - `tests/unit/test_math_mcp.py`
 - `tests/unit/test_mcp_policy.py`
 - `tests/unit/test_research_portfolio.py`
+- `tests/unit/test_lead_mining.py`
 - `tests/integration/test_research_repository.py`
 - `tests/integration/test_codex_web_policy.py`
 - `tests/integration/test_math_mcp_sandbox.py`
@@ -744,7 +747,111 @@ git commit -m "feat: balance changing research portfolios"
 
 ---
 
-### Task 7: Research Cycle End-to-End and Six-Turn Canary
+### Task 7: Lead Mining and Human Lead Queue
+
+**Files:**
+- Create: `src/mathloop/research/leads.py`
+- Modify: `src/mathloop/research/intake.py`
+- Modify: `src/mathloop/storage/schema.sql`
+- Modify: `src/mathloop/storage/repository.py`
+- Modify: `src/mathloop/reporting.py`
+- Modify: `src/mathloop/cli.py`
+- Test: `tests/unit/test_lead_mining.py`
+- Test: `tests/integration/test_research_repository.py`
+
+**Interfaces:**
+- Consumes: `ResearchIntake.finalize` and `ALLOWED_CHECKER_KINDS` (Task 4).
+- Produces: `LeadMiner.remine(current_allowlist_version: str, max_batch: int) -> LeadMiningReport`.
+- Produces: `ResearchIntake.finalize_lead_revision(lead, output) -> ProblemCandidate`.
+- Produces: `Repository.list_active_leads(limit: int)` and lead funnel reporting.
+
+Rationale: without this task, `lead_only` output has no reader — the proof and
+moonshot floors would spend turns producing artifacts nothing consumes. This
+task is the consumer.
+
+- [ ] **Step 1: Write failing lead-mining tests**
+
+```python
+def test_stale_leads_enqueue_bounded_reformalization(repository: Repository) -> None:
+    for _ in range(6):
+        ingest_lead_only_problem(repository, allowlist_version="v1")
+    report = miner.remine(current_allowlist_version="v2", max_batch=4)
+    assert report.enqueued == 4
+    assert repository.pending_lead_reformalizations() == 4
+
+
+def test_unchanged_allowlist_version_skips_re_mining(repository: Repository) -> None:
+    ingest_lead_only_problem(repository, allowlist_version="v1")
+    report = miner.remine(current_allowlist_version="v1", max_batch=4)
+    assert report.enqueued == 0
+
+
+def test_promoted_lead_links_new_problem_and_archives_lead(
+    repository: Repository,
+) -> None:
+    lead = ingest_lead_only_problem(repository, allowlist_version="v1")
+    candidate = intake.finalize_lead_revision(lead, now_supported_output)
+    assert candidate.checker["kind"] == "bounded_integer_counterexample"
+    assert candidate.features["promoted_from_lead"] == str(lead.problem_id)
+    assert repository.lead_state(lead.problem_id) == "promoted"
+```
+
+Also prove: a promoted lead is never enqueued or promoted twice, `remine`
+itself consumes zero Codex turns (it is a deterministic selector), a lead
+revision passes the exact same intake validation as a fresh formalization,
+`Repository.list_active_leads` orders by category then recency, and the
+report exposes funnel counts for `active`, `enqueued`, `promoted`, and
+`archived` leads.
+
+- [ ] **Step 2: Verify red**
+
+```bash
+uv run pytest -q tests/unit/test_lead_mining.py
+```
+
+Expected: `mathloop.research.leads` does not exist.
+
+- [ ] **Step 3: Implement deterministic re-mining and the queue**
+
+- Record `allowlist_version` — a SHA-256 digest of the sorted
+  `ALLOWED_CHECKER_KINDS` plus checker schema versions — on every candidate at
+  ingestion.
+- Add a `problem_leads` projection: problem ID, `allowlist_version_at_creation`,
+  state (`active`, `enqueued`, `promoted`, `archived`), and `checked_at`.
+  Transitions append reason-bearing events; terminal rows are immutable.
+- `LeadMiner.remine` selects active leads whose recorded version differs from
+  the current one, marks at most `max_batch` as `enqueued`, and returns a
+  report. Enqueued leads are scheduled as ordinary formalizer turns (Task 4)
+  charged to the lead's original portfolio category — floors are unchanged.
+- `finalize_lead_revision` revalidates exactly like `finalize`, creates a new
+  immutable candidate with `promoted_from_lead` in its features, and archives
+  the lead as `promoted`. A revision that still has no supported checker resets
+  the lead to `active` with the new version recorded, so it is not re-enqueued
+  until the allowlist changes again.
+- CLI: `mathloop codex leads --top 10` prints read-only JSON of the human
+  queue; reporting gains the lead funnel and the count of promoted leads that
+  later produced an independently verified result.
+
+- [ ] **Step 4: Run focused gates**
+
+```bash
+uv run pytest -q tests/unit/test_lead_mining.py tests/integration/test_research_repository.py
+uv run ruff check src/mathloop/research/leads.py src/mathloop/research/intake.py tests/unit/test_lead_mining.py
+uv run mypy src/mathloop/research/leads.py src/mathloop/research/intake.py
+```
+
+Expected: all pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/mathloop/research/leads.py src/mathloop/research/intake.py src/mathloop/storage/schema.sql src/mathloop/storage/repository.py src/mathloop/reporting.py src/mathloop/cli.py tests/unit/test_lead_mining.py tests/integration/test_research_repository.py
+git commit -m "feat: mine stored leads for new checkers"
+```
+
+---
+
+### Task 8: Research Cycle End-to-End and Six-Turn Canary
 
 **Files:**
 - Modify: `src/mathloop/codex/supervisor.py`
@@ -764,6 +871,10 @@ The test must perform two research epochs and assert:
 - Discovery stores cited source evidence in quarantine.
 - Formalization admits one exact computational problem and one lead-only proof.
 - Duplicate discovery does not create a second problem.
+- A lead recorded under an older allowlist version is enqueued, re-formalized,
+  and promoted to an eligible problem once its checker kind becomes supported;
+  the new problem links back to the lead and the lead is archived as promoted.
+- Active leads appear in the report's human queue with funnel counts.
 - The second epoch changes both the problem set and selected method mix.
 - All three categories receive allocation across a complete block.
 - A valid computational witness is independently accepted.
@@ -830,6 +941,8 @@ Required outcome:
 - All offline and real restricted-Sage tests pass.
 - The six-turn live canary passes with no API billing.
 - The problem and method populations both change across recorded epochs.
+- Lead-only output has a recorded consumer: the end-to-end evidence shows
+  nonzero lead re-mining flow and a populated human lead queue.
 - A whole-branch reviewer finds no Critical or Important issue in web
   prompt-injection containment, source provenance, checker admission, MCP
   authority, balanced scheduling, or mathematical verification.
