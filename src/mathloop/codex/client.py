@@ -514,11 +514,10 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> int:
     members = _process_group_members(process_group_id)
     descendant_pid = next((pid for pid in members if pid != process.pid), process.pid)
     other_pids = tuple(pid for pid in members if pid != process.pid)
-    all_known_pids = (process.pid, *other_pids)
 
-    _signal_group(process_group_id, signal.SIGTERM, all_known_pids)
+    _signal_group(process_group_id, signal.SIGTERM, process, other_pids)
     if _group_still_alive(process, other_pids, deadline=time.monotonic() + _REAP_GRACE_SECONDS):
-        _signal_group(process_group_id, signal.SIGKILL, all_known_pids)
+        _signal_group(process_group_id, signal.SIGKILL, process, other_pids)
         _group_still_alive(process, other_pids, deadline=time.monotonic() + _REAP_GRACE_SECONDS)
     # Best-effort reap of the direct child so it never lingers as a zombie.
     # Other group members are not this process's children and cannot be
@@ -531,7 +530,9 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> int:
     return descendant_pid
 
 
-def _signal_group(process_group_id: int, sig: int, known_pids: tuple[int, ...]) -> None:
+def _signal_group(
+    process_group_id: int, sig: int, process: subprocess.Popen[bytes], other_pids: tuple[int, ...]
+) -> None:
     try:
         os.killpg(process_group_id, sig)
     except ProcessLookupError:
@@ -548,12 +549,19 @@ def _signal_group(process_group_id: int, sig: int, known_pids: tuple[int, ...]) 
         # not signal this group" (e.g. a setuid child, a user-namespace
         # boundary) must not be indistinguishable from "already gone",
         # since a caller relies on the group being confirmed dead once this
-        # returns. Gate the swallow on a follow-up liveness check: if none
-        # of the pids we were actually trying to reach are still alive, this
-        # is the zombie quirk and there is truly nothing left to signal; if
-        # any of them are, this was a real permission failure and must not
-        # be silently absorbed.
-        if any(_pid_alive(pid) for pid in known_pids):
+        # returns. Gate the swallow on a follow-up liveness check -- but,
+        # critically, *not* via `_pid_alive` for the direct child: that is
+        # `os.kill(pid, 0)`, which is exactly as unreliable for an unreaped
+        # zombie as everywhere else in this module (it reports "alive" for
+        # a zombie whose pid slot merely still exists), and an unreaped
+        # zombie leader alone in its group is *precisely* the condition
+        # that produces this `EPERM` in the first place -- checking it with
+        # `_pid_alive` would re-raise in exactly the case this except
+        # clause exists to swallow. `process.poll()` is authoritative for
+        # our own direct child (same reasoning as `_group_still_alive`);
+        # `_pid_alive` remains the best available check for `other_pids`,
+        # which are not this process's children.
+        if process.poll() is None or any(_pid_alive(pid) for pid in other_pids):
             raise
 
 

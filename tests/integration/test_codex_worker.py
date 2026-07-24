@@ -25,14 +25,20 @@ from mathloop.codex.client import CodexClient, CodexRequest, CodexTurnTimedOut
 from mathloop.codex.domain import CodexModelRole, CodexTurnReservation
 from mathloop.codex.events import CodexEvent
 from mathloop.codex.launch import CodexLaunchPolicy
-from mathloop.codex.worktrees import CodexWorktreeManager
+from mathloop.codex.worktrees import CodexWorktreeError, CodexWorktreeManager
 from mathloop.config import Settings
 from mathloop.domain import Experiment, ExperimentStatus, MethodVersion, Problem, ProblemStatus
 from mathloop.methods.base import MethodContext, MethodRegistry, MethodResult
 from mathloop.methods.proof_sketch import ProofSketch
 from mathloop.provenance import component_provenance
 from mathloop.storage.repository import Repository
-from mathloop.worker import ExecutionFailed, ExecutionOutcome, ProcessExecutionBoundary, Worker
+from mathloop.worker import (
+    ExecutionFailed,
+    ExecutionLeaseLost,
+    ExecutionOutcome,
+    ProcessExecutionBoundary,
+    Worker,
+)
 
 # ---------------------------------------------------------------------------
 # Fake Codex CLI (shared with the low-level scenarios exercised here)
@@ -164,14 +170,25 @@ class CodexTurnMethod:
             codex_binary=self._codex_binary,
             codex_home=self._worktree_root / "codex-home",
         )
-        worktree_manager = CodexWorktreeManager(
+        inner_worktree_manager = CodexWorktreeManager(
             repo_root=self._repo_root, worktree_root=self._worktree_root
         )
+        worktree_manager: object = inner_worktree_manager
+        client_timeout = 30.0
+        if mode == "hang_with_failing_cleanup":
+            # A CodexTurnTimedOut whose cleanup also fails, driven through
+            # the real forked boundary and the real ledger-write path
+            # (mark_codex_turn_dispatched/fail_codex_turn), not just a bare
+            # ProcessExecutionBoundary -- proving the note actually reaches
+            # codex_turns.failure_message end to end, not merely that it
+            # survives pickling in isolation.
+            worktree_manager = _FailingRemoveWorktreeManager(inner_worktree_manager)
+            client_timeout = 1.0
         client = CodexClient(
             launch_policy,
-            worktree_manager,
+            worktree_manager,  # type: ignore[arg-type]
             environment={"PATH": os.environ.get("PATH", ""), "TMPDIR": tempfile.gettempdir()},
-            timeout_seconds=30.0,
+            timeout_seconds=client_timeout,
         )
         # The fake CLI only special-cases a handful of mode strings (e.g.
         # "hang", "slow_success"); anything else -- including "success" and
@@ -179,9 +196,13 @@ class CodexTurnMethod:
         # path unchanged, so forwarding the test mode directly as the
         # prompt lets one method double as the driver for those scenarios
         # too, without needing a mode-specific method class for each one.
+        # "hang_with_failing_cleanup" is the one exception: the CLI itself
+        # only knows "hang", so the prompt maps to that while the method's
+        # own dispatch (above) still keys off the full test-mode string.
+        prompt = "hang" if mode == "hang_with_failing_cleanup" else mode
         request: CodexRequest[ProofSketch] = CodexRequest(
             reservation=reservation,
-            prompt=mode,
+            prompt=prompt,
             base_sha=base_sha,
             response_schema=ProofSketch,
         )
@@ -199,6 +220,27 @@ class CodexTurnMethod:
             artifact=response.patch,
             codex_turn_receipt=receipt,
         )
+
+
+class _FailingRemoveWorktreeManager:
+    """A worktree manager whose `remove` always fails, for note-survival tests.
+
+    Duck-typed rather than a `CodexWorktreeManager` subclass so it can wrap
+    the real `create`/`diff` behavior unchanged and only override `remove`.
+    """
+
+    def __init__(self, inner: CodexWorktreeManager) -> None:
+        self._inner = inner
+
+    def create(self, turn_id: object, base_sha: str, **kwargs: object) -> object:
+        return self._inner.create(turn_id, base_sha, **kwargs)  # type: ignore[arg-type]
+
+    def diff(self, worktree: object, **kwargs: object) -> object:
+        return self._inner.diff(worktree, **kwargs)  # type: ignore[arg-type]
+
+    def remove(self, worktree: object, **kwargs: object) -> None:
+        del worktree, kwargs
+        raise CodexWorktreeError("synthetic cleanup failure for note-survival test")
 
 
 def _test_provenance() -> dict[str, object]:
@@ -339,6 +381,16 @@ def _codex_turn_row(repository: Repository, experiment_id: UUID) -> tuple[str, s
     return row[0], row[1]
 
 
+def _codex_turn_failure_message(repository: Repository, experiment_id: UUID) -> str | None:
+    with repository.database.transaction() as connection:
+        row = connection.execute(
+            "SELECT failure_message FROM codex_turns WHERE experiment_id = %(id)s",
+            {"id": experiment_id},
+        ).fetchone()
+    assert row is not None
+    return row[0]
+
+
 def _codex_turn_event_types(repository: Repository, experiment_id: UUID) -> list[str]:
     with repository.database.transaction() as connection:
         turn_row = connection.execute(
@@ -473,6 +525,33 @@ def test_rejects_a_receipt_for_another_reservation(
     assert status == "dispatched"
 
 
+def test_cleanup_failure_notes_reach_the_persisted_codex_turn_failure_message(
+    repository: Repository, tmp_path: Path, fake_codex: Path
+) -> None:
+    """A `CodexTurnTimedOut` whose cleanup also fails must not lose that
+    evidence by the time it reaches `codex_turns.failure_message`.
+
+    `CodexTurnTimedOut.__reduce__` correctly carries `__notes__` across the
+    real forked-child-to-parent pickle boundary (fixed and mutation-verified
+    in the prior round), but `_run_codex_turn` used to persist
+    `repr(error.cause)` -- which never includes `__notes__` -- discarding
+    the evidence one layer downstream from where it was actually fixed. This
+    drives the failure through the real `Worker.run_once`/`_fail_codex_turn`
+    path, not just pickling in isolation, and asserts the note text itself
+    lands in the persisted message.
+    """
+    experiment = _enqueue_codex(repository, mode="hang_with_failing_cleanup")
+
+    assert _worker(repository, tmp_path, fake_codex).run_once("worker-1")
+
+    status, _ = _codex_turn_row(repository, experiment.id)
+    assert status == "timed_out"
+    failure_message = _codex_turn_failure_message(repository, experiment.id)
+    assert failure_message is not None
+    assert "cleanup also failed" in failure_message
+    assert "synthetic cleanup failure for note-survival test" in failure_message
+
+
 # ---------------------------------------------------------------------------
 # Low-level pipe-protocol coverage: the new `external_event` extension
 # ---------------------------------------------------------------------------
@@ -564,6 +643,45 @@ def test_boundary_stops_child_when_event_callback_fails(tmp_path: Path) -> None:
         )
 
     assert isinstance(raised.value.cause, OSError)
+    assert boundary.has_live_child is False
+
+
+class _SleepsBrieflyMethod:
+    """A `SolverMethod` that just runs long enough for a heartbeat tick to fire."""
+
+    family = "sleeps-briefly"
+
+    def run(self, context: MethodContext) -> MethodResult:
+        del context
+        time.sleep(0.5)
+        return MethodResult(status="lead", summary="done")
+
+
+def test_boundary_aborts_when_heartbeat_callback_raises(tmp_path: Path) -> None:
+    """A raising `heartbeat_callback` (e.g. a transient database error) must
+    be handled exactly like its two sibling callbacks -- kill the child,
+    surface the error -- not escape `run()` unwrapped. Unlike a confirmed
+    `False` return, this is `ExecutionLeaseLost` with a `cause` set, since
+    the two situations (confirmed loss vs. inconclusive failure) are
+    genuinely different even though the safe response is identical.
+    """
+    boundary = ProcessExecutionBoundary()
+    context = MethodContext(problem=_codex_test_problem(), seed=1, config={})
+
+    def failing_heartbeat() -> bool:
+        raise RuntimeError("transient database error")
+
+    with pytest.raises(ExecutionLeaseLost) as raised:
+        boundary.run(
+            _SleepsBrieflyMethod(),
+            context,
+            timeout_seconds=5.0,
+            heartbeat_callback=failing_heartbeat,
+            heartbeat_interval_seconds=0.1,
+        )
+
+    assert isinstance(raised.value.cause, RuntimeError)
+    assert "transient database error" in str(raised.value)
     assert boundary.has_live_child is False
 
 

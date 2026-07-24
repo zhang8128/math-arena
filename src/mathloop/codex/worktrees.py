@@ -21,6 +21,7 @@ from uuid import UUID
 
 _BASE_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 _DEFAULT_MAX_PATCH_BYTES = 4 * 1024 * 1024
+_DEFAULT_CLEANUP_TIMEOUT_SECONDS = 60.0
 
 
 class CodexWorktreeError(RuntimeError):
@@ -53,12 +54,16 @@ class CodexWorktreeManager:
         worktree_root: Path,
         *,
         max_patch_bytes: int = _DEFAULT_MAX_PATCH_BYTES,
+        cleanup_timeout_seconds: float = _DEFAULT_CLEANUP_TIMEOUT_SECONDS,
     ) -> None:
         if max_patch_bytes < 1:
             raise ValueError("max_patch_bytes must be a positive integer")
+        if cleanup_timeout_seconds <= 0:
+            raise ValueError("cleanup_timeout_seconds must be positive")
         self.repo_root = repo_root.resolve()
         self.worktree_root = worktree_root.resolve()
         self.max_patch_bytes = max_patch_bytes
+        self._cleanup_timeout_seconds = cleanup_timeout_seconds
         self.worktree_root.mkdir(parents=True, exist_ok=True)
 
     def create(
@@ -90,7 +95,19 @@ class CodexWorktreeManager:
             return worktree
         finally:
             if should_cleanup:
-                self._force_remove(path, base_sha, deadline=deadline)
+                # A fresh budget of its own, not `deadline` (the caller's
+                # own budget for `create` itself): this runs only once
+                # `create` has already decided to abandon the worktree it
+                # just made, so it is reclamation, not a stage of `create`'s
+                # own active work -- the same reasoning `CodexClient`'s own
+                # post-turn `remove()` already applies. Reusing `deadline`
+                # here would mean a caller whose budget happened to run out
+                # during the dirty-checkout check gets every subsequent git
+                # command here timed out instantly, leaking this worktree
+                # and replacing whatever exception was already in flight
+                # (raised from a `finally`) with a cleanup-timeout error.
+                cleanup_deadline = time.monotonic() + self._cleanup_timeout_seconds
+                self._force_remove(path, base_sha, deadline=cleanup_deadline)
 
     def diff(
         self, worktree: CodexWorktree, *, deadline: float | None = None

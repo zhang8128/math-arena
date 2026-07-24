@@ -146,6 +146,18 @@ def main() -> int:
         time.sleep(5)
         return 0
 
+    if mode == "malformed_immediate":
+        # Exits immediately -- no sleep, no descendant -- so this process is
+        # a lone zombie in its own process group by the time the client
+        # notices the parser-contract violation and moves to kill it. This
+        # is the specific condition that produces EPERM (not ESRCH) from
+        # killpg on this platform, and the fake CLI's other error modes all
+        # avoid it (they either sleep or leave a live descendant behind).
+        emit_thread_and_turn_started()
+        sys.stdout.write("not valid json\\n")
+        sys.stdout.flush()
+        return 0
+
     if mode == "hang":
         emit_thread_and_turn_started()
         # This grandchild ignores SIGTERM outright, forcing the client's
@@ -500,6 +512,25 @@ def test_malformed_jsonl_is_rejected_and_process_is_reaped(fake_codex: Path) -> 
     with pytest.raises(CodexClientError, match="parser contract"):
         client(fake_codex, timeout=5.0).execute(
             request(mode="malformed", response_schema=ProofSketch),
+            events.append,
+        )
+
+
+def test_malformed_jsonl_from_a_lone_zombie_cli_still_reports_the_parser_error(
+    fake_codex: Path,
+) -> None:
+    """A CLI that exits immediately (no sleep, no descendant) after emitting
+    a malformed line is, by the time the client moves to kill it, a *lone*
+    zombie in its own process group -- exactly the condition that produces
+    `EPERM` (not `ESRCH`) from `killpg` on this platform. Gating the EPERM
+    swallow on `_pid_alive` for the direct child (unreliable for a zombie,
+    always reports "alive") would re-raise that `PermissionError` in place
+    of the real parser-contract diagnostic; gating on `process.poll()`
+    (authoritative) must not.
+    """
+    with pytest.raises(CodexClientError, match="parser contract"):
+        client(fake_codex, timeout=5.0).execute(
+            request(mode="malformed_immediate", response_schema=ProofSketch),
             events.append,
         )
 

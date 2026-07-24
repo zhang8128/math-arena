@@ -297,3 +297,48 @@ def test_create_removes_worktree_when_the_clean_check_raises_transiently(
     assert not (tmp_path / "worktrees" / str(turn_id)).exists()
     listing = _git("worktree", "list", cwd=repo).stdout
     assert str(turn_id) not in listing
+
+
+def test_create_gives_its_own_cleanup_a_fresh_budget_not_the_callers_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`create`'s own `_force_remove` fallback must not share the caller's
+    `deadline` for `create` itself.
+
+    If the caller's budget is already spent by the time `create` decides to
+    abandon a worktree it just made (here: the dirty-checkout detection
+    raises), reusing that same (now-expired) `deadline` for the fallback
+    cleanup would make every one of its git commands time out instantly --
+    leaking the worktree, and replacing the original exception with a
+    cleanup-timeout error raised from the `finally` block. A fresh budget of
+    its own must let cleanup actually succeed and let the original
+    exception still propagate unreplaced.
+    """
+    repo = tmp_path / "repo"
+    base_sha = _init_repo(repo)
+    manager = CodexWorktreeManager(repo_root=repo, worktree_root=tmp_path / "worktrees")
+    turn_id = uuid4()
+
+    def _boom(
+        self: CodexWorktreeManager, path: Path, base_sha: str, *, deadline: float | None = None
+    ) -> bytes:
+        del deadline
+        # Let wall-clock time pass so the caller's own (already tight)
+        # `deadline` for `create` has genuinely elapsed by the time this
+        # raises and `create`'s `finally` reaches its own cleanup call.
+        time.sleep(0.3)
+        raise RuntimeError("transient failure reading the diff")
+
+    monkeypatch.setattr(CodexWorktreeManager, "_capture_patch_bytes", _boom)
+
+    # Valid enough for the fast `git worktree add` call that precedes
+    # `_capture_patch_bytes`, but expired well before `_boom`'s deliberate
+    # delay elapses.
+    deadline = time.monotonic() + 0.1
+
+    with pytest.raises(RuntimeError, match="transient failure"):
+        manager.create(turn_id, base_sha, deadline=deadline)
+
+    assert not (tmp_path / "worktrees" / str(turn_id)).exists()
+    listing = _git("worktree", "list", cwd=repo).stdout
+    assert str(turn_id) not in listing

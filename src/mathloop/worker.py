@@ -105,20 +105,72 @@ class ExecutionFailed(RuntimeError):
 class ExecutionLeaseLost(RuntimeError):
     """The supervising worker's experiment lease could not be renewed mid-run.
 
-    Raised by `ProcessExecutionBoundary.run` when a `heartbeat_callback`
-    reports the lease is no longer held by this worker -- another worker has
-    already reclaimed the experiment (its lease looked expired to that other
-    worker, e.g. because this one missed too many heartbeats). The child is
-    killed immediately, before this exception is raised, so nothing keeps
-    running against a worktree/experiment this worker no longer owns. The
-    caller must treat this turn as aborted and must not perform any further
-    experiment-scoped repository write under the now-stale lease -- another
-    worker already owns it and is responsible for the experiment's fate.
+    Raised by `ProcessExecutionBoundary.run` in two distinct situations that
+    nonetheless demand the identical safe response:
+
+    - `heartbeat_callback()` returned `False`: the database *confirms* this
+      worker no longer holds the lease -- another worker has already
+      reclaimed the experiment (its lease looked expired to that other
+      worker, e.g. because this one missed too many heartbeats). `cause` is
+      `None` in this case.
+    - `heartbeat_callback()` raised (e.g. a transient database error):
+      whether the lease is still held is simply *unknown* -- this is not
+      the same situation as a confirmed loss, but it is treated identically
+      because the only way to safely keep running against this experiment
+      is a positive, successful renewal. Anything short of that -- a
+      confirmed "no" or an inconclusive error -- fails to meet that bar, and
+      running blind through what could be an extended outage risks the
+      exact scenario heartbeating exists to prevent: completing a turn
+      after the lease has, in fact, already lapsed for real. `cause` carries
+      the original exception so the eventual failure message can still
+      distinguish "lease confirmed lost" from "could not confirm the lease"
+      for whoever reads it later.
+
+    Either way, the child is killed immediately, before this exception is
+    raised, so nothing keeps running against a worktree/experiment this
+    worker can no longer be sure it owns. The caller must treat this turn as
+    aborted and must not perform any further experiment-scoped repository
+    write under the now-suspect lease -- if it was genuinely lost, another
+    worker already owns it and is responsible for the experiment's fate; if
+    it merely couldn't be confirmed, the lease will either still be renewed
+    by a database that recovers before it actually expires, or will lapse
+    naturally and be reclaimed like any other abandoned lease -- neither
+    outcome is helped by this worker racing a write against it.
     """
 
-    def __init__(self, *, external_execution_started: bool) -> None:
-        super().__init__("the supervising worker's experiment lease was lost mid-execution")
+    def __init__(
+        self, *, external_execution_started: bool, cause: BaseException | None = None
+    ) -> None:
+        message = (
+            "the supervising worker's experiment lease was lost mid-execution"
+            if cause is None
+            else (
+                "the supervising worker could not confirm its experiment lease "
+                f"mid-execution: {cause!r}"
+            )
+        )
+        super().__init__(message)
         self.external_execution_started = external_execution_started
+        self.cause = cause
+
+
+def _describe_failure_cause(cause: BaseException) -> str:
+    """Render `cause` for a persisted failure message, notes included.
+
+    `repr(cause)` -- what every codex-turn failure message used to be built
+    from -- never includes `__notes__`. That silently discards the only
+    channel `CodexClient.execute`'s own cleanup-failure handling has for
+    attaching evidence to an already-in-flight exception (e.g. "the turn
+    timed out, and cleanup also failed: ..."), on exactly the path
+    (`codex_turns.failure_message`) an operator or `reconcile_codex_turns`
+    would actually read it from. Appending notes here, once, at the point a
+    failure is persisted, is cheaper and more robust than fixing every
+    individual call site that might format a cause.
+    """
+    notes = getattr(cause, "__notes__", None)
+    if not notes:
+        return repr(cause)
+    return f"{cause!r} [notes: {'; '.join(notes)}]"
 
 
 def _execute_in_child(
@@ -239,7 +291,25 @@ class ProcessExecutionBoundary:
                     and next_heartbeat_at is not None
                     and time.monotonic() >= next_heartbeat_at
                 ):
-                    if not heartbeat_callback():
+                    try:
+                        renewed = heartbeat_callback()
+                    except Exception as error:
+                        # A heartbeat call that raises (e.g. a transient
+                        # database error) proves nothing about whether the
+                        # lease is still held -- unlike a confirmed `False`,
+                        # this is genuinely unknown. But the safe action is
+                        # identical either way (see ExecutionLeaseLost's own
+                        # docstring for the full reasoning): only a positive,
+                        # successful renewal justifies letting the child keep
+                        # running, so an inconclusive failure aborts exactly
+                        # like a confirmed loss, carrying the original error
+                        # as `cause` so it isn't lost from the eventual
+                        # failure message.
+                        self._stop_child(process, process_group_id, descendant_groups)
+                        raise ExecutionLeaseLost(
+                            external_execution_started=external_started, cause=error
+                        ) from error
+                    if not renewed:
                         # This worker no longer owns the experiment's lease.
                         # Kill the child immediately -- it must never keep
                         # running (or writing to its worktree) against an
@@ -784,13 +854,14 @@ class Worker:
                 status = CodexTurnStatus.AMBIGUOUS
             else:
                 status = CodexTurnStatus.FAILED
-            self._fail_codex_turn(reservation.id, status=status, message=repr(error.cause))
+            failure_description = _describe_failure_cause(error.cause)
+            self._fail_codex_turn(reservation.id, status=status, message=failure_description)
             retryable = isinstance(error.cause, (TimeoutError, SandboxFailure, OSError))
             self.repository.fail(
                 claimed.id,
                 worker_id,
                 "infrastructure" if retryable else "method",
-                repr(error.cause),
+                failure_description,
                 retryable=retryable,
             )
             return True
