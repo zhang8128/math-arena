@@ -237,17 +237,39 @@ def test_remove_rejects_flag_shaped_base_sha_before_running_git(tmp_path: Path) 
 def test_run_converts_a_subprocess_timeout_into_a_worktree_error(tmp_path: Path) -> None:
     # `_run` is the single choke point `create`/`diff`/`remove` all funnel
     # through; exercising it directly (rather than contriving a genuinely
-    # slow git invocation) proves the `timeout=` parameter is actually
+    # slow git invocation) proves the `deadline=` parameter is actually
     # enforced by `subprocess.run`, not merely accepted and ignored, without
     # depending on git's own timing.
     manager = CodexWorktreeManager(repo_root=tmp_path, worktree_root=tmp_path / "worktrees")
 
     started = time.monotonic()
-    with pytest.raises(CodexWorktreeError, match="timeout"):
-        manager._run(("sleep", "2"), timeout=0.2)
+    with pytest.raises(CodexWorktreeError, match="remaining"):
+        manager._run(("sleep", "2"), deadline=time.monotonic() + 0.2)
     elapsed = time.monotonic() - started
 
     assert elapsed < 1.5
+
+
+def test_run_recomputes_remaining_time_from_one_shared_deadline_across_calls(
+    tmp_path: Path,
+) -> None:
+    # `deadline` is one absolute instant shared across every `_run` call
+    # within a single `create`/`diff`/`remove` invocation, each of which
+    # issues more than one git command (`create` issues 3, `remove` issues
+    # 4). If `_run` instead treated its parameter as a fresh per-call
+    # timeout duration, a multi-command method could overshoot the deadline
+    # by multiples of it -- exactly the regression this proves is fixed.
+    # Two sequential calls sharing the same deadline demonstrate this: the
+    # first consumes most of a deliberately tight budget and must succeed;
+    # the second, sharing what is left of that *same* deadline rather than
+    # a fresh timeout of its own, must then fail fast.
+    manager = CodexWorktreeManager(repo_root=tmp_path, worktree_root=tmp_path / "worktrees")
+    deadline = time.monotonic() + 0.3
+
+    manager._run(("sleep", "0.2"), deadline=deadline)
+
+    with pytest.raises(CodexWorktreeError, match="remaining"):
+        manager._run(("sleep", "5"), deadline=deadline)
 
 
 def test_create_removes_worktree_when_the_clean_check_raises_transiently(
@@ -259,9 +281,9 @@ def test_create_removes_worktree_when_the_clean_check_raises_transiently(
     turn_id = uuid4()
 
     def _boom(
-        self: CodexWorktreeManager, path: Path, base_sha: str, *, timeout: float | None = None
+        self: CodexWorktreeManager, path: Path, base_sha: str, *, deadline: float | None = None
     ) -> bytes:
-        del timeout
+        del deadline
         raise RuntimeError("transient failure reading the diff")
 
     monkeypatch.setattr(CodexWorktreeManager, "_capture_patch_bytes", _boom)

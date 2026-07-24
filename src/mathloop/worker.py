@@ -102,6 +102,25 @@ class ExecutionFailed(RuntimeError):
         self.external_execution_started = external_execution_started
 
 
+class ExecutionLeaseLost(RuntimeError):
+    """The supervising worker's experiment lease could not be renewed mid-run.
+
+    Raised by `ProcessExecutionBoundary.run` when a `heartbeat_callback`
+    reports the lease is no longer held by this worker -- another worker has
+    already reclaimed the experiment (its lease looked expired to that other
+    worker, e.g. because this one missed too many heartbeats). The child is
+    killed immediately, before this exception is raised, so nothing keeps
+    running against a worktree/experiment this worker no longer owns. The
+    caller must treat this turn as aborted and must not perform any further
+    experiment-scoped repository write under the now-stale lease -- another
+    worker already owns it and is responsible for the experiment's fate.
+    """
+
+    def __init__(self, *, external_execution_started: bool) -> None:
+        super().__init__("the supervising worker's experiment lease was lost mid-execution")
+        self.external_execution_started = external_execution_started
+
+
 def _execute_in_child(
     method: SolverMethod,
     context: MethodContext,
@@ -168,9 +187,13 @@ class ProcessExecutionBoundary:
         timeout_seconds: float,
         external_started_callback: Callable[[], None] | None = None,
         external_event_callback: Callable[[CodexEvent], None] | None = None,
+        heartbeat_callback: Callable[[], bool] | None = None,
+        heartbeat_interval_seconds: float = 60.0,
     ) -> ExecutionOutcome:
         if type(timeout_seconds) not in (int, float) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if heartbeat_callback is not None and heartbeat_interval_seconds <= 0:
+            raise ValueError("heartbeat_interval_seconds must be positive")
         process_context = multiprocessing.get_context("forkserver")
         parent_channel, child_channel = process_context.Pipe(duplex=True)
         process = process_context.Process(
@@ -194,6 +217,15 @@ class ProcessExecutionBoundary:
                     external_execution_started=False,
                 ) from error
             child_channel.close()
+            # Runs only in this supervising parent, never inside the forked
+            # child: `heartbeat_callback` is a closure over the repository,
+            # which the child must never touch directly (Task 4/5's whole
+            # design keeps the ledger boundary in the parent).
+            next_heartbeat_at = (
+                time.monotonic() + heartbeat_interval_seconds
+                if heartbeat_callback is not None
+                else None
+            )
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -202,6 +234,21 @@ class ProcessExecutionBoundary:
                         float(timeout_seconds),
                         external_execution_started=external_started,
                     )
+                if (
+                    heartbeat_callback is not None
+                    and next_heartbeat_at is not None
+                    and time.monotonic() >= next_heartbeat_at
+                ):
+                    if not heartbeat_callback():
+                        # This worker no longer owns the experiment's lease.
+                        # Kill the child immediately -- it must never keep
+                        # running (or writing to its worktree) against an
+                        # experiment another worker now owns -- then raise
+                        # so the caller aborts this turn instead of later
+                        # completing it and racing the new owner.
+                        self._stop_child(process, process_group_id, descendant_groups)
+                        raise ExecutionLeaseLost(external_execution_started=external_started)
+                    next_heartbeat_at = time.monotonic() + heartbeat_interval_seconds
                 if parent_channel.poll(min(remaining, 0.02)):
                     try:
                         kind, payload = parent_channel.recv()
@@ -696,7 +743,29 @@ class Worker:
                 external_event_callback=lambda event: self.repository.append_codex_turn_event(
                     reservation.id, event
                 ),
+                heartbeat_callback=lambda: self.repository.heartbeat(
+                    claimed.id, worker_id, datetime.now(UTC), self.settings.lease_seconds
+                ),
+                heartbeat_interval_seconds=self._codex_heartbeat_interval_seconds(),
             )
+        except ExecutionLeaseLost as error:
+            # Another worker already reclaimed this experiment -- we no
+            # longer hold its lease, so any experiment-scoped repository
+            # write here (fail/commit_worker_result) would itself raise
+            # LeaseConflictError and would race the new owner regardless.
+            # The codex turn ledger row is not gated by experiment-lease
+            # ownership (Task 4's mark_codex_turn_dispatched/fail_codex_turn
+            # never check it), so it is still worth recording here as a
+            # best-effort account of a turn this worker had to abandon
+            # mid-flight -- but the experiment itself is deliberately left
+            # untouched for its new owner to resolve.
+            status = (
+                CodexTurnStatus.AMBIGUOUS
+                if error.external_execution_started
+                else CodexTurnStatus.FAILED
+            )
+            self._fail_codex_turn(reservation.id, status=status, message=str(error))
+            return True
         except ExecutionTimedOut as error:
             status = (
                 CodexTurnStatus.AMBIGUOUS
@@ -830,6 +899,18 @@ class Worker:
             },
             reserved_sol_turns=settings.codex_reserved_sol_turns,
         )
+
+    def _codex_heartbeat_interval_seconds(self) -> float:
+        # A Codex turn can legitimately run for up to codex_turn_timeout_seconds
+        # (1800s by default) plus the outer boundary's grace period -- far
+        # longer than lease_seconds (420s by default) -- so the experiment
+        # lease must be actively renewed throughout the turn, not just held.
+        # One third of lease_seconds leaves a comfortable margin (at least
+        # two missed heartbeats' worth of slack, e.g. a slow database or a
+        # scheduling hiccup) before the lease could actually lapse, capped at
+        # 60s so an unusually large lease_seconds doesn't erode that margin
+        # by making the interval itself too coarse.
+        return min(60.0, self.settings.lease_seconds / 3)
 
     def _external_reserve(
         self, experiment: Experiment, method_spec: dict[str, object]

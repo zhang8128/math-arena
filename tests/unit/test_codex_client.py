@@ -10,6 +10,7 @@ which are invisible to a test that mocks `subprocess.Popen`.
 
 import hashlib
 import os
+import pickle
 import subprocess
 import time
 from collections.abc import Iterator
@@ -184,6 +185,29 @@ def main() -> int:
         time.sleep(5)
         return 0
 
+    if mode == "crash_with_descendant":
+        # The direct child (this script) exits immediately with a nonzero
+        # code, while a subprocess it spawned keeps running -- a regression
+        # test for skipping the group kill just because the direct child
+        # already exited on its own would leave that descendant orphaned.
+        # The descendant's stdio is explicitly redirected away from this
+        # script's own inherited pipe (not left to inherit it) so this
+        # script's own stdout still hits real EOF the moment it exits --
+        # otherwise the client's read loop would never see EOF at all and
+        # this would exercise a different, already-known, deferred issue
+        # instead of the one this mode exists to test.
+        emit_thread_and_turn_started()
+        descendant = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(3600)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        tmpdir = os.environ.get("TMPDIR")
+        if tmpdir:
+            (Path(tmpdir) / "fake-codex-descendant.pid").write_text(str(descendant.pid))
+        return 7
+
     _emit({"type": "error", "message": f"unknown fake-codex mode {mode!r}"})
     return 1
 
@@ -322,6 +346,87 @@ def test_codex_client_timeout_kills_descendants_and_never_completes(
         )
     assert raised.value.dispatched is True
     assert descendant_is_running(raised.value.descendant_pid) is False
+
+
+# ---------------------------------------------------------------------------
+# Regression coverage: fix round 2 (N1, N2, N3)
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_does_not_leak_the_worktree_on_disk_or_in_git(fake_codex: Path) -> None:
+    """A timed-out turn must still be fully cleaned up, not merely raise.
+
+    Cleanup runs with its own fixed budget (not `max(0.0, deadline - now)`,
+    which is exactly 0.0 on every timeout path by definition and would make
+    `remove()`'s first git command fail its deadline check instantly). This
+    checks the filesystem and `git worktree list` directly, not just that
+    `CodexTurnTimedOut` was raised -- an exception alone doesn't prove the
+    worktree was actually removed.
+    """
+    turn_request = request(mode="hang", response_schema=ProofSketch)
+
+    with pytest.raises(CodexTurnTimedOut):
+        client(fake_codex, timeout=1.0).execute(turn_request, sink)
+
+    worktree_path = Path(str(_repo_state["worktree_root"])) / str(turn_request.reservation.id)
+    assert not worktree_path.exists()
+    listing = _git("worktree", "list", cwd=Path(str(_repo_state["repo_root"]))).stdout
+    assert str(turn_request.reservation.id) not in listing
+
+
+def test_a_surviving_descendant_is_killed_even_after_the_direct_child_crashes(
+    fake_codex: Path,
+) -> None:
+    """A crash of the direct child must not leave a descendant it spawned running.
+
+    Mode "crash_with_descendant" spawns a genuine grandchild, then the
+    direct child (the fake CLI itself) exits immediately with a nonzero
+    code -- so `process.poll()` reports "already exited" almost the instant
+    the client notices. Skipping the process-group kill whenever the direct
+    child has already exited (rather than killing unconditionally) would
+    leave this specific grandchild running.
+    """
+    with pytest.raises(CodexClientError, match="exited with code 7"):
+        client(fake_codex, timeout=5.0).execute(
+            request(mode="crash_with_descendant", response_schema=ProofSketch), events.append
+        )
+
+    pid_path = Path(str(_repo_state["tmp_path"])) / "fake-codex-descendant.pid"
+    assert pid_path.exists()
+    descendant_pid = int(pid_path.read_text().strip())
+    assert descendant_is_running(descendant_pid) is False
+
+
+def test_codex_turn_timed_out_survives_pickling_with_its_notes() -> None:
+    """`CodexTurnTimedOut` must round-trip through pickle, notes included.
+
+    This is the exact mechanism a forked worker child relies on to report a
+    real timeout to its supervising parent over a `multiprocessing.
+    Connection`. A 2-tuple `__reduce__` return (callable, args) reconstructs
+    the exception but silently drops everything in `self.__dict__`,
+    including `__notes__` -- the only channel `CodexClient.execute`'s
+    cleanup-failure handling uses to attach evidence to an already-in-flight
+    exception. Tested directly via `pickle.loads(pickle.dumps(...))` rather
+    than through a full multiprocessing round trip: pickle is the exact
+    mechanism at fault, and this isolates it precisely.
+
+    Safe use of pickle here: this round-trips an object this same test
+    process just constructed in memory (never data from an external or
+    untrusted source), solely to verify `__reduce__`'s contract -- the same
+    trust boundary `multiprocessing.Connection` already relies on in
+    production between a forked worker child and its own parent.
+    """
+    error = CodexTurnTimedOut(30.0, dispatched=True, descendant_pid=4242)
+    error.add_note("codex worktree cleanup also failed: synthetic cleanup failure")
+
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert restored.timeout_seconds == 30.0
+    assert restored.dispatched is True
+    assert restored.descendant_pid == 4242
+    assert list(restored.__notes__) == [
+        "codex worktree cleanup also failed: synthetic cleanup failure"
+    ]
 
 
 # ---------------------------------------------------------------------------

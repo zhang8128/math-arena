@@ -14,6 +14,7 @@ possibly-relative or possibly-tampered field the caller supplied.
 import hashlib
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -61,13 +62,13 @@ class CodexWorktreeManager:
         self.worktree_root.mkdir(parents=True, exist_ok=True)
 
     def create(
-        self, turn_id: UUID, base_sha: str, *, timeout: float | None = None
+        self, turn_id: UUID, base_sha: str, *, deadline: float | None = None
     ) -> CodexWorktree:
         if not isinstance(turn_id, UUID):
             raise CodexWorktreeError("turn_id must be a uuid.UUID instance")
         _validate_base_sha(base_sha)
         path = self._validate_managed_path(self.worktree_root / str(turn_id), turn_id)
-        self._run(("git", "worktree", "add", "--detach", str(path), base_sha), timeout=timeout)
+        self._run(("git", "worktree", "add", "--detach", str(path), base_sha), deadline=deadline)
         worktree = CodexWorktree(turn_id=turn_id, path=path, base_sha=base_sha)
         should_cleanup = True
         try:
@@ -79,7 +80,7 @@ class CodexWorktreeManager:
             # itself fails transiently -- an orphaned worktree left behind
             # by a raised exception is exactly the kind of leak this class
             # exists to prevent.
-            initial_diff = self._capture_patch_bytes(path, base_sha, timeout=timeout)
+            initial_diff = self._capture_patch_bytes(path, base_sha, deadline=deadline)
             if initial_diff:
                 raise CodexWorktreeError(
                     f"newly created worktree for turn {turn_id} is not clean relative to "
@@ -89,10 +90,10 @@ class CodexWorktreeManager:
             return worktree
         finally:
             if should_cleanup:
-                self._force_remove(path, base_sha, timeout=timeout)
+                self._force_remove(path, base_sha, deadline=deadline)
 
     def diff(
-        self, worktree: CodexWorktree, *, timeout: float | None = None
+        self, worktree: CodexWorktree, *, deadline: float | None = None
     ) -> CodexWorktreePatch:
         # Re-validate and re-resolve on every call: `worktree` may have
         # crossed a process or storage boundary since `create` returned it,
@@ -101,7 +102,7 @@ class CodexWorktreeManager:
         # possibly-relative or possibly-tampered fields on the input value.
         path = self._validate_managed_path(worktree.path, worktree.turn_id)
         _validate_base_sha(worktree.base_sha)
-        content = self._capture_patch_bytes(path, worktree.base_sha, timeout=timeout)
+        content = self._capture_patch_bytes(path, worktree.base_sha, deadline=deadline)
         if len(content) > self.max_patch_bytes:
             raise CodexWorktreeError(
                 f"worktree patch of {len(content)} bytes exceeds max_patch_bytes cap of "
@@ -109,30 +110,32 @@ class CodexWorktreeManager:
             )
         return CodexWorktreePatch(content=content, sha256=hashlib.sha256(content).hexdigest())
 
-    def remove(self, worktree: CodexWorktree, *, timeout: float | None = None) -> None:
+    def remove(self, worktree: CodexWorktree, *, deadline: float | None = None) -> None:
         path = self._validate_managed_path(worktree.path, worktree.turn_id)
         _validate_base_sha(worktree.base_sha)
         # Discard any turn-local edits so the plain `git worktree remove`
         # below (no `--force`) succeeds instead of refusing on a dirty tree.
-        self._run(("git", "-C", str(path), "reset", "--hard", worktree.base_sha), timeout=timeout)
-        self._run(("git", "-C", str(path), "clean", "-fdx"), timeout=timeout)
-        self._run(("git", "worktree", "remove", str(path)), timeout=timeout)
+        self._run(
+            ("git", "-C", str(path), "reset", "--hard", worktree.base_sha), deadline=deadline
+        )
+        self._run(("git", "-C", str(path), "clean", "-fdx"), deadline=deadline)
+        self._run(("git", "worktree", "remove", str(path)), deadline=deadline)
         if path.exists():
             raise CodexWorktreeError(f"worktree directory still exists after removal: {path}")
-        self._run(("git", "worktree", "prune"), timeout=timeout)
+        self._run(("git", "worktree", "prune"), deadline=deadline)
 
-    def _force_remove(self, path: Path, base_sha: str, *, timeout: float | None = None) -> None:
+    def _force_remove(self, path: Path, base_sha: str, *, deadline: float | None = None) -> None:
         # Best-effort cleanup for a worktree this manager is rejecting; unlike
         # `remove`, this may discard a checkout that reset/clean cannot make
         # byte-identical to base_sha (e.g. the dirty-initial-checkout case),
         # so it uses `--force` rather than the plain `remove` argv.
-        self._run(("git", "-C", str(path), "reset", "--hard", base_sha), timeout=timeout)
-        self._run(("git", "-C", str(path), "clean", "-fdx"), timeout=timeout)
-        self._run(("git", "worktree", "remove", "--force", str(path)), timeout=timeout)
-        self._run(("git", "worktree", "prune"), timeout=timeout)
+        self._run(("git", "-C", str(path), "reset", "--hard", base_sha), deadline=deadline)
+        self._run(("git", "-C", str(path), "clean", "-fdx"), deadline=deadline)
+        self._run(("git", "worktree", "remove", "--force", str(path)), deadline=deadline)
+        self._run(("git", "worktree", "prune"), deadline=deadline)
 
     def _capture_patch_bytes(
-        self, path: Path, base_sha: str, *, timeout: float | None = None
+        self, path: Path, base_sha: str, *, deadline: float | None = None
     ) -> bytes:
         # `git diff <base_sha>` only reports paths already tracked in the
         # index -- a file the agent newly created is invisible to it until
@@ -140,7 +143,7 @@ class CodexWorktreeManager:
         # files appear in the patch alongside edits to existing ones. This
         # only touches the worktree's private index, never the source
         # checkout's.
-        self._run(("git", "-C", str(path), "add", "-A"), timeout=timeout)
+        self._run(("git", "-C", str(path), "add", "-A"), deadline=deadline)
         completed = self._run(
             (
                 "git",
@@ -151,7 +154,7 @@ class CodexWorktreeManager:
                 "--no-ext-diff",
                 base_sha,
             ),
-            timeout=timeout,
+            deadline=deadline,
         )
         return completed.stdout
 
@@ -175,8 +178,16 @@ class CodexWorktreeManager:
         return resolved
 
     def _run(
-        self, argv: tuple[str, ...], *, timeout: float | None = None
+        self, argv: tuple[str, ...], *, deadline: float | None = None
     ) -> subprocess.CompletedProcess[bytes]:
+        # `deadline` is one absolute monotonic instant shared across every
+        # `_run` call within a single `create`/`diff`/`remove` invocation
+        # (including their `_capture_patch_bytes`/`_force_remove` helpers,
+        # which each issue more than one git command) -- the remaining
+        # budget is recomputed fresh immediately before *this* command, so a
+        # multi-command call collectively spends at most `deadline`, not
+        # `deadline` all over again per command.
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
         try:
             completed = subprocess.run(
                 argv,
@@ -184,11 +195,11 @@ class CodexWorktreeManager:
                 capture_output=True,
                 check=False,
                 shell=False,
-                timeout=timeout,
+                timeout=remaining,
             )
         except subprocess.TimeoutExpired as error:
             raise CodexWorktreeError(
-                f"git command {' '.join(argv)!r} exceeded its {timeout}s timeout"
+                f"git command {' '.join(argv)!r} exceeded its remaining {remaining}s budget"
             ) from error
         if completed.returncode != 0:
             stderr = completed.stderr.decode(errors="replace").strip()

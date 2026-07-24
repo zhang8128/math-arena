@@ -11,9 +11,19 @@ callbacks for that, which keeps this module free of any database dependency
 and lets it run identically inside a forked worker child or a bare test.
 
 A single absolute deadline (computed once, before the worktree is even
-created) bounds every phase: worktree creation, schema write, process start,
-event reads, process wait, patch capture, and worktree cleanup. There is no
-per-stage timeout to accidentally exceed the turn's real budget.
+created) bounds every phase of the turn itself: worktree creation, schema
+write, process start, event reads, process wait, and patch capture. There is
+no separate per-stage timeout stacked on top of it for any of those phases.
+
+Final worktree removal is deliberately governed by its own, separate budget
+(`cleanup_timeout_seconds`) rather than by however much of the turn's
+deadline happens to remain. Reclamation runs strictly *after* the turn has
+already concluded -- successfully, or via that same deadline already having
+expired -- so it is not a stage of the turn the one-absolute-deadline rule
+governs; it is what happens once the turn is already over. Giving it a fixed
+floor of its own, rather than `max(0.0, deadline - now)` (which is exactly
+`0.0` on every timeout path, by definition), is what keeps a timed-out turn's
+worktree from being leaked on every single occurrence.
 """
 
 import json
@@ -38,6 +48,7 @@ from mathloop.codex.worktrees import CodexWorktree, CodexWorktreeError, CodexWor
 
 _DEFAULT_MAX_EVENT_BYTES = 16 * 1024 * 1024
 _DEFAULT_MAX_STDERR_BYTES = 1 * 1024 * 1024
+_DEFAULT_CLEANUP_TIMEOUT_SECONDS = 60.0
 _READ_CHUNK_BYTES = 65536
 _POLL_SECONDS = 0.05
 _REAP_GRACE_SECONDS = 0.5
@@ -93,10 +104,22 @@ class CodexTurnTimedOut(TimeoutError):
         self.dispatched = dispatched
         self.descendant_pid = descendant_pid
 
-    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+    def __reduce__(self) -> tuple[object, tuple[object, ...], dict[str, object]]:
+        # The 3-tuple form matters: a 2-tuple (callable, args) -- what the
+        # first version of this fix returned -- reconstructs the object but
+        # drops everything in `self.__dict__`, including `__notes__` (the
+        # only channel `CodexClient.execute`'s cleanup-failure handling uses
+        # to attach evidence to an already-in-flight exception). Returning
+        # `self.__dict__` as the third element makes pickle apply
+        # `obj.__dict__.update(self.__dict__)` after reconstruction (the
+        # default behavior when no `__setstate__` is defined), which
+        # restores `__notes__` -- and redundantly, harmlessly, re-applies
+        # the same `timeout_seconds`/`dispatched`/`descendant_pid` values
+        # `_rebuild_codex_turn_timed_out` already set from `args`.
         return (
             _rebuild_codex_turn_timed_out,
             (self.timeout_seconds, self.dispatched, self.descendant_pid),
+            self.__dict__,
         )
 
 
@@ -132,6 +155,7 @@ class CodexClient:
         timeout_seconds: float | None = None,
         max_event_bytes: int = _DEFAULT_MAX_EVENT_BYTES,
         max_stderr_bytes: int = _DEFAULT_MAX_STDERR_BYTES,
+        cleanup_timeout_seconds: float = _DEFAULT_CLEANUP_TIMEOUT_SECONDS,
     ) -> None:
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -139,12 +163,15 @@ class CodexClient:
             raise ValueError("max_event_bytes must be a positive integer")
         if max_stderr_bytes < 1:
             raise ValueError("max_stderr_bytes must be a positive integer")
+        if cleanup_timeout_seconds <= 0:
+            raise ValueError("cleanup_timeout_seconds must be positive")
         self._launch_policy = launch_policy
         self._worktree_manager = worktree_manager
         self._environment_source = dict(environment if environment is not None else os.environ)
         self._timeout_seconds = timeout_seconds
         self._max_event_bytes = max_event_bytes
         self._max_stderr_bytes = max_stderr_bytes
+        self._cleanup_timeout_seconds = cleanup_timeout_seconds
 
     def execute[T: BaseModel](
         self,
@@ -160,9 +187,7 @@ class CodexClient:
         )
         deadline = time.monotonic() + timeout
         worktree = self._worktree_manager.create(
-            request.reservation.id,
-            request.base_sha,
-            timeout=max(0.0, deadline - time.monotonic()),
+            request.reservation.id, request.base_sha, deadline=deadline
         )
         primary_error: BaseException | None = None
         response: CodexResponse[T] | None = None
@@ -174,9 +199,15 @@ class CodexClient:
             primary_error = error
         finally:
             try:
-                self._worktree_manager.remove(
-                    worktree, timeout=max(0.0, deadline - time.monotonic())
-                )
+                # A fixed budget of its own -- not `max(0.0, deadline - now)`,
+                # which is exactly 0.0 on every timeout path by definition and
+                # would make cleanup fail instantly on every single timeout.
+                # Reclamation happens after the turn's own deadline has
+                # already been spent (successfully or not), so it is a
+                # separate phase, not one more stage the turn's deadline
+                # must stretch to cover.
+                cleanup_deadline = time.monotonic() + self._cleanup_timeout_seconds
+                self._worktree_manager.remove(worktree, deadline=cleanup_deadline)
             except (CodexWorktreeError, OSError) as cleanup_error:
                 # The primary error already explains what went wrong (if
                 # any); a cleanup failure on top of that must never replace
@@ -348,9 +379,7 @@ class CodexClient:
                 f"codex final agent message did not match the response schema: {error}"
             ) from error
 
-        patch = self._worktree_manager.diff(
-            worktree, timeout=max(0.0, deadline - time.monotonic())
-        )
+        patch = self._worktree_manager.diff(worktree, deadline=deadline)
         receipt = CodexTurnReceipt(
             reservation_id=request.reservation.id,
             experiment_id=request.reservation.experiment_id,
@@ -439,19 +468,23 @@ def _drain_stderr(stream: IO[bytes], sink: list[bytes], cap_bytes: int) -> None:
 
 
 def _stop_process(process: subprocess.Popen[bytes], stderr_thread: threading.Thread) -> int:
-    """Kill the process group if it is still running; always (re)join the stderr thread.
+    """Kill the process group unconditionally; always (re)join the stderr thread.
 
-    Safe to call more than once for the same `process`/`stderr_thread` pair:
-    `process.poll()` reports a definite exit status once the process is
-    actually gone, and `Thread.join` on an already-finished thread returns
-    immediately. This lets every exception path converge on one shutdown
-    routine instead of each raise site having to remember to kill and join.
+    Always calls `_kill_process_group`, even when the direct child
+    (`process`) has already exited: it may have spawned a descendant that is
+    still alive regardless of its own exit status (e.g. it crashed, or ran
+    to a nonzero exit, while what it spawned kept running) -- skipping the
+    group kill whenever `process.poll()` is not `None` would silently orphan
+    exactly that descendant, and would then report `process`'s own (already
+    dead) pid as `descendant_pid`, making a caller's "confirmed dead" check
+    on that value pass vacuously instead of ever checking the process that
+    actually needed killing. `_kill_process_group` itself already tolerates
+    an already-exited process cheaply (its own `process.wait()` call at the
+    end returns the cached exit status immediately), so calling it
+    unconditionally costs at most one extra `ps` scan and a harmless no-op
+    signal, and is safe to call more than once for the same process.
     """
-    if process.poll() is None:
-        descendant_pid = _kill_process_group(process)
-    else:
-        assert process.pid is not None
-        descendant_pid = process.pid
+    descendant_pid = _kill_process_group(process)
     stderr_thread.join(timeout=_REAP_GRACE_SECONDS)
     return descendant_pid
 
@@ -481,10 +514,11 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> int:
     members = _process_group_members(process_group_id)
     descendant_pid = next((pid for pid in members if pid != process.pid), process.pid)
     other_pids = tuple(pid for pid in members if pid != process.pid)
+    all_known_pids = (process.pid, *other_pids)
 
-    _signal_group(process_group_id, signal.SIGTERM)
+    _signal_group(process_group_id, signal.SIGTERM, all_known_pids)
     if _group_still_alive(process, other_pids, deadline=time.monotonic() + _REAP_GRACE_SECONDS):
-        _signal_group(process_group_id, signal.SIGKILL)
+        _signal_group(process_group_id, signal.SIGKILL, all_known_pids)
         _group_still_alive(process, other_pids, deadline=time.monotonic() + _REAP_GRACE_SECONDS)
     # Best-effort reap of the direct child so it never lingers as a zombie.
     # Other group members are not this process's children and cannot be
@@ -497,7 +531,7 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> int:
     return descendant_pid
 
 
-def _signal_group(process_group_id: int, sig: int) -> None:
+def _signal_group(process_group_id: int, sig: int, known_pids: tuple[int, ...]) -> None:
     try:
         os.killpg(process_group_id, sig)
     except ProcessLookupError:
@@ -509,11 +543,18 @@ def _signal_group(process_group_id: int, sig: int) -> None:
         # reaped via `process.wait()`/`process.poll()`: `os.kill(pid, 0)`
         # still reports such a zombie as "alive" (its pid slot is still
         # occupied), but this platform's `killpg` refuses with `EPERM`
-        # rather than `ESRCH` for that same, already-dead target. Treated
-        # identically to `ProcessLookupError` -- both mean "there is nothing
-        # left here for us to affect" -- rather than escalating a spurious
-        # permission error out of what is meant to be a best-effort kill.
-        pass
+        # rather than `ESRCH` for that same, already-dead target. That is
+        # the *only* case this should swallow silently -- a genuine "we may
+        # not signal this group" (e.g. a setuid child, a user-namespace
+        # boundary) must not be indistinguishable from "already gone",
+        # since a caller relies on the group being confirmed dead once this
+        # returns. Gate the swallow on a follow-up liveness check: if none
+        # of the pids we were actually trying to reach are still alive, this
+        # is the zombie quirk and there is truly nothing left to signal; if
+        # any of them are, this was a real permission failure and must not
+        # be silently absorbed.
+        if any(_pid_alive(pid) for pid in known_pids):
+            raise
 
 
 def _group_still_alive(

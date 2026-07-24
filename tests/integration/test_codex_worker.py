@@ -11,7 +11,9 @@ and never re-executes consumed work.
 import os
 import subprocess
 import tempfile
-from datetime import UTC, datetime
+import threading
+import time
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -70,6 +72,14 @@ def main() -> int:
         # multiprocessing pipe on its way back to the parent boundary.
         time.sleep(3600)
         return 0
+
+    if mode == "slow_success":
+        # Completes normally, but only after outliving lease_seconds in the
+        # heartbeat tests below -- long enough to prove the experiment
+        # lease was actively kept alive (or, in the lease-theft test,
+        # long enough for a "thief" to steal it mid-run and for the next
+        # heartbeat to notice).
+        time.sleep(5.0)
 
     if worktree is not None:
         (worktree / "NOTES.md").write_text("codex was here\\n")
@@ -163,9 +173,15 @@ class CodexTurnMethod:
             environment={"PATH": os.environ.get("PATH", ""), "TMPDIR": tempfile.gettempdir()},
             timeout_seconds=30.0,
         )
+        # The fake CLI only special-cases a handful of mode strings (e.g.
+        # "hang", "slow_success"); anything else -- including "success" and
+        # "mismatched_receipt" -- falls through to its normal completion
+        # path unchanged, so forwarding the test mode directly as the
+        # prompt lets one method double as the driver for those scenarios
+        # too, without needing a mode-specific method class for each one.
         request: CodexRequest[ProofSketch] = CodexRequest(
             reservation=reservation,
-            prompt="success",
+            prompt=mode,
             base_sha=base_sha,
             response_schema=ProofSketch,
         )
@@ -235,16 +251,18 @@ def _enqueue_codex(repository: Repository, *, mode: str) -> Experiment:
     return experiment
 
 
-def _settings(tmp_path: Path) -> Settings:
+def _settings(tmp_path: Path, *, lease_seconds: int = 30) -> Settings:
     return Settings(
         artifact_root=tmp_path / "artifacts",
         incoming_root=tmp_path / "incoming",
         max_experiment_seconds=2,
-        lease_seconds=30,
+        lease_seconds=lease_seconds,
     )
 
 
-def _worker(repository: Repository, tmp_path: Path, fake_codex: Path) -> Worker:
+def _worker(
+    repository: Repository, tmp_path: Path, fake_codex: Path, *, lease_seconds: int = 30
+) -> Worker:
     repo_root = tmp_path / "source-repo"
     _init_repo(repo_root)
     worktree_root = tmp_path / "codex-worktrees"
@@ -257,7 +275,7 @@ def _worker(repository: Repository, tmp_path: Path, fake_codex: Path) -> Worker:
         repository,
         ArtifactStore(tmp_path / "artifacts"),
         methods,
-        _settings(tmp_path),
+        _settings(tmp_path, lease_seconds=lease_seconds),
     )
 
 
@@ -267,6 +285,48 @@ def fake_codex(tmp_path: Path) -> Path:
     script.write_text(_FAKE_CODEX_SOURCE)
     script.chmod(0o700)
     return script
+
+
+def _experiment_lease(repository: Repository, experiment_id: UUID) -> tuple[str, str | None]:
+    """Return (status, lease_owner) straight from the row -- not the domain projection.
+
+    `Experiment` (the projected domain object `repository.get_experiment`
+    returns) does not expose `lease_owner`/`lease_expires_at` at all, so
+    proving who currently holds an experiment's lease requires reading the
+    row directly.
+    """
+    with repository.database.transaction() as connection:
+        row = connection.execute(
+            "SELECT status, lease_owner FROM experiments WHERE id = %(id)s",
+            {"id": experiment_id},
+        ).fetchone()
+    assert row is not None
+    return row[0], row[1]
+
+
+def _steal_lease(repository: Repository, experiment_id: UUID, thief: str) -> None:
+    """Simulate a second worker legitimately re-claiming this experiment.
+
+    Bypasses `claim_next`'s own gate (which only reclaims an *expired*
+    lease) and writes the row directly -- this is a deterministic stand-in
+    for the real race `claim_next` would eventually produce once the
+    original worker's lease actually lapsed, not a test of `claim_next`
+    itself. What this test needs is precise timing control over exactly
+    when the "theft" lands relative to the running turn's own heartbeats.
+    """
+    with repository.database.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE experiments
+            SET lease_owner = %(thief)s, lease_expires_at = %(expires)s
+            WHERE id = %(id)s
+            """,
+            {
+                "thief": thief,
+                "expires": datetime.now(UTC) + timedelta(seconds=30),
+                "id": experiment_id,
+            },
+        )
 
 
 def _codex_turn_row(repository: Repository, experiment_id: UUID) -> tuple[str, str | None]:
@@ -607,3 +667,60 @@ def test_client_timeout_propagates_through_the_forked_boundary(tmp_path: Path) -
     assert isinstance(raised.value.cause, CodexTurnTimedOut)
     assert raised.value.cause.dispatched is True
     assert boundary.has_live_child is False
+
+
+# ---------------------------------------------------------------------------
+# C3: the experiment lease must survive a turn longer than lease_seconds,
+# and a worker that loses the lease mid-turn must abort rather than
+# complete and discard.
+# ---------------------------------------------------------------------------
+
+
+def test_heartbeat_keeps_the_lease_alive_across_a_turn_longer_than_lease_seconds(
+    repository: Repository, tmp_path: Path, fake_codex: Path
+) -> None:
+    experiment = _enqueue_codex(repository, mode="slow_success")
+    worker = _worker(repository, tmp_path, fake_codex, lease_seconds=3)
+
+    # The fake CLI's mode="slow_success" sleeps 5s -- well past lease_seconds
+    # =3 -- so `commit_worker_result`'s own lease-expiry check
+    # (`lease_expires_at <= completed_at`) would reject the completion with
+    # LeaseConflictError purely on elapsed time, in this single-worker test,
+    # unless the lease was actively renewed (heartbeat_interval_seconds =
+    # min(60, 3/3) = 1.0s) throughout the run.
+    assert worker.run_once("worker-1")
+
+    assert repository.get_experiment(experiment.id).status is ExperimentStatus.SUCCEEDED
+    assert repository.count_events("experiment.heartbeat") >= 1
+
+
+def test_lost_lease_aborts_the_turn_instead_of_completing_and_discarding(
+    repository: Repository, tmp_path: Path, fake_codex: Path
+) -> None:
+    experiment = _enqueue_codex(repository, mode="slow_success")
+    worker = _worker(repository, tmp_path, fake_codex, lease_seconds=3)
+
+    def _steal_soon() -> None:
+        time.sleep(1.5)
+        _steal_lease(repository, experiment.id, "thief-worker")
+
+    thief = threading.Thread(target=_steal_soon, daemon=True)
+    thief.start()
+    try:
+        # Aborting is still "handled work" from run_once's perspective (the
+        # experiment was claimed and dealt with, even though this worker
+        # ultimately walked away from it), so this returns True, not False.
+        assert worker.run_once("worker-1")
+    finally:
+        thief.join(timeout=5)
+
+    # The turn must never have been completed by worker-1 after losing the
+    # lease: the row is exactly what the "thief" left it as (still leased,
+    # by the thief, not succeeded with worker-1's result) -- proving
+    # worker-1 aborted instead of finishing the turn and racing
+    # commit_worker_result against the new owner.
+    status, lease_owner = _experiment_lease(repository, experiment.id)
+    assert status == ExperimentStatus.LEASED.value
+    assert lease_owner == "thief-worker"
+    turn_status, _ = _codex_turn_row(repository, experiment.id)
+    assert turn_status == "ambiguous"
