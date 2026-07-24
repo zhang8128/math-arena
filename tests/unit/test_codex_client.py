@@ -44,6 +44,8 @@ from mathloop.methods.proof_sketch import ProofSketch
 _FAKE_CODEX_SOURCE = '''\
 #!/usr/bin/env python3
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -61,6 +63,25 @@ def main() -> int:
     worktree = None
     if "--cd" in argv:
         worktree = Path(argv[argv.index("--cd") + 1])
+    schema_path = None
+    if "--output-schema" in argv:
+        schema_path = argv[argv.index("--output-schema") + 1]
+
+    # A regression test for the client's schema-file lifetime: every mode
+    # opens the schema unconditionally, right at startup, so the CLI fails
+    # loudly (nonzero exit) if the file is gone by the time it gets here --
+    # exactly what would happen if a caller ever deleted it right after
+    # Popen instead of waiting for this process to fully exit.
+    if schema_path is not None:
+        with open(schema_path, "rb") as _schema_handle:
+            _schema_handle.read()
+
+    # Written unconditionally so tests can confirm this exact process (not
+    # just "some fake_codex.py") is dead after a client-side kill, even in
+    # modes that never reach any stdout emission.
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        (Path(tmpdir) / "fake-codex.pid").write_text(str(os.getpid()))
 
     def emit_thread_and_turn_started() -> None:
         _emit(
@@ -126,8 +147,41 @@ def main() -> int:
 
     if mode == "hang":
         emit_thread_and_turn_started()
-        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3600)"])
+        # This grandchild ignores SIGTERM outright, forcing the client's
+        # process-group kill to actually escalate to SIGKILL rather than
+        # relying on the direct child (this script) dying promptly and
+        # nothing then re-checking whether the grandchild is still alive.
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import signal, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(3600)",
+            ]
+        )
         time.sleep(3600)
+        return 0
+
+    if mode == "slow_open_schema":
+        # Deliberately re-opens the schema file again after a delay clearly
+        # longer than any realistic Popen-to-child-startup gap. A client
+        # that deletes the schema right after Popen returns (rather than
+        # after this whole process exits) fails this every time; one that
+        # waits for the process to exit never sees the file missing.
+        time.sleep(0.3)
+        if schema_path is not None:
+            with open(schema_path, "rb") as _handle:
+                _handle.read()
+        emit_thread_and_turn_started()
+        emit_agent_message_and_completion()
+        return 0
+
+    if mode == "giant_line":
+        emit_thread_and_turn_started()
+        sys.stdout.write("x" * 5000)  # no trailing newline -- never a complete line
+        sys.stdout.flush()
+        time.sleep(5)
         return 0
 
     _emit({"type": "error", "message": f"unknown fake-codex mode {mode!r}"})
@@ -188,7 +242,9 @@ def fake_codex(tmp_path: Path) -> Path:
     return script
 
 
-def client(codex_binary: Path, *, timeout: float | None = None) -> CodexClient:
+def client(
+    codex_binary: Path, *, timeout: float | None = None, max_event_bytes: int | None = None
+) -> CodexClient:
     launch_policy = CodexLaunchPolicy(
         codex_binary=codex_binary,
         codex_home=Path(str(_repo_state["codex_home"])),
@@ -197,11 +253,15 @@ def client(codex_binary: Path, *, timeout: float | None = None) -> CodexClient:
         repo_root=Path(str(_repo_state["repo_root"])),
         worktree_root=Path(str(_repo_state["worktree_root"])),
     )
+    kwargs: dict[str, object] = {}
+    if max_event_bytes is not None:
+        kwargs["max_event_bytes"] = max_event_bytes
     return CodexClient(
         launch_policy,
         worktree_manager,
         environment={"PATH": os.environ.get("PATH", ""), "TMPDIR": str(_repo_state["tmp_path"])},
         timeout_seconds=timeout,
+        **kwargs,
     )
 
 
@@ -339,6 +399,74 @@ def test_malformed_jsonl_is_rejected_and_process_is_reaped(fake_codex: Path) -> 
         )
 
 
+def test_schema_file_survives_the_gap_between_popen_and_the_child_opening_it(
+    fake_codex: Path,
+) -> None:
+    """The response schema must outlive Popen returning, not just precede it.
+
+    `Popen` only initiates fork/exec; the child still has to start and parse
+    argv before it opens `--output-schema`. `mode="slow_open_schema"` waits
+    300ms -- far longer than any realistic Popen-to-child-startup gap --
+    before opening the file a second time. A client that deletes the schema
+    right after `Popen` returns (instead of after the whole process exits)
+    fails this deterministically; one that waits for the process to exit
+    never does.
+    """
+    response = client(fake_codex, timeout=5.0).execute(
+        request(mode="slow_open_schema", response_schema=ProofSketch),
+        events.append,
+    )
+    assert response.value.strategy == "induction"
+
+
+def test_raising_emit_event_kills_the_child_instead_of_orphaning_it(fake_codex: Path) -> None:
+    """A caller-supplied `emit_event` that raises must not leak the CLI process.
+
+    Mode "hang" never completes on its own, so if the client did not
+    explicitly kill the process group on this exception path, the fake CLI
+    (and its process group) would still be alive after `execute()` returns
+    control to the caller -- exactly the orphaning `execute()`'s own
+    `finally` (which resets/removes the worktree the still-running CLI may
+    still be writing to) must never race against.
+    """
+
+    def boom(event: CodexEvent) -> None:
+        del event
+        raise RuntimeError("callback exploded")
+
+    with pytest.raises(RuntimeError, match="callback exploded"):
+        client(fake_codex, timeout=5.0).execute(
+            request(mode="hang", response_schema=ProofSketch), boom
+        )
+
+    pid_path = Path(str(_repo_state["tmp_path"])) / "fake-codex.pid"
+    assert pid_path.exists()
+    pid = int(pid_path.read_text().strip())
+    assert descendant_is_running(pid) is False
+
+
+def test_oversized_line_without_a_newline_is_rejected_before_the_deadline(
+    fake_codex: Path,
+) -> None:
+    """The stdout reader's buffer itself must be byte-bounded, not just completed lines.
+
+    `CodexEventParser`'s own cap only ever sees a *complete* line -- a child
+    emitting one huge line with no trailing newline is invisible to it until
+    a newline arrives, which here never happens. `max_event_bytes=1024` makes
+    the fake CLI's unterminated 5000-byte write exceed the cap; the failure
+    must arrive quickly (well under both the CLI's 5s sleep and the client's
+    own 10s deadline), proving the raw buffer is checked during accumulation
+    rather than being silently held in memory until the deadline.
+    """
+    started = time.monotonic()
+    with pytest.raises(CodexClientError, match="max_bytes cap"):
+        client(fake_codex, timeout=10.0, max_event_bytes=1024).execute(
+            request(mode="giant_line", response_schema=ProofSketch), events.append
+        )
+    elapsed = time.monotonic() - started
+    assert elapsed < 5.0
+
+
 def test_worktree_is_removed_after_a_successful_turn(fake_codex: Path) -> None:
     turn_request = request(response_schema=ProofSketch)
     client(fake_codex).execute(turn_request, events.append)
@@ -396,11 +524,12 @@ class _FailingRemoveManager:
     def __init__(self, inner: CodexWorktreeManager) -> None:
         self._inner = inner
 
-    def create(self, turn_id: object, base_sha: str) -> object:
-        return self._inner.create(turn_id, base_sha)  # type: ignore[arg-type]
+    def create(self, turn_id: object, base_sha: str, **kwargs: object) -> object:
+        return self._inner.create(turn_id, base_sha, **kwargs)  # type: ignore[arg-type]
 
-    def diff(self, worktree: object) -> object:
-        return self._inner.diff(worktree)  # type: ignore[arg-type]
+    def diff(self, worktree: object, **kwargs: object) -> object:
+        return self._inner.diff(worktree, **kwargs)  # type: ignore[arg-type]
 
-    def remove(self, worktree: object) -> None:
+    def remove(self, worktree: object, **kwargs: object) -> None:
+        del worktree, kwargs
         raise CodexWorktreeError("synthetic cleanup failure")

@@ -47,12 +47,41 @@ class CodexClientError(RuntimeError):
     """The Codex CLI process or its output violated the supervised contract."""
 
 
+def _rebuild_codex_turn_timed_out(
+    timeout_seconds: float, dispatched: bool, descendant_pid: int
+) -> "CodexTurnTimedOut":
+    """Reconstruct `CodexTurnTimedOut` from `__reduce__`'s picklable arguments.
+
+    `CodexTurnTimedOut.__init__` requires two keyword-only arguments with no
+    defaults; the default `BaseException.__reduce__` only round-trips
+    `self.args` (here, just the formatted message string) and reconstructs
+    via `cls(*args)`, which raises `TypeError` on unpickle -- exactly the
+    failure this exists to prevent, since this exception crosses a real
+    process boundary (a forked worker child sending it to its parent over a
+    `multiprocessing.Connection`) on every real timeout.
+    """
+    return CodexTurnTimedOut(
+        timeout_seconds, dispatched=dispatched, descendant_pid=descendant_pid
+    )
+
+
 class CodexTurnTimedOut(TimeoutError):
     """The turn's one absolute deadline elapsed before a terminal event arrived.
 
-    `dispatched` reflects whether a `turn.started` event was ever observed on
-    the JSONL stream -- this is what lets a caller record a durable, no-retry
-    turn outcome instead of silently discarding evidence of a started turn.
+    `dispatched` is `True` whenever the Codex CLI process had already been
+    started at the moment this timeout fired -- which, given `CodexClient`'s
+    own control flow, is always the case for any `CodexTurnTimedOut` actually
+    raised (a timeout can only fire after `subprocess.Popen` has already
+    succeeded). It intentionally does not depend on whether a `turn.started`
+    JSONL line was ever parsed: `on_dispatched()` -- the caller's durable
+    ledger-dispatch marker, when supplied -- runs immediately before `Popen`,
+    strictly earlier than any event can be read, so tying `dispatched` to the
+    parser's own progress would let it read `False` for a turn the ledger
+    already considers consumed and non-retryable. Naming this constant
+    explicitly (rather than hardcoding `True` at each raise site, or deleting
+    the field) keeps the invariant self-documenting and safe if a future
+    change ever adds a raise site before `Popen`.
+
     `descendant_pid` is the pid of a process found in the killed Codex
     process group (a subprocess the CLI itself spawned, if any, else the CLI
     process itself), confirmed dead by the time this is raised.
@@ -63,6 +92,12 @@ class CodexTurnTimedOut(TimeoutError):
         self.timeout_seconds = timeout_seconds
         self.dispatched = dispatched
         self.descendant_pid = descendant_pid
+
+    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+        return (
+            _rebuild_codex_turn_timed_out,
+            (self.timeout_seconds, self.dispatched, self.descendant_pid),
+        )
 
 
 @dataclass(frozen=True)
@@ -124,7 +159,11 @@ class CodexClient:
             else float(request.reservation.deadline_seconds)
         )
         deadline = time.monotonic() + timeout
-        worktree = self._worktree_manager.create(request.reservation.id, request.base_sha)
+        worktree = self._worktree_manager.create(
+            request.reservation.id,
+            request.base_sha,
+            timeout=max(0.0, deadline - time.monotonic()),
+        )
         primary_error: BaseException | None = None
         response: CodexResponse[T] | None = None
         try:
@@ -135,14 +174,19 @@ class CodexClient:
             primary_error = error
         finally:
             try:
-                self._worktree_manager.remove(worktree)
-            except CodexWorktreeError as cleanup_error:
+                self._worktree_manager.remove(
+                    worktree, timeout=max(0.0, deadline - time.monotonic())
+                )
+            except (CodexWorktreeError, OSError) as cleanup_error:
+                # The primary error already explains what went wrong (if
+                # any); a cleanup failure on top of that must never replace
+                # it as the exception the caller sees (that would mask
+                # genuine evidence of a dispatched-or-not turn), but it also
+                # must never be swallowed, so it rides along as a note.
+                # `OSError` is caught alongside `CodexWorktreeError` because
+                # `_run` can raise a raw `OSError` (e.g. the `git` binary
+                # itself is unavailable), not only the wrapped error type.
                 if primary_error is not None:
-                    # The primary error already explains what went wrong; a
-                    # cleanup failure on top of that must never replace it as
-                    # the exception the caller sees (that would mask genuine
-                    # evidence of a dispatched-or-not turn), but it also must
-                    # never be swallowed, so it rides along as a note.
                     primary_error.add_note(
                         f"codex worktree cleanup also failed: {cleanup_error}"
                     )
@@ -165,6 +209,11 @@ class CodexClient:
         deadline: float,
         timeout: float,
     ) -> CodexResponse[T]:
+        # Kept alive for the child's *entire* lifetime, not just until Popen
+        # returns: Popen only initiates fork/exec, and the child still has to
+        # start and parse argv before it opens `--output-schema` -- deleting
+        # the file any earlier is a real, reproducible race that starves the
+        # CLI of its structured-output schema (or crashes it outright).
         schema_path = self._write_schema(request.response_schema)
         try:
             argv = self._launch_policy.command(
@@ -187,39 +236,71 @@ class CodexClient:
                 env=env,
                 shell=False,
             )
+            assert process.stdout is not None
+            assert process.stderr is not None
+            stderr_chunks: list[bytes] = []
+            stderr_thread = threading.Thread(
+                target=_drain_stderr,
+                args=(process.stderr, stderr_chunks, self._max_stderr_bytes),
+                daemon=True,
+            )
+            stderr_thread.start()
+            try:
+                return self._stream_turn(
+                    request, emit_event, process, stderr_thread, stderr_chunks, worktree,
+                    deadline, timeout,
+                )
+            except BaseException:
+                # Any exception past this point -- including one raised by a
+                # caller-supplied `emit_event`, or any other bug in the loop
+                # below -- must never leave the CLI running and orphaned
+                # while `execute()`'s `finally` resets/removes the worktree
+                # out from under it. The two specific timeout/parse-error
+                # raise sites inside `_stream_turn` already do this
+                # themselves (they need the live process to compute
+                # `descendant_pid`); calling it again here is a cheap, safe
+                # no-op for those (the process is already dead and the
+                # thread already joined) and the only thing that saves every
+                # *other* exception path -- a raising `emit_event`, an
+                # unexpected `os.read`/`select` error, `KeyboardInterrupt`.
+                _stop_process(process, stderr_thread)
+                raise
         finally:
             schema_path.unlink(missing_ok=True)
 
-        assert process.stdout is not None
-        assert process.stderr is not None
-        stderr_chunks: list[bytes] = []
-        stderr_thread = threading.Thread(
-            target=_drain_stderr,
-            args=(process.stderr, stderr_chunks, self._max_stderr_bytes),
-            daemon=True,
-        )
-        stderr_thread.start()
-
+    def _stream_turn[T: BaseModel](
+        self,
+        request: CodexRequest[T],
+        emit_event: Callable[[CodexEvent], None],
+        process: subprocess.Popen[bytes],
+        stderr_thread: threading.Thread,
+        stderr_chunks: list[bytes],
+        worktree: CodexWorktree,
+        deadline: float,
+        timeout: float,
+    ) -> CodexResponse[T]:
         parser = CodexEventParser(max_bytes=self._max_event_bytes)
         cli_version: str | None = None
+        assert process.stdout is not None
         stdout_fd = process.stdout.fileno()
         buffer = bytearray()
         while True:
             try:
-                line = _read_line(stdout_fd, buffer, deadline)
+                line = _read_line(stdout_fd, buffer, deadline, self._max_event_bytes)
             except TimeoutError:
-                descendant_pid = _kill_process_group(process)
-                stderr_thread.join(timeout=_REAP_GRACE_SECONDS)
+                descendant_pid = _stop_process(process, stderr_thread)
                 raise CodexTurnTimedOut(
-                    timeout, dispatched=parser.dispatched, descendant_pid=descendant_pid
+                    timeout, dispatched=True, descendant_pid=descendant_pid
                 ) from None
+            except CodexEventError as error:
+                raise CodexClientError(
+                    f"codex stdout stream violated the parser contract: {error}"
+                ) from error
             if line is None:
                 break
             try:
                 event = parser.feed(line)
             except CodexEventError as error:
-                descendant_pid = _kill_process_group(process)
-                stderr_thread.join(timeout=_REAP_GRACE_SECONDS)
                 raise CodexClientError(
                     f"codex event stream violated the parser contract: {error}"
                 ) from error
@@ -231,18 +312,14 @@ class CodexClient:
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            descendant_pid = _kill_process_group(process)
-            stderr_thread.join(timeout=_REAP_GRACE_SECONDS)
-            raise CodexTurnTimedOut(
-                timeout, dispatched=parser.dispatched, descendant_pid=descendant_pid
-            )
+            descendant_pid = _stop_process(process, stderr_thread)
+            raise CodexTurnTimedOut(timeout, dispatched=True, descendant_pid=descendant_pid)
         try:
             returncode = process.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            descendant_pid = _kill_process_group(process)
-            stderr_thread.join(timeout=_REAP_GRACE_SECONDS)
+            descendant_pid = _stop_process(process, stderr_thread)
             raise CodexTurnTimedOut(
-                timeout, dispatched=parser.dispatched, descendant_pid=descendant_pid
+                timeout, dispatched=True, descendant_pid=descendant_pid
             ) from None
         stderr_thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
@@ -271,7 +348,9 @@ class CodexClient:
                 f"codex final agent message did not match the response schema: {error}"
             ) from error
 
-        patch = self._worktree_manager.diff(worktree)
+        patch = self._worktree_manager.diff(
+            worktree, timeout=max(0.0, deadline - time.monotonic())
+        )
         receipt = CodexTurnReceipt(
             reservation_id=request.reservation.id,
             experiment_id=request.reservation.experiment_id,
@@ -302,11 +381,16 @@ class CodexClient:
         return path
 
 
-def _read_line(fd: int, buffer: bytearray, deadline: float) -> bytes | None:
+def _read_line(fd: int, buffer: bytearray, deadline: float, max_bytes: int) -> bytes | None:
     """Return the next full line (including its trailing `\\n`), or `None` at EOF.
 
     Blocks only in bounded `select` polls against the absolute `deadline`, so a
-    hung child never wedges the caller past its turn budget.
+    hung child never wedges the caller past its turn budget. `max_bytes` bounds
+    the buffer itself -- not just completed lines -- so a child emitting one
+    very large line (or a stream with no newline at all) is rejected before it
+    grows unbounded in memory, rather than being buffered silently until the
+    deadline. This mirrors `CodexEventParser`'s own cap so the two enforce the
+    same budget from opposite ends of the same stream.
     """
     while True:
         newline_index = buffer.find(b"\n")
@@ -314,6 +398,11 @@ def _read_line(fd: int, buffer: bytearray, deadline: float) -> bytes | None:
             line = bytes(buffer[: newline_index + 1])
             del buffer[: newline_index + 1]
             return line
+        if len(buffer) > max_bytes:
+            raise CodexEventError(
+                f"codex stdout produced a line exceeding max_bytes cap of {max_bytes} "
+                "without a newline"
+            )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("codex stdout read exceeded the turn deadline")
@@ -349,6 +438,24 @@ def _drain_stderr(stream: IO[bytes], sink: list[bytes], cap_bytes: int) -> None:
             collected += len(take)
 
 
+def _stop_process(process: subprocess.Popen[bytes], stderr_thread: threading.Thread) -> int:
+    """Kill the process group if it is still running; always (re)join the stderr thread.
+
+    Safe to call more than once for the same `process`/`stderr_thread` pair:
+    `process.poll()` reports a definite exit status once the process is
+    actually gone, and `Thread.join` on an already-finished thread returns
+    immediately. This lets every exception path converge on one shutdown
+    routine instead of each raise site having to remember to kill and join.
+    """
+    if process.poll() is None:
+        descendant_pid = _kill_process_group(process)
+    else:
+        assert process.pid is not None
+        descendant_pid = process.pid
+    stderr_thread.join(timeout=_REAP_GRACE_SECONDS)
+    return descendant_pid
+
+
 def _kill_process_group(process: subprocess.Popen[bytes]) -> int:
     """Kill the whole process group `process` leads and return a descendant's pid.
 
@@ -357,6 +464,14 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> int:
     it spawned. The returned pid is a process found in that group other than
     `process` itself, if one existed at the moment of the kill, else
     `process`'s own pid.
+
+    Escalation from `SIGTERM` to `SIGKILL` is gated on whether *any* group
+    member captured in the initial snapshot is still alive -- not merely
+    whether the direct child (`process`) has exited. `process.wait()` only
+    ever reports on the direct child; a descendant that traps or ignores
+    `SIGTERM` while the CLI itself exits promptly would otherwise survive
+    indefinitely, since a direct-child-only check would see the CLI gone and
+    never escalate.
     """
     assert process.pid is not None
     try:
@@ -365,15 +480,20 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> int:
         process_group_id = process.pid
     members = _process_group_members(process_group_id)
     descendant_pid = next((pid for pid in members if pid != process.pid), process.pid)
+    other_pids = tuple(pid for pid in members if pid != process.pid)
+
     _signal_group(process_group_id, signal.SIGTERM)
+    if _group_still_alive(process, other_pids, deadline=time.monotonic() + _REAP_GRACE_SECONDS):
+        _signal_group(process_group_id, signal.SIGKILL)
+        _group_still_alive(process, other_pids, deadline=time.monotonic() + _REAP_GRACE_SECONDS)
+    # Best-effort reap of the direct child so it never lingers as a zombie.
+    # Other group members are not this process's children and cannot be
+    # wait()ed on here at all -- `_group_still_alive` above is the only
+    # liveness check available for them.
     try:
         process.wait(timeout=_REAP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
-        _signal_group(process_group_id, signal.SIGKILL)
-        try:
-            process.wait(timeout=_REAP_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:
-            pass
+        pass
     return descendant_pid
 
 
@@ -381,7 +501,58 @@ def _signal_group(process_group_id: int, sig: int) -> None:
     try:
         os.killpg(process_group_id, sig)
     except ProcessLookupError:
+        # The group no longer exists at all -- nothing left to signal.
         pass
+    except PermissionError:
+        # Observed in practice (not just theoretically) targeting a group
+        # whose leader is our own direct child, already exited but not yet
+        # reaped via `process.wait()`/`process.poll()`: `os.kill(pid, 0)`
+        # still reports such a zombie as "alive" (its pid slot is still
+        # occupied), but this platform's `killpg` refuses with `EPERM`
+        # rather than `ESRCH` for that same, already-dead target. Treated
+        # identically to `ProcessLookupError` -- both mean "there is nothing
+        # left here for us to affect" -- rather than escalating a spurious
+        # permission error out of what is meant to be a best-effort kill.
+        pass
+
+
+def _group_still_alive(
+    process: subprocess.Popen[bytes], other_pids: tuple[int, ...], *, deadline: float
+) -> bool:
+    """Poll the direct child and any other captured group members until `deadline`.
+
+    The direct child's liveness is checked via `process.poll()`, not
+    `os.kill(process.pid, 0)`: an unreaped zombie child still answers
+    `kill(pid, 0)` as "alive" (its pid slot still exists) even though it has
+    already exited, which would otherwise force an unnecessary -- and, for a
+    group whose leader is that same zombie, `EPERM`-raising -- `SIGKILL`
+    escalation every single time. `poll()` is authoritative for our own
+    direct child and reaps it the moment it exits. Other group members are
+    not this process's children and cannot be reaped here at all, so
+    `os.kill(pid, 0)` is the best available liveness check for them.
+
+    Returns as soon as everything is confirmed dead, without waiting out the
+    rest of the budget; otherwise polls at a short fixed interval until
+    `deadline` and reports whatever is true at that point.
+    """
+    while True:
+        alive = process.poll() is None or any(_pid_alive(pid) for pid in other_pids)
+        if not alive:
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return True
+        time.sleep(min(_POLL_SECONDS, remaining))
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _process_group_members(process_group_id: int) -> tuple[int, ...]:

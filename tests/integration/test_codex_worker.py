@@ -19,8 +19,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from mathloop.artifacts import ArtifactStore
-from mathloop.codex.client import CodexClient, CodexRequest
-from mathloop.codex.domain import CodexTurnReservation
+from mathloop.codex.client import CodexClient, CodexRequest, CodexTurnTimedOut
+from mathloop.codex.domain import CodexModelRole, CodexTurnReservation
 from mathloop.codex.events import CodexEvent
 from mathloop.codex.launch import CodexLaunchPolicy
 from mathloop.codex.worktrees import CodexWorktreeManager
@@ -40,6 +40,7 @@ _FAKE_CODEX_SOURCE = '''\
 #!/usr/bin/env python3
 import json
 import sys
+import time
 from pathlib import Path
 
 
@@ -50,6 +51,7 @@ def _emit(payload: dict) -> None:
 
 def main() -> int:
     argv = sys.argv[1:]
+    mode = argv[-1] if argv else "success"
     worktree = None
     if "--cd" in argv:
         worktree = Path(argv[argv.index("--cd") + 1])
@@ -61,6 +63,14 @@ def main() -> int:
         }
     )
     _emit({"type": "turn.started"})
+
+    if mode == "hang":
+        # Never completes on its own -- exists only to drive the client's
+        # own timeout, which must survive being pickled across the real
+        # multiprocessing pipe on its way back to the parent boundary.
+        time.sleep(3600)
+        return 0
+
     if worktree is not None:
         (worktree / "NOTES.md").write_text("codex was here\\n")
     _emit(
@@ -514,3 +524,86 @@ class _AlwaysWritesMarkerFirst:
         )
         context.emit_external_event(event)
         raise AssertionError("unreachable: the failing callback must stop the child first")
+
+
+# ---------------------------------------------------------------------------
+# Cross-process-boundary coverage: CodexTurnTimedOut must survive pickling
+# ---------------------------------------------------------------------------
+
+
+class _CodexHangMethod:
+    """A `SolverMethod` that drives a real `CodexClient` into its own timeout.
+
+    Runs inside a real forked `ProcessExecutionBoundary` child, so the
+    `CodexTurnTimedOut` the client raises has to cross a real
+    `multiprocessing.Connection` (pickled by the child, unpickled by the
+    parent) to reach `ExecutionFailed.cause` -- this is the only way to
+    actually exercise that boundary rather than just constructing and
+    raising the exception in-process.
+    """
+
+    family = "codex-hang"
+
+    def __init__(self, codex_binary: Path, repo_root: Path, worktree_root: Path) -> None:
+        self._codex_binary = codex_binary
+        self._repo_root = repo_root
+        self._worktree_root = worktree_root
+
+    def run(self, context: MethodContext) -> MethodResult:
+        base_sha = _git("rev-parse", "HEAD", cwd=self._repo_root).stdout.strip()
+        reservation = CodexTurnReservation(
+            id=uuid4(),
+            experiment_id=uuid4(),
+            budget_day=datetime.now(UTC).date(),
+            role=CodexModelRole.TERRA,
+            model="gpt-5.6-terra",
+            deadline_seconds=1800,
+            created_at=datetime.now(UTC),
+        )
+        launch_policy = CodexLaunchPolicy(
+            codex_binary=self._codex_binary, codex_home=self._worktree_root / "codex-home"
+        )
+        worktree_manager = CodexWorktreeManager(
+            repo_root=self._repo_root, worktree_root=self._worktree_root
+        )
+        client = CodexClient(
+            launch_policy,
+            worktree_manager,
+            environment={"PATH": os.environ.get("PATH", ""), "TMPDIR": tempfile.gettempdir()},
+            timeout_seconds=1.0,
+        )
+        request: CodexRequest[ProofSketch] = CodexRequest(
+            reservation=reservation,
+            prompt="hang",
+            base_sha=base_sha,
+            response_schema=ProofSketch,
+        )
+        assert context.emit_external_event is not None
+        client.execute(request, context.emit_external_event)
+        raise AssertionError("unreachable: the client must time out before returning")
+
+
+def test_client_timeout_propagates_through_the_forked_boundary(tmp_path: Path) -> None:
+    repo_root = tmp_path / "source-repo"
+    _init_repo(repo_root)
+    worktree_root = tmp_path / "codex-worktrees"
+    fake_codex = tmp_path / "fake_codex.py"
+    fake_codex.write_text(_FAKE_CODEX_SOURCE)
+    fake_codex.chmod(0o700)
+
+    boundary = ProcessExecutionBoundary()
+    context = MethodContext(problem=_codex_test_problem(), seed=1, config={})
+
+    with pytest.raises(ExecutionFailed) as raised:
+        boundary.run(
+            _CodexHangMethod(fake_codex, repo_root, worktree_root),
+            context,
+            # Generous relative to the client's own 1.0s internal deadline:
+            # this outer bound exists only as a backstop and must never be
+            # the one that actually fires.
+            timeout_seconds=15.0,
+        )
+
+    assert isinstance(raised.value.cause, CodexTurnTimedOut)
+    assert raised.value.cause.dispatched is True
+    assert boundary.has_live_child is False
