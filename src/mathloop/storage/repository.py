@@ -3,7 +3,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -12,6 +12,15 @@ from psycopg import Connection
 from psycopg.types.json import Jsonb
 
 from mathloop.billing import MAX_DATABASE_USD, validate_database_usd
+from mathloop.codex.domain import (
+    CodexModelRole,
+    CodexPolicy,
+    CodexTurnReceipt,
+    CodexTurnReservation,
+    CodexTurnStatus,
+    CodexUsage,
+)
+from mathloop.codex.events import CodexEvent
 from mathloop.domain import (
     CandidateClaim,
     ClaimStatus,
@@ -87,6 +96,14 @@ class CompletenessProgressError(ValueError):
     """An experiment cannot advance the durable completeness cursor."""
 
 
+class CodexTurnNotFoundError(LookupError):
+    """A referenced Codex turn ledger row does not exist."""
+
+
+class CodexTurnConflictError(ValueError):
+    """A Codex turn state transition or identity check failed."""
+
+
 @dataclass(frozen=True)
 class ArtifactRecord:
     digest: str
@@ -127,6 +144,17 @@ class BudgetReservationRecord:
 
 
 @dataclass(frozen=True)
+class CodexUsageStatus:
+    """A point-in-time snapshot of Codex turn accounting for one budget day."""
+
+    budget_day: date
+    daily_reserved: int
+    role_reserved: dict[str, int]
+    active_leases: int
+    usage: CodexUsage
+
+
+@dataclass(frozen=True)
 class ReviewRecord:
     claim: CandidateClaim
     problem: Problem
@@ -157,6 +185,40 @@ def _require_database_usd(value: object, field_name: str) -> Decimal:
     if amount > MAX_DATABASE_USD:
         raise ValueError(f"{field_name} exceeds NUMERIC(14, 6) capacity")
     return amount
+
+
+_CODEX_TERMINAL_STATUSES = frozenset(
+    {
+        CodexTurnStatus.COMPLETED.value,
+        CodexTurnStatus.FAILED.value,
+        CodexTurnStatus.TIMED_OUT.value,
+        CodexTurnStatus.AMBIGUOUS.value,
+    }
+)
+_CODEX_FAILURE_STATUSES = frozenset(
+    {CodexTurnStatus.FAILED, CodexTurnStatus.TIMED_OUT, CodexTurnStatus.AMBIGUOUS}
+)
+_CODEX_USAGE_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+)
+# A reservation whose lease lapses before dispatch never ran anything, so it is
+# safe to free its slot purely by elapsed time. A dispatched or running turn is
+# different: its lease is an expected deadline, not proof the underlying Codex
+# CLI process has stopped, so it must keep consuming its concurrency slot even
+# past that deadline. `ambiguous` is included unconditionally for the same
+# reason -- reconciliation settles an expired dispatch to `ambiguous` precisely
+# because the outcome is unknown, and settling it must never be read as freeing
+# the slot it held. Only a worker-confirmed terminal status (completed, failed,
+# timed_out) -- reached through `complete_codex_turn`/`fail_codex_turn` -- frees
+# concurrency for dispatched work.
+_CODEX_ACTIVE_LEASE_QUERY = """
+    SELECT count(*) FROM codex_turns
+    WHERE (status = 'reserved' AND lease_expires_at > %(now)s)
+       OR status IN ('dispatched', 'running', 'ambiguous')
+"""
 
 
 class Repository:
@@ -3466,6 +3528,497 @@ class Repository:
             ).fetchone()
             if row is None:
                 raise ValueError("experiment has no budget reservation")
+
+    # -- Codex turn ledger --------------------------------------------------
+
+    @staticmethod
+    def _codex_reservation_from_row(row: tuple[Any, ...]) -> CodexTurnReservation:
+        turn_id, experiment_id, budget_day, role, model, created_at, lease_expires_at = row
+        deadline_seconds = int((lease_expires_at - created_at).total_seconds())
+        return CodexTurnReservation(
+            id=turn_id,
+            experiment_id=experiment_id,
+            budget_day=budget_day,
+            role=CodexModelRole(role),
+            model=model,
+            deadline_seconds=deadline_seconds,
+            created_at=created_at,
+        )
+
+    def reserve_codex_turn(
+        self,
+        experiment_id: UUID,
+        worker_id: str,
+        role: CodexModelRole,
+        model: str,
+        policy: CodexPolicy,
+        now: datetime,
+    ) -> CodexTurnReservation | None:
+        canonical_experiment_id = _require_uuid(experiment_id, "experiment_id")
+        canonical_worker = _require_nonempty_string(worker_id, "worker_id")
+        canonical_model = _require_nonempty_string(model, "model")
+        if type(role) is not CodexModelRole:
+            raise TypeError("role must be a CodexModelRole")
+        self._validate_lease_timestamp(now)
+        budget_day = now.date()
+        expires_at = now + timedelta(seconds=policy.turn_timeout_seconds)
+
+        with self.database.transaction() as connection:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%(budget_day)s::text))",
+                {"budget_day": budget_day.isoformat()},
+            )
+            existing = connection.execute(
+                """
+                SELECT id, experiment_id, budget_day, role, model, created_at, lease_expires_at,
+                       status
+                FROM codex_turns
+                WHERE experiment_id = %(experiment_id)s
+                """,
+                {"experiment_id": canonical_experiment_id},
+            ).fetchone()
+            if existing is not None:
+                *reservation_row, existing_status = existing
+                if existing_status != CodexTurnStatus.RESERVED.value:
+                    return None
+                if (
+                    reservation_row[3] != role.value
+                    or reservation_row[4] != canonical_model
+                    or reservation_row[2] != budget_day
+                    or int((reservation_row[6] - reservation_row[5]).total_seconds())
+                    != policy.turn_timeout_seconds
+                ):
+                    raise EventConflictError(
+                        f"codex turn reservation for experiment {canonical_experiment_id} "
+                        "conflicts with an existing reservation's immutable fields"
+                    )
+                return self._codex_reservation_from_row(tuple(reservation_row))
+
+            daily_row = connection.execute(
+                "SELECT count(*) FROM codex_turns WHERE budget_day = %(day)s",
+                {"day": budget_day},
+            ).fetchone()
+            daily_count = int(daily_row[0]) if daily_row is not None else 0
+            daily_cap = (
+                policy.daily_turn_limit
+                if role is CodexModelRole.SOL
+                else policy.daily_turn_limit - policy.reserved_sol_turns
+            )
+            if daily_count + 1 > daily_cap:
+                return None
+
+            role_row = connection.execute(
+                """
+                SELECT count(*) FROM codex_turns
+                WHERE budget_day = %(day)s AND role = %(role)s
+                """,
+                {"day": budget_day, "role": role.value},
+            ).fetchone()
+            role_count = int(role_row[0]) if role_row is not None else 0
+            role_limit = policy.model_turn_limits.get(role.value, 0)
+            if role_count + 1 > role_limit:
+                return None
+
+            active_row = connection.execute(_CODEX_ACTIVE_LEASE_QUERY, {"now": now}).fetchone()
+            active_count = int(active_row[0]) if active_row is not None else 0
+            if active_count + 1 > policy.concurrent_turn_limit:
+                return None
+
+            turn_id = uuid4()
+            connection.execute(
+                """
+                INSERT INTO codex_turns (
+                    id, experiment_id, budget_day, role, model, status,
+                    lease_owner, lease_expires_at, created_at, updated_at
+                ) VALUES (
+                    %(id)s, %(experiment_id)s, %(budget_day)s, %(role)s, %(model)s, 'reserved',
+                    %(worker)s, %(expires_at)s, %(now)s, %(now)s
+                )
+                """,
+                {
+                    "id": turn_id,
+                    "experiment_id": canonical_experiment_id,
+                    "budget_day": budget_day,
+                    "role": role.value,
+                    "model": canonical_model,
+                    "worker": canonical_worker,
+                    "expires_at": expires_at,
+                    "now": now,
+                },
+            )
+            self._append_event(
+                connection,
+                aggregate_type="codex_turn",
+                aggregate_id=turn_id,
+                event_type="codex_turn.reserved",
+                payload={
+                    "experiment_id": str(canonical_experiment_id),
+                    "role": role.value,
+                    "model": canonical_model,
+                    "budget_day": budget_day.isoformat(),
+                    "deadline_seconds": policy.turn_timeout_seconds,
+                },
+                idempotency_key=f"codex_turn:reserve:{canonical_experiment_id}",
+            )
+            return CodexTurnReservation(
+                id=turn_id,
+                experiment_id=canonical_experiment_id,
+                budget_day=budget_day,
+                role=role,
+                model=canonical_model,
+                deadline_seconds=policy.turn_timeout_seconds,
+                created_at=now,
+            )
+
+    def reserve_codex_turn_for_existing_experiment(
+        self, experiment_id: UUID
+    ) -> CodexTurnReservation | None:
+        """Return the still-reservable turn for an experiment, or None if consumed.
+
+        Unlike `reserve_codex_turn`, this never creates a new reservation: it only
+        reports whether the experiment's existing turn (if any) is still sitting in
+        the `reserved` state. Any other status -- dispatched, running, or terminal --
+        means the turn is consumed and the experiment can never be reserved again.
+        """
+        canonical_experiment_id = _require_uuid(experiment_id, "experiment_id")
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT id, experiment_id, budget_day, role, model, created_at, lease_expires_at
+                FROM codex_turns
+                WHERE experiment_id = %(experiment_id)s AND status = %(status)s
+                """,
+                {
+                    "experiment_id": canonical_experiment_id,
+                    "status": CodexTurnStatus.RESERVED.value,
+                },
+            ).fetchone()
+        if row is None:
+            return None
+        return self._codex_reservation_from_row(row)
+
+    def mark_codex_turn_dispatched(self, turn_id: UUID, worker_id: str) -> None:
+        canonical_id = _require_uuid(turn_id, "turn_id")
+        canonical_worker = _require_nonempty_string(worker_id, "worker_id")
+        with self.database.transaction() as connection:
+            _, appended = self._append_event(
+                connection,
+                aggregate_type="codex_turn",
+                aggregate_id=canonical_id,
+                event_type="codex_turn.dispatched",
+                payload={"worker_id": canonical_worker},
+                idempotency_key=f"codex_turn:dispatch:{canonical_id}",
+            )
+            if not appended:
+                return
+            row = connection.execute(
+                """
+                UPDATE codex_turns
+                SET status = 'dispatched', updated_at = now()
+                WHERE id = %(id)s AND status = 'reserved' AND lease_owner = %(worker)s
+                RETURNING id
+                """,
+                {"id": canonical_id, "worker": canonical_worker},
+            ).fetchone()
+            if row is None:
+                raise CodexTurnConflictError(
+                    f"codex turn {canonical_id} cannot be dispatched by {canonical_worker!r}"
+                )
+
+    def append_codex_turn_event(self, turn_id: UUID, event: CodexEvent) -> None:
+        canonical_id = _require_uuid(turn_id, "turn_id")
+        with self.database.transaction() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM codex_turns WHERE id = %(id)s", {"id": canonical_id}
+            ).fetchone()
+            if exists is None:
+                raise CodexTurnNotFoundError(f"codex turn {canonical_id} does not exist")
+            payload = Jsonb(event.payload)
+            row = connection.execute(
+                """
+                INSERT INTO codex_turn_events (turn_id, sequence, event_type, raw_sha256, payload)
+                VALUES (%(turn_id)s, %(sequence)s, %(event_type)s, %(raw_sha256)s, %(payload)s)
+                ON CONFLICT (turn_id, sequence) DO NOTHING
+                RETURNING turn_id
+                """,
+                {
+                    "turn_id": canonical_id,
+                    "sequence": event.sequence,
+                    "event_type": event.event_type,
+                    "raw_sha256": event.raw_sha256,
+                    "payload": payload,
+                },
+            ).fetchone()
+            if row is not None:
+                return
+            existing = connection.execute(
+                """
+                SELECT event_type = %(event_type)s AND raw_sha256 = %(raw_sha256)s
+                       AND payload = %(payload)s AS exact_replay
+                FROM codex_turn_events
+                WHERE turn_id = %(turn_id)s AND sequence = %(sequence)s
+                """,
+                {
+                    "turn_id": canonical_id,
+                    "sequence": event.sequence,
+                    "event_type": event.event_type,
+                    "raw_sha256": event.raw_sha256,
+                    "payload": payload,
+                },
+            ).fetchone()
+            if existing is None or not existing[0]:
+                raise EventConflictError(
+                    f"codex turn event {canonical_id}:{event.sequence} conflicts with an "
+                    "already-persisted event"
+                )
+
+    def complete_codex_turn(
+        self,
+        reservation_id: UUID,
+        receipt: CodexTurnReceipt,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        canonical_id = _require_uuid(reservation_id, "reservation_id")
+        if receipt.reservation_id != canonical_id:
+            raise CodexTurnConflictError(
+                "receipt reservation_id does not match the completed turn"
+            )
+        completed_at = datetime.now(UTC) if now is None else now
+        self._validate_lease_timestamp(completed_at)
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT experiment_id, model, status
+                FROM codex_turns WHERE id = %(id)s
+                FOR UPDATE
+                """,
+                {"id": canonical_id},
+            ).fetchone()
+            if row is None:
+                raise CodexTurnNotFoundError(f"codex turn {canonical_id} does not exist")
+            experiment_id, model, status = row
+            if status in _CODEX_TERMINAL_STATUSES:
+                raise CodexTurnConflictError(f"codex turn {canonical_id} is already terminal")
+            if status != CodexTurnStatus.DISPATCHED.value:
+                raise CodexTurnConflictError(f"codex turn {canonical_id} was never dispatched")
+            if experiment_id != receipt.experiment_id or model != receipt.model:
+                raise CodexTurnConflictError(
+                    f"receipt identity does not match codex turn {canonical_id}"
+                )
+            started_row = connection.execute(
+                """
+                SELECT count(*) FROM codex_turn_events
+                WHERE turn_id = %(id)s AND event_type = 'turn.started'
+                """,
+                {"id": canonical_id},
+            ).fetchone()
+            started_count = int(started_row[0]) if started_row is not None else 0
+            if started_count != 1:
+                raise CodexTurnConflictError(
+                    f"codex turn {canonical_id} does not have exactly one turn.started event"
+                )
+            completed_events = connection.execute(
+                """
+                SELECT payload FROM codex_turn_events
+                WHERE turn_id = %(id)s AND event_type = 'turn.completed'
+                """,
+                {"id": canonical_id},
+            ).fetchall()
+            if len(completed_events) != 1:
+                raise CodexTurnConflictError(
+                    f"codex turn {canonical_id} does not have exactly one turn.completed event"
+                )
+            usage_payload = completed_events[0][0].get("usage")
+            if not isinstance(usage_payload, dict) or any(
+                usage_payload.get(field) != getattr(receipt.usage, field)
+                for field in _CODEX_USAGE_FIELDS
+            ):
+                raise CodexTurnConflictError(
+                    f"receipt usage does not match the persisted turn.completed event for "
+                    f"{canonical_id}"
+                )
+            connection.execute(
+                """
+                UPDATE codex_turns
+                SET status = 'completed', thread_id = %(thread_id)s,
+                    cli_version = %(cli_version)s, input_tokens = %(input_tokens)s,
+                    cached_input_tokens = %(cached_input_tokens)s,
+                    output_tokens = %(output_tokens)s,
+                    reasoning_output_tokens = %(reasoning_output_tokens)s, updated_at = %(now)s
+                WHERE id = %(id)s
+                """,
+                {
+                    "id": canonical_id,
+                    "thread_id": receipt.thread_id,
+                    "cli_version": receipt.cli_version,
+                    "input_tokens": receipt.usage.input_tokens,
+                    "cached_input_tokens": receipt.usage.cached_input_tokens,
+                    "output_tokens": receipt.usage.output_tokens,
+                    "reasoning_output_tokens": receipt.usage.reasoning_output_tokens,
+                    "now": completed_at,
+                },
+            )
+            self._append_event(
+                connection,
+                aggregate_type="codex_turn",
+                aggregate_id=canonical_id,
+                event_type="codex_turn.completed",
+                payload={
+                    "thread_id": receipt.thread_id,
+                    "cli_version": receipt.cli_version,
+                    "usage": {
+                        field: getattr(receipt.usage, field) for field in _CODEX_USAGE_FIELDS
+                    },
+                },
+                idempotency_key=f"codex_turn:complete:{canonical_id}",
+            )
+
+    def fail_codex_turn(
+        self,
+        turn_id: UUID,
+        *,
+        status: CodexTurnStatus,
+        failure_kind: str,
+        failure_message: str,
+        now: datetime | None = None,
+    ) -> None:
+        canonical_id = _require_uuid(turn_id, "turn_id")
+        if status not in _CODEX_FAILURE_STATUSES:
+            raise ValueError("status must be one of failed, timed_out, or ambiguous")
+        canonical_kind = _require_nonempty_string(failure_kind, "failure_kind")
+        canonical_message = _require_nonempty_string(failure_message, "failure_message")
+        failed_at = datetime.now(UTC) if now is None else now
+        self._validate_lease_timestamp(failed_at)
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                UPDATE codex_turns
+                SET status = %(status)s, failure_kind = %(kind)s, failure_message = %(message)s,
+                    updated_at = %(now)s
+                WHERE id = %(id)s AND status NOT IN (
+                    'completed', 'failed', 'timed_out', 'ambiguous'
+                )
+                RETURNING id
+                """,
+                {
+                    "id": canonical_id,
+                    "status": status.value,
+                    "kind": canonical_kind,
+                    "message": canonical_message,
+                    "now": failed_at,
+                },
+            ).fetchone()
+            if row is None:
+                raise CodexTurnConflictError(
+                    f"codex turn {canonical_id} does not exist or is already terminal"
+                )
+            self._append_event(
+                connection,
+                aggregate_type="codex_turn",
+                aggregate_id=canonical_id,
+                event_type="codex_turn.failed",
+                payload={
+                    "status": status.value,
+                    "failure_kind": canonical_kind,
+                    "failure_message": canonical_message,
+                },
+                idempotency_key=f"codex_turn:fail:{canonical_id}",
+            )
+
+    def reconcile_codex_turns(self, now: datetime) -> int:
+        """Sweep lease-expired turns to a terminal status.
+
+        Pre-dispatch expiry (still `reserved`) is resolved conservatively as a
+        clean `failed` reservation lapse: nothing was ever dispatched, so nothing
+        was consumed, and the experiment simply lost its unused reservation.
+        Post-dispatch expiry (`dispatched` or `running`) is resolved as
+        `ambiguous`: the durable dispatch commitment means the outcome can never
+        be un-consumed, only recorded as unknown.
+        """
+        self._validate_lease_timestamp(now)
+        with self.database.transaction() as connection:
+            expired_reserved = connection.execute(
+                """
+                UPDATE codex_turns
+                SET status = 'failed', failure_kind = 'reservation_lease_expired',
+                    failure_message = 'reservation lease expired before dispatch',
+                    updated_at = %(now)s
+                WHERE status = 'reserved' AND lease_expires_at <= %(now)s
+                RETURNING id
+                """,
+                {"now": now},
+            ).fetchall()
+            expired_dispatched = connection.execute(
+                """
+                UPDATE codex_turns
+                SET status = 'ambiguous', failure_kind = 'dispatch_lease_expired',
+                    failure_message = 'dispatched turn lease expired without a terminal event',
+                    updated_at = %(now)s
+                WHERE status IN ('dispatched', 'running') AND lease_expires_at <= %(now)s
+                RETURNING id
+                """,
+                {"now": now},
+            ).fetchall()
+            for turn_id_value, event_type, disposition in [
+                (row[0], "codex_turn.lease_expired_pre_dispatch", "failed")
+                for row in expired_reserved
+            ] + [
+                (row[0], "codex_turn.lease_expired_post_dispatch", "ambiguous")
+                for row in expired_dispatched
+            ]:
+                self._append_event(
+                    connection,
+                    aggregate_type="codex_turn",
+                    aggregate_id=turn_id_value,
+                    event_type=event_type,
+                    payload={"disposition": disposition, "reconciled_at": now.isoformat()},
+                    idempotency_key=f"{event_type}:{turn_id_value}",
+                )
+            return len(expired_reserved) + len(expired_dispatched)
+
+    def codex_usage_status(self, now: datetime) -> CodexUsageStatus:
+        self._validate_lease_timestamp(now)
+        budget_day = now.date()
+        with self.database.transaction() as connection:
+            daily_row = connection.execute(
+                "SELECT count(*) FROM codex_turns WHERE budget_day = %(day)s",
+                {"day": budget_day},
+            ).fetchone()
+            role_rows = connection.execute(
+                """
+                SELECT role, count(*) FROM codex_turns
+                WHERE budget_day = %(day)s
+                GROUP BY role
+                """,
+                {"day": budget_day},
+            ).fetchall()
+            active_row = connection.execute(_CODEX_ACTIVE_LEASE_QUERY, {"now": now}).fetchone()
+            usage_row = connection.execute(
+                """
+                SELECT
+                    COALESCE(SUM(input_tokens), 0), COALESCE(SUM(cached_input_tokens), 0),
+                    COALESCE(SUM(output_tokens), 0), COALESCE(SUM(reasoning_output_tokens), 0)
+                FROM codex_turns WHERE budget_day = %(day)s
+                """,
+                {"day": budget_day},
+            ).fetchone()
+        role_reserved = {str(role): int(count) for role, count in role_rows}
+        for role in CodexModelRole:
+            role_reserved.setdefault(role.value, 0)
+        assert usage_row is not None
+        return CodexUsageStatus(
+            budget_day=budget_day,
+            daily_reserved=int(daily_row[0]) if daily_row is not None else 0,
+            role_reserved=role_reserved,
+            active_leases=int(active_row[0]) if active_row is not None else 0,
+            usage=CodexUsage(
+                input_tokens=int(usage_row[0]),
+                cached_input_tokens=int(usage_row[1]),
+                output_tokens=int(usage_row[2]),
+                reasoning_output_tokens=int(usage_row[3]),
+            ),
+        )
 
     @staticmethod
     def _validate_lease(now: datetime, lease_seconds: int) -> None:

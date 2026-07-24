@@ -26,7 +26,8 @@ def repository(database: Database) -> Iterator[Repository]:
     with database.transaction() as connection:
         connection.execute(
             "TRUNCATE events, problems, methods, experiments, artifacts, claims, evaluations, "
-            "method_scores, completeness_progress, budget_reservations, problem_source_versions "
+            "method_scores, completeness_progress, budget_reservations, problem_source_versions, "
+            "codex_turn_events, codex_turns "
             "RESTART IDENTITY CASCADE"
         )
     yield Repository(database)

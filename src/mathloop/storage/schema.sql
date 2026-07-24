@@ -295,3 +295,39 @@ CREATE TABLE IF NOT EXISTS budget_reservations (
 
 ALTER TABLE budget_reservations
     ADD COLUMN IF NOT EXISTS execution_dispatched BOOLEAN NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS codex_turns (
+    id UUID PRIMARY KEY,
+    experiment_id UUID NOT NULL UNIQUE REFERENCES experiments(id),
+    budget_day DATE NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('luna', 'terra', 'sol')),
+    model TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN (
+            'reserved', 'dispatched', 'running', 'completed',
+            'failed', 'timed_out', 'ambiguous'
+        )
+    ),
+    lease_owner TEXT NOT NULL,
+    lease_expires_at TIMESTAMPTZ NOT NULL,
+    thread_id TEXT NULL,
+    cli_version TEXT NULL,
+    input_tokens BIGINT NULL CHECK (input_tokens >= 0),
+    cached_input_tokens BIGINT NULL CHECK (cached_input_tokens >= 0),
+    output_tokens BIGINT NULL CHECK (output_tokens >= 0),
+    reasoning_output_tokens BIGINT NULL CHECK (reasoning_output_tokens >= 0),
+    failure_kind TEXT NULL,
+    failure_message TEXT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS codex_turn_events (
+    turn_id UUID NOT NULL REFERENCES codex_turns(id),
+    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+    event_type TEXT NOT NULL,
+    raw_sha256 TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (turn_id, sequence)
+);
