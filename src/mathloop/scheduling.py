@@ -632,6 +632,20 @@ class RuntimeScheduler:
 
 def _is_applicable(problem: Problem, method: MethodVersion) -> bool:
     checker = problem.checker
+    if method.family == "codex_proof_strategy":
+        # Codex work must never be allocated against a holdout row: a Codex
+        # turn consumes real, non-repeatable model budget and is not one of
+        # the deterministic search methods the completeness/routing holdout
+        # lanes exist to measure -- letting it touch a holdout row would
+        # contaminate the very completeness lane those lanes protect. This
+        # is the single choke point both `_options` (which already skips
+        # holdout problems separately, for every family) and
+        # `_schedule_routing_holdout_pair` (which does not -- it consults
+        # only `_is_applicable` and always operates on holdout problems)
+        # go through, so gating here closes the routing-holdout loophole the
+        # separate `problem.cohort == "holdout"` skip in `_options` does not
+        # reach on its own.
+        return problem.cohort != "holdout"
     if method.family == "integer_counterexample":
         return (
             checker.get("kind") == "integer_predicate"

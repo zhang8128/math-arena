@@ -1,10 +1,14 @@
 import random
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 
-from mathloop.scheduling import BudgetLedger, PortfolioPolicy
+from mathloop.domain import Experiment, ExperimentStatus, MethodVersion, Problem, ProblemStatus
+from mathloop.scheduling import BudgetLedger, PortfolioPolicy, RuntimeScheduler, _is_applicable
 
 
 def _policy() -> PortfolioPolicy:
@@ -150,3 +154,99 @@ def test_budget_authorization_rejects_invalid_estimates(estimate: object) -> Non
 
     with pytest.raises((TypeError, ValueError)):
         ledger.authorize(estimated_cost_usd=estimate)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Codex scheduling: never allocate to holdout rows; copy model/role verbatim
+# ---------------------------------------------------------------------------
+
+
+def _method_version(family: str, spec: dict[str, object]) -> MethodVersion:
+    return MethodVersion(
+        id=uuid4(),
+        family=family,
+        version=1,
+        spec=spec,
+        status="active",
+        created_at=datetime.now(UTC),
+    )
+
+
+def _problem(cohort: str) -> Problem:
+    return Problem(
+        id=uuid4(),
+        source_id=f"test/{uuid4()}",
+        source_uri="local://scheduler-test",
+        source_hash="a" * 64,
+        statement="statement",
+        normalized_statement="statement",
+        domain="testing",
+        features={},
+        checker={"kind": "unsupported"},
+        status=ProblemStatus.ELIGIBLE,
+        cohort=cohort,
+        version=1,
+        created_at=datetime.now(UTC),
+    )
+
+
+def _codex_method_spec() -> dict[str, object]:
+    return {
+        "external_provider": "codex",
+        "codex_role": "terra",
+        "codex_model": "gpt-5.6-terra",
+        "max_output_tokens": 4096,
+        "provenance": {"identity_sha256": "f" * 64},
+    }
+
+
+def test_codex_method_is_applicable_to_development_problems() -> None:
+    method = _method_version("codex_proof_strategy", _codex_method_spec())
+
+    assert _is_applicable(_problem("development"), method) is True
+
+
+def test_codex_method_is_never_applicable_to_holdout_problems() -> None:
+    """The single choke point closing the routing-holdout loophole.
+
+    `_options` (the ordinary exploitation/novelty/completeness/verification
+    lanes) already skips every holdout problem regardless of `_is_applicable`.
+    `_schedule_routing_holdout_pair`, which always operates on holdout
+    problems, does not -- it consults only `_is_applicable`. So this is the
+    one place that must return `False` for Codex against a holdout problem
+    to keep Codex out of every scheduling path, not just the ordinary ones.
+    """
+    method = _method_version("codex_proof_strategy", _codex_method_spec())
+
+    assert _is_applicable(_problem("holdout"), method) is False
+
+
+def test_codex_scheduler_config_copies_model_and_role_into_immutable_experiment_config() -> None:
+    method = _method_version("codex_proof_strategy", _codex_method_spec())
+    scheduler = RuntimeScheduler(cast(Any, None), _policy())
+
+    config = scheduler._config(_problem("development"), method, "exploitation")
+
+    assert config["external_provider"] == "codex"
+    assert config["codex_role"] == "terra"
+    assert config["codex_model"] == "gpt-5.6-terra"
+    assert config["max_output_tokens"] == 4096
+    assert config["provenance"] == "f" * 64
+
+    # `Experiment` is a `FrozenModel`: wrapping the scheduler's config in one
+    # freezes it recursively (`FrozenDict`), so the copied model/role are not
+    # merely equal at scheduling time -- they cannot be mutated afterward.
+    experiment = Experiment(
+        id=uuid4(),
+        problem_id=uuid4(),
+        method_id=method.id,
+        lane="exploitation",
+        config=config,
+        seed=1,
+        status=ExperimentStatus.QUEUED,
+        created_at=datetime.now(UTC),
+    )
+    assert experiment.config["codex_role"] == "terra"
+    assert experiment.config["codex_model"] == "gpt-5.6-terra"
+    with pytest.raises(TypeError):
+        experiment.config["codex_role"] = "sol"  # type: ignore[index]

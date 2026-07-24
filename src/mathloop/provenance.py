@@ -8,6 +8,8 @@ import platform
 from collections.abc import Mapping
 from pathlib import Path
 
+from mathloop.codex.domain import CodexModelRole
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAGE_IMAGE_DIGEST = (
     "sha256:6d0efd1d82d33eb5f6450af740d080a550c2b52948c0c5a34849c6d3c5004251"
@@ -29,6 +31,20 @@ _METHOD_FILES: dict[str, tuple[str, ...]] = {
         "src/mathloop/providers/openai.py",
     ),
 }
+
+# `codex_proof_strategy`'s provenance is parameterized by model/role/CLI
+# version, which the simple `method_provenance(family)` dispatcher above has
+# no way to accept -- so it deliberately is not one of the families in
+# `_METHOD_FILES` and gets its own `codex_method_provenance` below instead.
+_CODEX_METHOD_FAMILY = "codex_proof_strategy"
+_CODEX_SOURCE_FILES: tuple[str, ...] = (
+    "src/mathloop/methods/codex_agent.py",
+    "src/mathloop/codex/client.py",
+    "src/mathloop/codex/domain.py",
+    "src/mathloop/codex/events.py",
+    "src/mathloop/codex/launch.py",
+    "src/mathloop/codex/worktrees.py",
+)
 
 
 def component_provenance(
@@ -78,6 +94,37 @@ def method_provenance(family: str) -> dict[str, object]:
         *paths,
         container_digest=(SAGE_IMAGE_DIGEST if family == "sage_polynomial" else None),
     )
+
+
+def codex_method_provenance(
+    *, model: str, role: CodexModelRole, min_cli_version: str
+) -> dict[str, object]:
+    """Immutable identity for the Codex proof-strategy method.
+
+    Unlike `method_provenance`, this also depends on `model`, `role`, and
+    `min_cli_version`: Codex supports several models across three roles
+    behind one method family, and the plan requires provenance to change
+    whenever any of those changes -- not just the source files. Those three
+    values are folded into `component` (rather than added as new top-level
+    payload keys) so the result stays within `validate_provenance`'s existing
+    required-key schema; every caller that already validates method or
+    verifier provenance keeps working unchanged. `implementation_files` still
+    covers every Codex source module (`_CODEX_SOURCE_FILES`) plus, via
+    `component_provenance`'s own blanket glob, every other Python file in the
+    package -- so a change to the launch policy or any other Codex module
+    changes the identity regardless of whether it is named here explicitly.
+    """
+    if type(model) is not str or not model.strip():
+        raise ValueError("model must be a non-empty string")
+    if not isinstance(role, CodexModelRole):
+        raise TypeError("role must be a CodexModelRole")
+    if type(min_cli_version) is not str or not min_cli_version.strip():
+        raise ValueError("min_cli_version must be a non-empty string")
+    component = (
+        f"method:{_CODEX_METHOD_FAMILY}:role={role.value}:model={model}:"
+        f"min_cli_version={min_cli_version}"
+    )
+    return component_provenance(component, *_CODEX_SOURCE_FILES)
 
 
 def verifier_provenance(verifier: str) -> dict[str, object]:
