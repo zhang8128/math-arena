@@ -3581,6 +3581,19 @@ class Repository:
                 *reservation_row, existing_status = existing
                 if existing_status != CodexTurnStatus.RESERVED.value:
                     return None
+                if reservation_row[6] <= now:
+                    # The reservation's own lease has lapsed and it was never
+                    # dispatched. It must not be handed back to the caller as a
+                    # live replay -- doing so would let a crash/restart retry
+                    # resurrect a slot that reserve_codex_turn's own active-lease
+                    # accounting has already (correctly, since nothing was ever
+                    # dispatched from it) stopped counting, letting a different
+                    # experiment's reservation and this one both be "active" at
+                    # once. It is also not yet a settled conflict: only
+                    # reconcile_codex_turns gives it a terminal disposition, and
+                    # that may never run. Until something settles it, this
+                    # experiment simply cannot be (re-)reserved.
+                    return None
                 if (
                     reservation_row[3] != role.value
                     or reservation_row[4] != canonical_model
@@ -3697,9 +3710,13 @@ class Repository:
             return None
         return self._codex_reservation_from_row(row)
 
-    def mark_codex_turn_dispatched(self, turn_id: UUID, worker_id: str) -> None:
+    def mark_codex_turn_dispatched(
+        self, turn_id: UUID, worker_id: str, *, now: datetime | None = None
+    ) -> None:
         canonical_id = _require_uuid(turn_id, "turn_id")
         canonical_worker = _require_nonempty_string(worker_id, "worker_id")
+        dispatched_at = datetime.now(UTC) if now is None else now
+        self._validate_lease_timestamp(dispatched_at)
         with self.database.transaction() as connection:
             _, appended = self._append_event(
                 connection,
@@ -3716,11 +3733,20 @@ class Repository:
                 UPDATE codex_turns
                 SET status = 'dispatched', updated_at = now()
                 WHERE id = %(id)s AND status = 'reserved' AND lease_owner = %(worker)s
+                  AND lease_expires_at > %(now)s
                 RETURNING id
                 """,
-                {"id": canonical_id, "worker": canonical_worker},
+                {"id": canonical_id, "worker": canonical_worker, "now": dispatched_at},
             ).fetchone()
             if row is None:
+                # Reached for a wrong worker, an already-consumed turn, or --
+                # critically -- a still-'reserved' row whose own lease has
+                # already lapsed: a lapsed lease must never be promoted to
+                # 'dispatched', since that status is counted as active
+                # concurrency unconditionally (see _CODEX_ACTIVE_LEASE_QUERY).
+                # Promoting it would let this turn and whatever independently
+                # reserved its now-freed concurrency slot both be active at
+                # once, silently exceeding concurrent_turn_limit.
                 raise CodexTurnConflictError(
                     f"codex turn {canonical_id} cannot be dispatched by {canonical_worker!r}"
                 )
