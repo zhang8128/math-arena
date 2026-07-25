@@ -21,6 +21,13 @@ problem attempts would not have done that.
 
 - `n²+n+q` has a full prime run exactly for `q ∈ {2,3,5,11,17,41}`, matching the
   Heegner discriminants. Search space permanently retired: **no larger `q` exists.**
+- **T10 falsified this target's own recorded law.** T1 wrote a bound into the
+  notebook citing a background validation job — **that job never completed and
+  produced no output**, and the claim stood unchallenged for six turns. Re-run
+  feasibly, it produced counterexamples (`11n²+9n+11` predicted 10, ran 21). The
+  error: the law assumed `p | f(n)` implies composite, but `f(n) = ±p` is *prime*
+  and the run passes through. Corrected law re-validated with 0 violations.
+  Standing rule adopted: **never cite a computation whose output you have not read.**
 - **Broke the naive generalisation.** "Long run ⟹ class number 1" is false:
   `6n²+6n+31` has `h(D)=4` and runs 58. The real mechanism is two routes to
   avoiding small primes — inertness, and *coefficient absorption* (`p | gcd(a,b)`

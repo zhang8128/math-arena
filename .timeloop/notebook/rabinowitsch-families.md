@@ -52,10 +52,14 @@ There are **two independent mechanisms** by which a form avoids small prime fact
 
 Mechanism 2 is unavailable to the principal form (`a=1`) and is why non-principal forms with large class number still produce long runs. `6n²+6n+31` has `gcd(a,b)=6`, so 2 and 3 are structurally excluded even though both split in `D=−708`.
 
-**The law.** Let `p` = the smallest prime with `p ∤ gcd(a,b)` that divides some value (equivalently: the smallest prime not absorbed, for which `D` is a QR). Then
+**The law.** ⚠️ **SUPERSEDED — this statement is FALSE. See T10 for the corrected
+law and its counterexamples. Kept here, struck, so the error stays auditable.**
+
+Let `p` = the smallest prime with `p ∤ gcd(a,b)` that divides some value
+(equivalently: the smallest prime not absorbed, for which `D` is a QR). Then
 
 ```
-run  ≤  s·(p−1) + [vertex integral],    s = 2 if a | b else 1
+run  ≤  s·(p−1) + [vertex integral],    s = 2 if a | b else 1     <-- FALSE
 ```
 
 The factor `s` is the vertex position: `a | b` puts the vertex at an integer or half-integer, so values are symmetric about it and the run doubles. Otherwise the run is one-sided.
