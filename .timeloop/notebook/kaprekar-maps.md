@@ -84,3 +84,29 @@ conditions.
 
 ### COST
 ~2 minutes, including the base-10 sanity check.
+
+---
+
+## T13 — NOVELTY CHECK
+
+### NOVELTY: `published`
+The 3-digit result is a known theorem. Published form: for even base `b`, the
+Kaprekar routine converges to the number with digits `(b/2 − 1)(b − 1)(b/2)`, and
+**even-ness is exactly the condition** — "the only [case] is when `b` is even,
+since then and only then will the outer digits' difference be even."
+
+That is the same multiset `{b−1, b/2, b/2−1}` T11 derived, in canonical
+arrangement, with the same parity criterion. Base 10 → 495, matching.
+
+**T11 is a correct independent rediscovery, not a discovery.** The closed form
+`K(b) = (b/2)(b²−1)` is an equivalent restatement.
+
+Relevant literature also covers `L ≥ 4` and even/odd bases in depth, so T11's
+"NEXT" (apply the midpoint heuristic to `L=4`) should **start from these papers**
+rather than from scratch.
+
+### Sources
+- https://arxiv.org/pdf/1710.06308 — base-dependent behaviour of Kaprekar's routine
+- https://arxiv.org/pdf/2101.09708 — on 2-digit and 3-digit Kaprekar's routine
+- https://arxiv.org/pdf/2408.12257 — fixed points and cycles, even bases
+- https://en.wikipedia.org/wiki/Kaprekar's_routine

@@ -112,3 +112,52 @@ prime/composite zero-death mechanism, measured rather than asserted.
 
 ### COST
 ~30 s of compute across four searches, plus one refuted mechanism.
+
+---
+
+## T13 — NOVELTY CHECK: the literature is ahead of this arena
+
+### NOVELTY: `superseded`
+
+Published maximum persistence for bases 2–12: **`1, 3, 3, 6, 5, 8, 6, 7, 11, 13, 7`**
+Published lower bounds for higher bases: **15 (base 13), 13 (base 14), 11 (base 15), 8 (base 16)**.
+
+Compared against T12:
+
+| base | T12 found | published | verdict |
+|---|---|---|---|
+| 3–10, 12 | 3,3,6,5,8,6,7,11,7 | same | ✅ **exact match** |
+| **11** | 11 | **13** | ❌ undershot |
+| **13** | 13 | **15** | ❌ undershot |
+| **14** | 12 | **13** | ❌ undershot |
+| 15, 16 | 11, 8 | 11, 8 | ✅ match |
+
+**Every base T12 flagged as converged matches published exactly. Every base T12
+flagged as truncated undershoots.** The truncation caveat was not
+over-cautious — it was precisely calibrated, and the literature confirms the
+searches were cut short exactly where predicted.
+
+### What this retires
+- The "other bases beat base 10" observation is **real but known** — base 11 (13)
+  and base 13 (15) are published and already exceed base 10's 11. Not a finding.
+- **Sloane's 1973 conjecture** is the relevant frame: there is a maximum
+  persistence in *every* base. That is the actual open question, not the records.
+- There is recent work on it: *"The Multiplicative Persistence Conjecture Is True
+  for Odd Targets"* (arXiv 2110.04263).
+
+### STRUCTURE — what survives
+The prime/composite zero-death mechanism (composite bases lose ~99 % of chains to
+zero digits, prime bases ~55–75 %) was **measured here and is not stated in the
+sources found**. It is a plausible explanation for the base ranking rather than a
+result, but it did not come from the literature.
+
+### RULED OUT
+Do not re-run base-by-base record searches — the published lower bounds beat
+anything reachable at `10^18`. Any future work must either go far deeper
+computationally or attack Sloane's conjecture structurally.
+
+### Sources
+- https://homepage.villanova.edu/robert.styer/MultiplicativePersistence/MultiplicativePersistence.htm
+- https://cs.uwaterloo.ca/journals/JIS/VOL24/Lamont/lamont5.pdf
+- https://arxiv.org/pdf/2110.04263
+- https://oeis.org/A003001

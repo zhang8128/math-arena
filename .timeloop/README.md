@@ -38,9 +38,18 @@ runs/               raw compute output, referenced from the notebook
    start — resuming is cheaper than beginning.
 3. **Attack.** Bounded compute. Write search code into `lib/` if it is reusable;
    throwaway probes go in `runs/`.
-4. **Record.** Update `notebook/<slug>.md` using the schema below. This is the
+4. **Novelty-check — MANDATORY before recording.** Turn the finding into
+   something searchable (an integer sequence, a formula, a named object) and
+   look it up: OEIS for sequences, web search for named theorems. Record the
+   result in the `NOVELTY` field. This step is not optional and not a
+   formality — it took 30 seconds on T13 and immediately (a) confirmed two
+   results as published theorems, (b) revealed that published lower bounds for
+   multiplicative persistence *exceed* what this arena found. Hedging a result
+   as "probably classical" without checking is not honesty, it is laziness
+   wearing honesty's clothes.
+5. **Record.** Update `notebook/<slug>.md` using the schema below. This is the
    only part of the turn that matters after the turn ends.
-5. **Log.** Append one line to `ledger.md`.
+6. **Log.** Append one line to `ledger.md`.
 
 ## Notebook schema — every entry must carry these
 
@@ -57,6 +66,10 @@ work. Each notebook file carries:
   the field that makes the arena more than parallel brute force.
 - **TECHNIQUE** — what worked, what failed, and the cost. So the next turn picks
   a better tool.
+- **NOVELTY** — what the lookup found. One of: `published` (with the reference),
+  `not found` (with the exact queries tried, so the next turn knows the search was
+  shallow rather than the result new), or `superseded` (the literature is *ahead*
+  of what this arena found — record their value).
 - **NEXT** — one concrete action. Not "think harder" — an actual next step.
 - **COST** — wall-clock and what was computed, so effort can be compared.
 
@@ -68,8 +81,12 @@ confident-sounding output that is wrong or vacuous.
 1. **A conjecture is not "verified" because a search found no counterexample.**
    Say the range searched. `no counterexample for n < 10^8` is a fact;
    `probably true` is not a finding.
-2. **Rediscovery is fine; claiming novelty is not.** If a result is classical,
-   name it. The arena's value is the search space it retires, not credit.
+2. **Rediscovery is fine; claiming novelty is not — and *guessing* at either is
+   also not.** Look it up. "Very likely classical" written five times without a
+   single search is an untested assertion about the world, which is the same
+   failure as reporting a search limit as a property of the problem. If a result
+   is classical, name the reference. If the search found nothing, say what you
+   searched.
 3. **A counterexample must be independently re-verified** by a separate code path
    before it is recorded as one. Search code has bugs; that is the normal case.
 4. **Record the dead ends.** A turn that found nothing must still write what it
