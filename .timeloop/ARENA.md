@@ -84,14 +84,16 @@ target, answer "has this been retired, and why."
 
 ## Priority order
 
-1. ~~**Volume**~~ — done.
-2. **Evaluator** — needs the operator's decision on installing a proof assistant.
-   This sets the ceiling on everything.
-3. **Queryable tablebase** — cheap, and stops the arena re-walking closed ground.
-4. **Technique retrieval** — the pool's `forges` field is a flat list. It should
+1. ~~**Volume**~~ — done (`bin/intake`, 608 open problems).
+2. ~~**Evaluator**~~ — done (Lean 4.32.1 + mathlib, validated both directions).
+3. **Join the two halves** — pull `formal-conjectures` so intake yields *Lean
+   statements*, not just problem numbers. This is now the highest-leverage move:
+   both halves exist and nothing connects them.
+4. **Queryable tablebase** — cheap, and stops the arena re-walking closed ground.
+5. **Technique retrieval** — the pool's `forges` field is a flat list. It should
    be matchable: given a new target, surface the techniques that have worked on
-   its shape. This is the degenerate first version of the transfer graph.
-5. **Instrumentation** — no way currently to tell whether turn 50 is better than
+   its shape. The degenerate first version of the transfer graph.
+6. **Instrumentation** — no way currently to tell whether turn 50 is better than
    turn 5. Without it, "improving" is an assertion.
 
 ## The moonshot, stated honestly
@@ -100,10 +102,21 @@ The target is a version of this that advances mathematical capability far enough
 that everything prior reads as "classical" — the chess transition, applied to
 mathematics.
 
-The distance from here is enormous and *specific*. It is not compute; every result
-in this arena took seconds. It is not target supply; that is now 608 deep. It is
-the evaluator. Until a claim can be machine-checked, this arena produces evidence
-and a human supplies the judgement — which is the classical arrangement it would
-need to surpass.
+The distance from here is enormous and *specific*, and as of 2026-07-25 it is one
+item shorter. It is not compute; every result in this arena took seconds. It is
+not target supply; that is 608 deep. It is no longer the evaluator either — a
+claim can now be machine-checked, with no human in the verification path.
 
-That makes the next move unambiguous rather than aspirational.
+What remains is the part neither volume nor verification supplies: **the ability
+to actually prove a hard theorem.** The arena can now state a target formally and
+check an attempt. It cannot yet produce attempts that succeed on anything an
+Erdős problem would recognise as difficult. `decide` settles finite statements;
+the open problems are infinite.
+
+So the honest frontier is now: *given a formal statement and a checker, can this
+thing generate proofs?* That is a much better question than the one we had this
+morning, because it is answerable by trying — and every failed attempt costs
+nothing but compute and returns an unambiguous verdict.
+
+That is the same loop chess had. It is not a guarantee of the moonshot. It is the
+first arrangement in which the moonshot is even measurable.
