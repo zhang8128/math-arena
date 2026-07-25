@@ -131,3 +131,10 @@ Novelty remains explicitly `unchecked`; there is no publication action or
 human-review workflow in this slice. API-backed proof sketches remain
 credential- and flag-gated. The pinned Sage image is amd64 and runs through
 Docker emulation on this arm64 acceptance host.
+
+A second, ChatGPT-authenticated Codex execution lane was added afterward
+(same non-authoritative, credential- and flag-gated shape as the OpenAI API
+lane; the two are mutually exclusive and settle through disjoint budgets —
+turns and tokens for Codex, dollars for the API). Its own acceptance
+evidence, including the credit-consuming canary gate, is recorded separately
+in `docs/verification/codex-foundation-acceptance.md`.

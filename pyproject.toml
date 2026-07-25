@@ -30,7 +30,11 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: requires Docker", "live_api: incurs an external API call"]
+markers = [
+  "integration: requires Docker",
+  "live_api: incurs an external API call",
+  "live_codex: incurs a real, credit-consuming ChatGPT Codex turn",
+]
 
 [tool.ruff]
 line-length = 100
