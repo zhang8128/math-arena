@@ -313,3 +313,63 @@ invariant" + "congruence", or ask on a forum. Do not upgrade this to `new`
 without one of those.
 
 Sources: en.wikipedia.org/wiki/Perfect_digital_invariant · oeis.org/wiki/Perfect_Digital_Invariants
+
+---
+
+## T14 — the mechanism is now a machine-checked theorem, in general form
+
+### STATUS
+`resolved`, and now *proved* rather than measured.
+
+T5 established the congruence empirically: fixed-point abundance tracks
+`gcd(b−1, M_d)`, verified across four exponents and eight congruence classes.
+T13 added `decide` proofs for the individual moduli (`M_3 = 6`, `M_5 = 30`,
+`M_2 = 2`) — but those settle *instances*, not the law.
+
+This is the theorem those were instances of:
+
+```lean
+theorem digitPow_modEq (base d m : ℕ) (hb : 2 ≤ base)
+    (hm : ∀ x : ℕ, x ^ d ≡ x [MOD m]) (n : ℕ) :
+    ((base.digits n).map (· ^ d)).sum ≡ n [MOD Nat.gcd (base - 1) m]
+```
+
+For **any** base, **any** exponent, and **any** modulus `m` satisfying
+`x^d ≡ x (mod m)`, the digit-power map is congruent to the identity modulo
+`gcd(b−1, m)`. `M_d` is simply the largest such `m`.
+
+**Axiom audit:** `#print axioms digitPow_modEq` →
+`[propext, Classical.choice, Quot.sound]`. The three standard axioms, **no
+`sorryAx`**. Complete proof.
+
+### The proof
+Three steps, and the whole thing is short once the right mathlib lemma is found:
+
+1. `Nat.modEq_digits_sum` gives `n ≡ (digits b n).sum [MOD b−1]` whenever
+   `b % (b−1) = 1` — true for `b ≥ 3`.
+2. A one-line induction (`sum_map_pow_modEq`) lifts the elementwise hypothesis
+   `x^d ≡ x [MOD m]` to `Σ dᵢ^d ≡ Σ dᵢ [MOD m]`.
+3. `Nat.ModEq.of_dvd` pushes both congruences down to `gcd(b−1, m)`, where they
+   chain.
+
+`b = 2` is a separate branch: `gcd(1, m) = 1` and everything is congruent mod 1.
+
+### TECHNIQUE
+- **Finding the right mathlib lemma was the whole difficulty.** Once
+  `Nat.modEq_digits_sum` surfaced, the proof was mechanical. The mathematics was
+  already understood in T5; formalising it was a search problem over a library,
+  not a mathematical one.
+- Five compile cycles, each with a precise error. The failures were: `simp` not
+  closing `0 ≡ 0`, a rewrite matching `base` inside `base − 1` (fixed by
+  generalising `base = k + 1` up front), and one wrong lemma name
+  (`Nat.one_gcd` → `Nat.gcd_one_left`). **The checker's error messages were the
+  navigation.** This is the difference an evaluator makes: each wrong step was
+  named precisely and cost about a minute.
+
+### NOVELTY
+Unchanged from the T13 entry — `not found` for the abundance law, and the
+congruence's ingredients are classical. Formalising it does not change its
+novelty; it changes its *status* from measured to proved.
+
+### COST
+~15 minutes, five compile cycles.
