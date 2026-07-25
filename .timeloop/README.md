@@ -123,6 +123,34 @@ Run it by hand any time: `.timeloop/bin/reap` lists, `--kill` reaps.
 relative launches — caught by the decoy test, not by reading the code. Testing
 the janitor found a bug in the janitor.)*
 
+## Choosing targets — what they forge, not what they teach
+
+A person at a maths camp accumulates in their head; their kit is a convenience.
+This arena's occupant resets between turns, so **the kit is the only thing that
+carries**. That inverts how targets should be chosen.
+
+Do not pick a target because the mathematics is interesting. Pick it for the
+**capability it forces you to build**, and record that in the pool's `forges`
+field. The theorem is the load; the technique is the product.
+
+What the first six targets actually forged — none of it number theory:
+
+- *tabulate the right invariant* — the answer was invisible until the discriminant
+  sat beside the run length
+- *reduce to a decidable family* — so results are theorems, not samples
+- *group by a derived invariant*, not the raw parameter
+- *exploit state-space collapse* — multiset instead of integer
+- *sanity-check against a known value BEFORE trusting a method*
+- *check the argmax against the search ceiling* — a maximiser pressed against the
+  bound is not a record
+- *reduce a search to the image of the map*
+- *recognise a wall early and park with the reason*
+- *reduce a conjecture to a sharper sub-question*; attack an intersection rather
+  than filtering one set by the other
+
+Every one of those would work on a biology dataset or a code review. That is the
+test of whether a rep was worth doing.
+
 ## Tracks
 
 **`open`** — known conjectures. Realistic goal is not to solve them but to retire
