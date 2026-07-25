@@ -18,7 +18,7 @@ tells you exactly what is missing here:
 | | chess | arena | state |
 |---|---|---|---|
 | **volume** | millions of positions | **608 open Erdős problems**, scored and filterable | ✅ built (`bin/intake`) |
-| **evaluator** | win/loss, free | "verified computationally over range X" | ❌ **the ceiling** |
+| **evaluator** | win/loss, free | **Lean 4.32.1 + mathlib**, validated both directions | ✅ built 2026-07-25 |
 | **tablebase** | endgame DBs | `exhausted`/`resolved` notebook entries | ⚠️ real but not queryable |
 
 ### Volume — solved
@@ -35,27 +35,41 @@ intersection that is actually workable:
 **307 problems satisfy all of open + OEIS + formalized.** That is the fuel supply,
 against 16 hand-typed targets before.
 
-### Evaluator — the ceiling, and it is not built
+### Evaluator — BUILT
 
-Every claim this arena has produced is *computationally supported over a stated
-range*. That is precisely the classical mode: mathematics done with a computer,
-where a human still supplies the proof and the judgement.
+Lean 4.32.1 + mathlib (8,639 cached modules, 7.3 GB) at `.timeloop/lean/arena`.
+Operator authorised the install; `elan` manages the toolchain.
 
-Chess had truth for free. Here, truth costs a proof — **unless a proof assistant
-supplies it.** Local check on 2026-07-25: no `lean`, no `lake`, no `z3`, no
-`cvc5`, no `vampire`. Only sympy. So the arena currently *cannot* produce a
-machine-checked result, only evidence.
+**Validated in both directions**, which is the only validation that means
+anything:
 
-This is the difference between "classical mathematics, faster" and anything past
-it. Everything else in this document is secondary.
+- *Accepts truth* — `Nat.exists_infinite_primes` (mathlib genuinely loaded, not
+  merely imported), plus four arena results proved by `decide`.
+- *Rejects falsehood* — a deliberate negative control, `∀ x : ZMod 6, x^2 = x`,
+  was **rejected**: Lean reported that `decide` proved the proposition false.
+  The arena's own theory says `M_2 = 2`, not 6, so the checker disagreed with a
+  plausible-looking statement exactly where it should.
 
-**The decision that unblocks it** (operator's call, not mine to make unilaterally):
-install Lean + mathlib, and pull `google-deepmind/formal-conjectures`, which
-already contains formal statements for open Erdős problems. That converts the
-target list from "problems to compute about" into "statements to attack with a
-checkable notion of success." A cheaper partial step is `z3`/`cvc5` via pip,
-which buys machine-checked results for the decidable fragments — and this arena
-has shown a strong preference for decidable families already.
+The first machine-checked arena results are T5's congruence mechanism —
+`∀ x : ZMod 6, x³ = x`, `∀ x : ZMod 30, x⁵ = x`, `∀ x : ZMod 2, x² = x` — which
+were *measured* on 2026-07-25 and are now *proved*. That transition, from
+"verified over a range" to "checked", is the whole point.
+
+Rebuild from a clean checkout: `cd .timeloop/lean/arena && lake exe cache get && lake build`.
+The 7.3 GB `.lake` directory is gitignored; only sources and the manifest are tracked.
+
+### What the evaluator does NOT yet do
+
+Having a checker is not the same as being able to reach the targets. The
+`decide` tactic settles finite statements; the open Erdős problems are not
+finite. What the evaluator changes is that **success now has a definition** —
+a Lean proof either compiles or it does not, with no human in the verification
+path.
+
+Next step on this axis: pull `google-deepmind/formal-conjectures`, which contains
+Lean statements for open Erdős problems. That converts the intake list from
+"problems to compute about" into "statements with a checkable notion of success",
+and the two halves of the arena — intake and evaluator — meet.
 
 ### Tablebase — real, needs to be queryable
 
