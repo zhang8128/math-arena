@@ -246,6 +246,30 @@ def test_codex_login_status_reports_authenticated(monkeypatch: pytest.MonkeyPatc
     assert "ChatGPT" in detail
 
 
+def test_codex_login_status_falls_back_to_stderr_on_success_when_stdout_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real, installed Codex CLI (0.145.0) writes its success message
+    ("Logged in using ChatGPT") to STDERR, never stdout -- confirmed by
+    direct inspection of the real binary. The success branch must fall back
+    to stderr exactly like the failure branch already did; without this,
+    `completed.stdout.strip()` is empty and the function would silently
+    return the literal fallback string "authenticated" instead of the CLI's
+    own report, making a caller's check for the actual authentication method
+    (a ChatGPT session vs. an API-key credential) vacuous.
+    """
+    monkeypatch.setattr(
+        cli_module.subprocess,
+        "run",
+        _fake_run(0, stdout="", stderr="Logged in using ChatGPT\n"),
+    )
+
+    ok, detail = cli_module._codex_login_status(_launch_policy())
+
+    assert ok is True
+    assert "ChatGPT" in detail
+
+
 def test_codex_login_status_checks_the_configured_codex_home_not_the_ambient_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

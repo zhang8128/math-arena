@@ -24,6 +24,15 @@ governs; it is what happens once the turn is already over. Giving it a fixed
 floor of its own, rather than `max(0.0, deadline - now)` (which is exactly
 `0.0` on every timeout path, by definition), is what keeps a timed-out turn's
 worktree from being leaked on every single occurrence.
+
+The `codex --version` fallback query (used only when a `thread.started`
+event does not itself report `cli_version`) follows the identical pattern:
+it runs strictly *after* every deadline-governed stage of the turn --
+including patch capture, the last such stage -- on its own fixed budget
+(`_CLI_VERSION_QUERY_TIMEOUT_SECONDS`), never by borrowing from whatever of
+the turn's own deadline happens to remain. It is bookkeeping performed once
+the turn's substantive work is already done, not one more stage that work's
+deadline must stretch to cover.
 """
 
 import json
@@ -55,6 +64,11 @@ _POLL_SECONDS = 0.05
 _REAP_GRACE_SECONDS = 0.5
 _CLI_VERSION_QUERY_TIMEOUT_SECONDS = 10.0
 _CLI_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+")
+# A deliberate, honest placeholder for "genuinely could not be determined" --
+# never fabricated to look like a real version, never blank. See its use in
+# `_stream_turn` for why a successful, quota-spent turn is not discarded
+# solely because this one, otherwise-inconsequential metadata query failed.
+_CLI_VERSION_UNKNOWN = "unknown"
 
 
 class CodexClientError(RuntimeError):
@@ -372,23 +386,6 @@ class CodexClient:
             )
         if transcript.final_message is None or transcript.usage is None:
             raise CodexClientError("codex turn completed without a final message or usage")
-        if cli_version is None:
-            # The real Codex CLI's `thread.started` event has been confirmed
-            # (by direct binary inspection) to NOT reliably carry a
-            # `cli_version` field at all -- unlike this client's earlier,
-            # convenience-fake-shaped assumption, this must not be fatal.
-            # Fall back to a separate, zero-turn-cost `codex --version`
-            # query against the same binary and environment. This runs
-            # AFTER the turn's own terminal event already arrived, so it is
-            # not one more stage the turn's own deadline must stretch to
-            # cover -- the same reasoning already applied to worktree
-            # cleanup's own separate budget.
-            cli_version = _query_cli_version(self._launch_policy.codex_binary, environment)
-        if cli_version is None:
-            raise CodexClientError(
-                "could not determine the codex CLI version: the thread.started event "
-                "did not report one and the 'codex --version' fallback query also failed"
-            )
         try:
             value = request.response_schema.model_validate_json(transcript.final_message)
         except ValidationError as error:
@@ -396,7 +393,40 @@ class CodexClient:
                 f"codex final agent message did not match the response schema: {error}"
             ) from error
 
+        # `diff()` is itself governed by the turn's one absolute `deadline`
+        # (it is the last of the phases the module docstring lists) -- the
+        # CLI-version fallback below must run strictly AFTER it, never
+        # before, or it would silently become one more stage stacked on top
+        # of that same deadline-governed window (a real, if small, risk:
+        # `worktrees._run` computes `max(0.0, deadline - now)`, so time spent
+        # resolving a fallback version here could make `git add -A` time out
+        # instantly).
         patch = self._worktree_manager.diff(worktree, deadline=deadline)
+
+        if cli_version is None:
+            # The real Codex CLI's `thread.started` event has been confirmed
+            # (by direct binary inspection) to NOT reliably carry a
+            # `cli_version` field at all -- unlike this client's earlier,
+            # convenience-fake-shaped assumption, this must not be fatal.
+            # Fall back to a separate, zero-turn-cost `codex --version`
+            # query against the same binary and environment, on its own
+            # fixed budget -- never the turn's own deadline, which by this
+            # point has already served its purpose in full.
+            cli_version = _query_cli_version(self._launch_policy.codex_binary, environment)
+        if cli_version is None:
+            # Both sources failed (the event never reported one, and the
+            # fallback query itself hung, exited nonzero, or produced
+            # unparseable output). Discarding an otherwise fully successful,
+            # already quota-spent turn (valid schema, real usage, a captured
+            # patch) over a metadata query alone would be the same class of
+            # harm this fallback exists to prevent, just via a narrower
+            # route -- so this is recorded as a clearly-labeled, honest
+            # placeholder rather than failing the turn. This is not the
+            # "relax the field to optional and store an empty string" this
+            # client's earlier review explicitly rejected: the field stays
+            # required and non-empty, and the receipt is still built from
+            # data this turn genuinely produced.
+            cli_version = _CLI_VERSION_UNKNOWN
         receipt = CodexTurnReceipt(
             reservation_id=request.reservation.id,
             experiment_id=request.reservation.experiment_id,
@@ -479,22 +509,37 @@ def _query_cli_version(codex_binary: Path, environment: Mapping[str, str]) -> st
     calling it here never touches the turn budget, live or in a test.
     Returns `None` (never raises) on any failure; the caller decides what a
     still-missing version means for the receipt.
+
+    Started with `start_new_session=True` and killed by process group, not
+    just by pid, on timeout: the real `codex` binary is a Node wrapper that
+    spawns a vendored native binary with inherited stdio, so killing only the
+    direct child would orphan that grandchild.
     """
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [str(codex_binary), "--version"],
             env=dict(environment),
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
-            check=False,
-            timeout=_CLI_VERSION_QUERY_TIMEOUT_SECONDS,
+            errors="replace",
+            start_new_session=True,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         return None
-    if completed.returncode != 0:
+    try:
+        stdout, _stderr = process.communicate(timeout=_CLI_VERSION_QUERY_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate()
         return None
-    match = _CLI_VERSION_PATTERN.search(completed.stdout)
+    if process.returncode != 0:
+        return None
+    match = _CLI_VERSION_PATTERN.search(stdout)
     return match.group(0) if match else None
 
 

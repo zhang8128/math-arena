@@ -61,6 +61,14 @@ def _emit(payload: dict) -> None:
 def main() -> int:
     argv = sys.argv[1:]
     if argv[:1] == ["--version"]:
+        # A marker file under CODEX_HOME (the one thing CodexLaunchPolicy
+        # always sets, regardless of the otherwise-restricted allowlisted
+        # environment) lets a test make the fallback version query itself
+        # fail, on demand -- proving what happens when BOTH cli_version
+        # sources are unavailable.
+        codex_home = os.environ.get("CODEX_HOME")
+        if codex_home and os.path.exists(os.path.join(codex_home, "version-should-fail")):
+            return 1
         sys.stdout.write("codex-cli 0.145.0\\n")
         return 0
     mode = argv[-1] if argv else "success"
@@ -387,6 +395,29 @@ def test_codex_client_falls_back_to_codex_version_when_thread_started_omits_it(
         events.append,
     )
     assert response.receipt.cli_version == "0.145.0"
+
+
+def test_codex_client_uses_an_unknown_sentinel_when_both_cli_version_sources_fail(
+    fake_codex: Path,
+) -> None:
+    """If `thread.started` omits `cli_version` AND the `codex --version`
+    fallback itself also fails (hangs, exits nonzero, unparseable output),
+    the turn must not be discarded over metadata alone -- an otherwise
+    fully successful, already quota-spent turn is recorded with a clearly
+    labeled, honest sentinel rather than failing.
+    """
+    codex_home = Path(str(_repo_state["codex_home"]))
+    codex_home.mkdir(parents=True, exist_ok=True)
+    marker = codex_home / "version-should-fail"
+    marker.write_text("1")
+    try:
+        response = client(fake_codex).execute(
+            request(mode="no_cli_version", response_schema=ProofSketch),
+            events.append,
+        )
+    finally:
+        marker.unlink()
+    assert response.receipt.cli_version == "unknown"
 
 
 def test_codex_client_uses_the_last_agent_message_when_codex_emits_a_preamble(

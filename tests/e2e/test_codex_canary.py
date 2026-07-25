@@ -103,7 +103,12 @@ def main():
         return 0
     if argv[:2] == ["login", "status"]:
         if _is_authenticated():
-            sys.stdout.write("Logged in with ChatGPT\\n")
+            # The real CLI (0.145.0, confirmed by direct inspection) writes
+            # its success message to STDERR, not stdout, and says "using"
+            # not "with". Getting this wrong is exactly how a login-status
+            # assertion gets validated against a fiction instead of the
+            # real CLI's actual behavior.
+            sys.stderr.write("Logged in using ChatGPT\\n")
             return 0
         sys.stdout.write("Not logged in.\\n")
         return 1
@@ -510,11 +515,14 @@ def test_codex_supervisor_foundation_offline_end_to_end(
     # -- 9. Prove no claim was machine-verified from the proof sketch. -----
     # Structural, not merely "status == lead": no `CandidateClaim` exists in
     # the database at all, the sole query that ever surfaces a claim for
-    # verification returns nothing, `verify_pending()` -- the only call site
-    # of the fixed independent verification kernel -- genuinely performed
-    # zero verifications, and the kernel's own `verify` method (spied above,
-    # safely, since it runs in this same process rather than the forked
-    # execution-boundary child) was never entered.
+    # verification returns nothing, `verify_pending()` genuinely performed
+    # zero verifications, and the kernel's own `verify` method -- spied at
+    # the class level, so it covers every call site in `src/`
+    # (`Worker._verify_persisted_candidate`, `repository.evaluate_and_record_claim`,
+    # and `reporting.reproduce`), not only this one path, and safely, since
+    # all three run in this same process rather than the forked
+    # execution-boundary child `CodexClient.execute` runs inside -- was
+    # never entered.
     assert result_payload["status"] == "lead"
     assert result_payload["witness"] is None
     assert result_payload["claim"] is None
@@ -542,6 +550,30 @@ def test_codex_supervisor_foundation_offline_end_to_end(
         check=True,
     ).stdout
     assert worktree_listing.count("worktree ") == 1  # only the main checkout remains
+
+
+def test_offline_fake_codex_login_status_agrees_with_the_real_clis_actual_behavior(
+    tmp_path: Path,
+) -> None:
+    """The offline test above never calls `_codex_login_status` itself (it
+    drives `CodexClient` directly, never `codex_init`'s preflight), so this
+    fake's own `login status` branch would otherwise go completely
+    unexercised -- exactly the gap that let it silently diverge from the
+    real CLI (wrong stream, wrong preposition) without any test noticing.
+    This calls the real `_codex_login_status` against the fake CLI directly:
+    it fails if the fake ever regresses to reporting success on stdout
+    instead of stderr, or if `_codex_login_status`'s success branch ever
+    stops falling back to stderr.
+    """
+    codex_home = tmp_path / "codex-home"
+    _seed_authenticated_codex_home(codex_home)
+    fake_codex = _write_fake_codex(tmp_path)
+    launch_policy = CodexLaunchPolicy(codex_binary=fake_codex, codex_home=codex_home)
+
+    login_ok, login_detail = cli_module._codex_login_status(launch_policy)
+
+    assert login_ok is True
+    assert "ChatGPT" in login_detail
 
 
 # ---------------------------------------------------------------------------

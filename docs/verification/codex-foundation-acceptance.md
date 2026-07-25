@@ -12,12 +12,14 @@ end-to-end verification of the complete Codex path (policy/accounting types,
 JSONL event parsing, disposable worktree isolation, the transactional turn
 ledger, the supervised CLI client, the Codex proof-strategy method and
 scheduling, and the runtime composition/operator commands built in Tasks
-1-7), plus the credit-consuming canary gate. It reflects the state after one
-review round and its fix (see "Fix round 1" below) — a prior version of this
-document, superseded, described a design where every `thread.started` event
-was assumed to carry `cli_version`; direct inspection of the real, installed
-Codex CLI (0.145.0) found this assumption false, and the fix section below
-records exactly what changed as a result.
+1-7), plus the credit-consuming canary gate. It reflects the state after two
+review rounds and their fixes (see "Fix round 1" and "Fix round 2" below) —
+a prior version of this document, superseded, described a design where
+every `thread.started` event was assumed to carry `cli_version`; direct
+inspection of the real, installed Codex CLI (0.145.0) found this assumption
+false, and the fix sections below record exactly what changed as a result.
+Fix round 1's own I2 fix (asserting `"ChatGPT" in login_detail`) was itself
+found inert in round 2 — see that section for why, and for the actual fix.
 
 ## Offline end-to-end coverage
 
@@ -116,17 +118,17 @@ that fix is load-bearing too. Both mutations were reverted;
 
 ```text
 $ uv run pytest -q tests/e2e/test_codex_canary.py -m "not live_codex"
-1 passed, 1 deselected in 2.61s
+2 passed, 1 deselected in 2.74s
 
 $ uv run pytest -q
-746 passed, 1 skipped in 121.39s (0:02:01)
+749 passed, 1 skipped in 123.60s (0:02:03)
 
 $ uv run pytest -q -rs
-SKIPPED [1] tests/e2e/test_codex_canary.py:552: spends one real,
+SKIPPED [1] tests/e2e/test_codex_canary.py:584: spends one real,
 credit-consuming ChatGPT Codex Luna turn against the operator's own
 subscription; set MATHLOOP_RUN_LIVE_CODEX=1 immediately before an explicitly
 approved run
-746 passed, 1 skipped in 122.22s (0:02:02)
+749 passed, 1 skipped in 122.33s (0:02:02)
 
 $ uv run ruff check src tests
 All checks passed!
@@ -135,19 +137,39 @@ $ uv run mypy src
 Success: no issues found in 47 source files
 
 $ uv lock --check
-Resolved 50 packages in 0.64ms
+Resolved 50 packages in 0.73ms
 
 $ git diff --check
 (no output; exit 0)
+
+$ echo "MATHLOOP_RUN_LIVE_CODEX='${MATHLOOP_RUN_LIVE_CODEX}'"
+MATHLOOP_RUN_LIVE_CODEX=''
 ```
 
-746 passed, 0 failed — 743 at HEAD `beee5ef` + 1 offline end-to-end test +
-2 fix-round regression tests (the `cli_version` fallback and the
-last-agent-message-wins behavior, both in `tests/unit/test_codex_client.py`).
-The live test is defined, collected, and genuinely **skipped** by two
-independent guards (the `live_codex` marker and a `skipif` on
-`MATHLOOP_RUN_LIVE_CODEX`) whether the suite is run with or without `-m`
-filtering.
+Also, per round 2's specific request — the exact, zero-quota check the
+round exists to make pass (`codex --version`/`login status` only, never
+`codex exec`), run directly against this machine's real, installed CLI:
+
+```text
+$ uv run python3 -c "
+from mathloop.cli import _codex_login_status
+from mathloop.codex.launch import CodexLaunchPolicy
+from mathloop.config import Settings
+settings = Settings()
+policy = CodexLaunchPolicy(codex_binary=settings.codex_cli_path, codex_home=settings.codex_home)
+print(_codex_login_status(policy))
+"
+(True, 'Logged in using ChatGPT')
+```
+
+749 passed, 0 failed — 746 after fix round 1 + 3 new tests this round (the
+`_codex_login_status` stderr-fallback-on-success regression test in
+`tests/unit/test_cli.py`, the fake-CLI/real-function agreement test in
+`tests/e2e/test_codex_canary.py`, and the both-sources-fail sentinel test in
+`tests/unit/test_codex_client.py`). The live test is defined, collected, and
+genuinely **skipped** by two independent guards (the `live_codex` marker and
+a `skipif` on `MATHLOOP_RUN_LIVE_CODEX`) whether the suite is run with or
+without `-m` filtering.
 
 ## Fix round 1: the review findings, and what changed
 
@@ -215,6 +237,102 @@ runs); the live test's dead `deadline_seconds=100` (silently overridden by
 misleading comment attributing `proof_sketch` non-registration to the
 absent `OPENAI_API_KEY` (the actual gate is `api_enabled=False`) was
 corrected.
+
+## Fix round 2: the review findings, and what changed
+
+Round 1 closed C1, I1, I3, and the M2/M4/M5 minors — the reviewer
+independently re-verified the C1 fallback in detail (a real version from a
+real source, ~51ms under the exact restricted 7-key environment, once per
+turn, never `codex exec`, its own timeout budget, no `communicate()`
+deadlock risk, spawn-guard safe, and the canary's fake genuinely driving the
+omitted-field path through the full pipeline to a persisted
+`codex_turns.cli_version` value only the fallback could have produced) and
+confirmed it closed. I1 was also independently re-verified sound:
+`_apply_item_completed` still calls `_require_not_terminal` first (an
+after-terminal message is still rejected), and "last wins" cannot silently
+discard a structured answer, since a non-JSON *last* message still fails at
+`model_validate_json` — the same outcome the old unconditional `raise` gave,
+never worse.
+
+**I2 — NOT actually addressed in round 1; the fix was inert.** The real
+CLI writes its success message to **stderr** (`"Logged in using ChatGPT"`),
+never stdout. `cli._codex_login_status`'s success branch
+(`return True, completed.stdout.strip() or "authenticated"`) never fell back
+to stderr the way its own failure branch already did, so on a genuinely,
+correctly ChatGPT-authenticated machine, `completed.stdout.strip()` is
+empty and the function returned the literal string `"authenticated"` —
+which does not contain `"ChatGPT"`. Round 1's new assertion
+(`assert "ChatGPT" in login_detail`) therefore failed **deterministically**
+on a correctly authenticated machine, making the canary unrunnable — this
+was the actual canary blocker, verified directly against the real 0.145.0
+binary (see the command output above).
+
+**Fix** (`src/mathloop/cli.py`, `_codex_login_status`): the success branch
+now falls back to stderr exactly like the failure branch already did —
+`return True, completed.stdout.strip() or completed.stderr.strip() or "authenticated"`.
+This makes the assertion genuinely discriminating: the real binary's actual
+strings are `"Logged in using ChatGPT"` versus `"Logged in using an API
+key"` / an access-token / Bedrock variant — no alternative contains
+`"ChatGPT"`.
+
+**The fake that let this go unnoticed was also fixed.** The offline canary's
+fake CLI printed `"Logged in with ChatGPT"` (wrong preposition) to **stdout**
+(wrong stream) — a fiction the round-1 assertion was never actually run
+against, since the offline test never calls `_codex_login_status` at all
+(it drives `CodexClient` directly, never `codex_init`'s preflight). Fixed
+the fake to write `"Logged in using ChatGPT"` to stderr, matching the real
+CLI, and added a new test,
+`test_offline_fake_codex_login_status_agrees_with_the_real_clis_actual_behavior`,
+that calls the real `_codex_login_status` against this fake directly —
+closing the gap where this property had no test coverage of its own at all.
+Mutation-verified both fixes together: reverting `cli.py`'s stderr fallback
+alone made both this new test and the analogous new unit test in
+`test_cli.py` fail with `assert 'ChatGPT' in 'authenticated'`; restoring it
+made both pass again.
+
+**N1 (ordering, introduced by round 1's own C1 fix)** — the `cli_version`
+fallback sat *between* the terminal event and
+`self._worktree_manager.diff(...)`, itself a deadline-governed stage
+(`worktrees._run` computes `max(0.0, deadline - now)`), so time spent on the
+fallback could make `git add -A` time out instantly. Measured exposure was
+small (~51ms of a 1800s budget) but real, and silently falsified the module
+docstring's "no separate per-stage timeout stacked on top of it" invariant.
+**Fix**: moved the fallback block to strictly *after* `patch = self.
+_worktree_manager.diff(...)` — the true last deadline-governed stage — and
+extended the module docstring to state this explicitly, the same way it
+already documents worktree cleanup's own separate budget.
+
+**N2 (Minor)** — a `None` fallback result (timeout, nonzero exit, unparseable
+output) previously converted an otherwise fully successful, already
+quota-spent turn into a non-retryable failure — C1's shape again, via a
+narrower route. Decided, and justified in code: record a clearly-labeled
+`"unknown"` sentinel instead of failing the turn when both `cli_version`
+sources are unavailable — never fabricated to look like a real version,
+never blank, and the receipt is still built entirely from data the turn
+genuinely produced. This is different from "relax the field to optional and
+store an empty string," which the round-1 review explicitly rejected. Also
+added `errors="replace"` to the subprocess decode, since `capture_output=True,
+text=True`'s strict decoding could otherwise raise an uncaught
+`UnicodeDecodeError`. New test:
+`tests/unit/test_codex_client.py::test_codex_client_uses_an_unknown_sentinel_when_both_cli_version_sources_fail`,
+mutation-verified (reverting the sentinel to a raise reproduces a hard
+failure; restoring it passes).
+
+**N3 (Nit)** — `codex` is a Node wrapper spawning a vendored native binary
+with inherited stdio; the fallback query previously used no process group,
+so a timeout would have killed only the wrapper and orphaned the
+grandchild. Fixed cheaply: `_query_cli_version` now runs the query with
+`start_new_session=True` and kills the whole process group via `os.killpg`
+on timeout.
+
+**M1 leftover** — the offline test's own inline comment still claimed
+`verify_pending()` was "the only call site" of the verification kernel,
+the same inaccuracy round 1 had already corrected in this document but
+missed in the test file itself. Fixed the comment to match: the class-level
+spy covers all three real call sites (`Worker._verify_persisted_candidate`,
+`repository.evaluate_and_record_claim`, `reporting.reproduce`), which is
+why the assertion was never actually wrong, only its documented
+justification.
 
 ## Live compatibility smoke test — defined, not yet run
 

@@ -443,7 +443,14 @@ def _codex_login_status(launch_policy: CodexLaunchPolicy) -> tuple[bool, str]:
     if completed.returncode != 0:
         detail = completed.stdout.strip() or completed.stderr.strip() or "not authenticated"
         return False, detail
-    return True, completed.stdout.strip() or "authenticated"
+    # The real CLI writes its success message ("Logged in using ChatGPT") to
+    # STDERR, not stdout -- confirmed against the real, installed 0.145.0
+    # binary. Falling back to stdout only (as the failure branch above
+    # already did, correctly) means `completed.stdout.strip()` is empty and
+    # this would silently return the literal string "authenticated" instead
+    # of the CLI's own report, making any caller-side check for the actual
+    # authentication method (ChatGPT vs. an API key) vacuous.
+    return True, completed.stdout.strip() or completed.stderr.strip() or "authenticated"
 
 
 def _codex_launch_environment_clean() -> tuple[bool, str]:
