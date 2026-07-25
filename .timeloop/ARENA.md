@@ -120,3 +120,64 @@ nothing but compute and returns an unambiguous verdict.
 
 That is the same loop chess had. It is not a guarantee of the moonshot. It is the
 first arrangement in which the moonshot is even measurable.
+
+---
+
+## Baseline measurement, 2026-07-25 — the generator is the bottleneck
+
+With intake and evaluator both built, the two halves were joined:
+`google-deepmind/formal-conjectures` (510 Erdős problems, 850 conjecture files,
+8.5 MB) sits at `.timeloop/lean/formal-conjectures`. Every unproved statement is
+marked by `sorry` and tagged by category, which makes the open frontier
+machine-readable:
+
+| category | total | **unproved** | meaning |
+|---|---|---|---|
+| `research open` | 1,173 | **1,173** | genuinely open — a proof is new mathematics |
+| `research solved` | 1,140 | **1,076** | known true, not yet formalised |
+| `textbook` | 154 | **77** | exercises |
+| `test` | 697 | **51** | small checkable facts |
+| `API` | 179 | **16** | infrastructure |
+| | | **2,393** | |
+
+`bin/attempt` fires candidate tactics at a `sorry`, compiles that one file, and
+records the verdict. The working tree is restored after every attempt.
+
+### The result
+
+**1 proved out of 16 attempted (6%)**, over the *smallest* statements in the most
+tractable tier, with six tactics each (`rfl`, `decide`, `norm_num`, `simp`,
+`omega`, `native_decide`). 529 seconds, ~33 s per candidate.
+
+The single success — `a 1 = 1` in OEIS A317940, by `rfl` — is a base case that
+unfolds definitionally. It is a genuine closed `sorry` and it is not mathematics.
+
+### What that measures
+
+The failures are not noise. `BB_1` is Busy Beaver, `τ_two` is Ramanujan tau,
+`P_subset_NP` is exactly what it looks like. These are *short to state and hard to
+prove* — which is the normal condition of mathematics and precisely why a
+statement's length is a bad tractability proxy.
+
+So: **breadth alone does not work.** Firing generic tactics at formal statements
+has a ~6 % hit rate on the easiest tier and would be lower elsewhere. The
+bottleneck is now located, and it is neither of the two things built today:
+
+- volume — 608 open problems, ✅
+- evaluator — Lean + mathlib, validated both directions, ✅
+- compute — every arena result took seconds, never binding
+- **generation** — ❌ *this is the wall*
+
+### The economics, which are genuinely favourable
+
+At ~33 s per candidate, a naive sweep of all 128 test/textbook statements is
+**~70 minutes**. A sweep of every one of the 2,393 unproved statements in the
+repository is **~22 hours** — one overnight run, on one laptop.
+
+That is the useful thing about a cheap unambiguous evaluator: exhaustively
+establishing what naive methods *cannot* do costs one night. Every attempt that
+fails costs nothing and returns a verdict, and the failures map the wall exactly.
+
+**Next measurement, not next assertion:** does a non-naive generator beat 6 %?
+That question is now answerable by running it, which is the entire point of
+having built the apparatus.

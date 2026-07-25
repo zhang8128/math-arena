@@ -23,7 +23,9 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MARKER = os.path.join(".timeloop", "runs")
+# widened 2026-07-25: Lean builds live in .timeloop/lean and are equally
+# capable of running away. Anything under .timeloop counts.
+MARKER = ".timeloop"
 # Only complain at Stop about things that have outlived a normal turn.
 REPORT_AFTER_SECONDS = 300
 

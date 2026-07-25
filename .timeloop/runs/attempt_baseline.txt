@@ -1,0 +1,143 @@
+attempting 16 of 128 candidates, 6 tactics each, stopping at first success
+
+── 317940.lean:a_1  (test)
+   @[category test, AMS 11] theorem a_1 : a 1 = 1
+   ✓ rfl            
+
+── 317940.lean:a_2  (test)
+   @[category test, AMS 11] theorem a_2 : a 2 = 1
+   · rfl            FormalConjectures/OEIS/317940.lean:106:2: error: Tactic `rfl` failed: The left-hand side
+   · decide         FormalConjectures/OEIS/317940.lean:106:2: error: Tactic `decide` failed for proposition
+   · norm_num       FormalConjectures/OEIS/317940.lean:105:25: error: unsolved goals
+   · simp           FormalConjectures/OEIS/317940.lean:106:2: error: `simp` made no progress
+   · omega          FormalConjectures/OEIS/317940.lean:106:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/OEIS/317940.lean:106:2: error: Tactic `native_decide` failed. Error: fai
+
+── 317940.lean:a_3  (test)
+   @[category test, AMS 11] theorem a_3 : a 3 = 1
+   · rfl            FormalConjectures/OEIS/317940.lean:110:2: error: Tactic `rfl` failed: The left-hand side
+   · decide         FormalConjectures/OEIS/317940.lean:110:2: error: Tactic `decide` failed for proposition
+   · norm_num       FormalConjectures/OEIS/317940.lean:109:25: error: unsolved goals
+   · simp           FormalConjectures/OEIS/317940.lean:110:2: error: `simp` made no progress
+   · omega          FormalConjectures/OEIS/317940.lean:110:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/OEIS/317940.lean:110:2: error: Tactic `native_decide` failed. Error: fai
+
+── 317940.lean:a_4  (test)
+   @[category test, AMS 11] theorem a_4 : a 4 = 7
+   · rfl            FormalConjectures/OEIS/317940.lean:114:2: error: Tactic `rfl` failed: The left-hand side
+   · decide         FormalConjectures/OEIS/317940.lean:114:2: error: Tactic `decide` failed for proposition
+   · norm_num       FormalConjectures/OEIS/317940.lean:113:25: error: unsolved goals
+   · simp           FormalConjectures/OEIS/317940.lean:114:2: error: `simp` made no progress
+   · omega          FormalConjectures/OEIS/317940.lean:114:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/OEIS/317940.lean:114:2: error: Tactic `native_decide` failed. Error: fai
+
+── 317940.lean:a_5  (test)
+   @[category test, AMS 11] theorem a_5 : a 5 = 1
+   · rfl            FormalConjectures/OEIS/317940.lean:118:2: error: Tactic `rfl` failed: The left-hand side
+   · decide         FormalConjectures/OEIS/317940.lean:118:2: error: Tactic `decide` failed for proposition
+   · norm_num       FormalConjectures/OEIS/317940.lean:117:25: error: unsolved goals
+   · simp           FormalConjectures/OEIS/317940.lean:118:2: error: `simp` made no progress
+   · omega          FormalConjectures/OEIS/317940.lean:118:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/OEIS/317940.lean:118:2: error: Tactic `native_decide` failed. Error: fai
+
+── 358684.lean:a_7  (test)
+   @[category test, AMS 11] theorem a_7 : a 7 = 73
+   · rfl            FormalConjectures/OEIS/358684.lean:128:2: error: Tactic `rfl` failed: The left-hand side
+   · decide         FormalConjectures/OEIS/358684.lean:128:2: error: Tactic `decide` failed for proposition
+   · norm_num       FormalConjectures/OEIS/358684.lean:127:26: error: unsolved goals
+   · simp           FormalConjectures/OEIS/358684.lean:128:2: error: `simp` made no progress
+   · omega          FormalConjectures/OEIS/358684.lean:128:2: error: omega could not prove the goal:
+   · native_decide  timeout>120s
+
+── BusyBeaver.lean:BB_1  (test)
+   @[category test, AMS 3] theorem BB_1 : BB 1 = 1
+   · rfl            FormalConjectures/Wikipedia/BusyBeaver.lean:72:2: error: Tactic `rfl` failed: The left-han
+   · decide         FormalConjectures/Wikipedia/BusyBeaver.lean:72:2: error: Tactic `decide` failed for propos
+   · norm_num       FormalConjectures/Wikipedia/BusyBeaver.lean:71:27: error: unsolved goals
+   · simp           FormalConjectures/Wikipedia/BusyBeaver.lean:72:2: error: `simp` made no progress
+   · omega          FormalConjectures/Wikipedia/BusyBeaver.lean:72:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/Wikipedia/BusyBeaver.lean:72:2: error: Tactic `native_decide` failed. Er
+
+── RamanujanTau.lean:τ_two  (test)
+   @[category test, AMS 11] lemma τ_two : τ 2 = -24
+   · rfl            FormalConjectures/Wikipedia/RamanujanTau.lean:56:2: error: Tactic `rfl` failed: The left-h
+   · decide         FormalConjectures/Wikipedia/RamanujanTau.lean:56:2: error: Tactic `decide` failed for prop
+   · norm_num       FormalConjectures/Wikipedia/RamanujanTau.lean:55:27: error: unsolved goals
+   · simp           FormalConjectures/Wikipedia/RamanujanTau.lean:56:2: error: `simp` made no progress
+   · omega          FormalConjectures/Wikipedia/RamanujanTau.lean:56:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/Wikipedia/RamanujanTau.lean:56:2: error: Tactic `native_decide` failed. 
+
+── 36.lean:M_four  (test)
+   @[category test, AMS 5 11] theorem M_four : M 4 = 2
+   · rfl            FormalConjectures/ErdosProblems/36.lean:130:2: error: Tactic `rfl` failed: The left-hand s
+   · decide         FormalConjectures/ErdosProblems/36.lean:130:2: error: Tactic `decide` failed for propositi
+   · norm_num       FormalConjectures/ErdosProblems/36.lean:129:28: error: unsolved goals
+   · simp           FormalConjectures/ErdosProblems/36.lean:130:2: error: `simp` made no progress
+   · omega          FormalConjectures/ErdosProblems/36.lean:130:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/ErdosProblems/36.lean:130:2: error: Tactic `native_decide` failed. Error
+
+── 36.lean:M_five  (test)
+   @[category test, AMS 5 11] theorem M_five : M 5 = 3
+   · rfl            FormalConjectures/ErdosProblems/36.lean:134:2: error: Tactic `rfl` failed: The left-hand s
+   · decide         FormalConjectures/ErdosProblems/36.lean:134:2: error: Tactic `decide` failed for propositi
+   · norm_num       FormalConjectures/ErdosProblems/36.lean:133:28: error: unsolved goals
+   · simp           FormalConjectures/ErdosProblems/36.lean:134:2: error: `simp` made no progress
+   · omega          FormalConjectures/ErdosProblems/36.lean:134:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/ErdosProblems/36.lean:134:2: error: Tactic `native_decide` failed. Error
+
+── BusyBeaver.lean:BB_2  (textbook)
+   @[category textbook, AMS 3] theorem BB_2 : BB 2 = 6
+   · rfl            FormalConjectures/Wikipedia/BusyBeaver.lean:77:2: error: Tactic `rfl` failed: The left-han
+   · decide         FormalConjectures/Wikipedia/BusyBeaver.lean:77:2: error: Tactic `decide` failed for propos
+   · norm_num       FormalConjectures/Wikipedia/BusyBeaver.lean:76:27: error: unsolved goals
+   · simp           FormalConjectures/Wikipedia/BusyBeaver.lean:77:2: error: `simp` made no progress
+   · omega          FormalConjectures/Wikipedia/BusyBeaver.lean:77:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/Wikipedia/BusyBeaver.lean:77:2: error: Tactic `native_decide` failed. Er
+
+── 36.lean:M_three  (test)
+   @[category test, AMS 5 11] theorem M_three : M 3 = 2
+   · rfl            FormalConjectures/ErdosProblems/36.lean:126:2: error: Tactic `rfl` failed: The left-hand s
+   · decide         FormalConjectures/ErdosProblems/36.lean:126:2: error: Tactic `decide` failed for propositi
+   · norm_num       FormalConjectures/ErdosProblems/36.lean:125:29: error: unsolved goals
+   · simp           FormalConjectures/ErdosProblems/36.lean:126:2: error: `simp` made no progress
+   · omega          FormalConjectures/ErdosProblems/36.lean:126:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/ErdosProblems/36.lean:126:2: error: Tactic `native_decide` failed. Error
+
+── BusyBeaver.lean:BB_3  (textbook)
+   @[category textbook, AMS 3] theorem BB_3 : BB 3 = 21
+   · rfl            FormalConjectures/Wikipedia/BusyBeaver.lean:82:2: error: Tactic `rfl` failed: The left-han
+   · decide         FormalConjectures/Wikipedia/BusyBeaver.lean:82:2: error: Tactic `decide` failed for propos
+   · norm_num       FormalConjectures/Wikipedia/BusyBeaver.lean:81:28: error: unsolved goals
+   · simp           FormalConjectures/Wikipedia/BusyBeaver.lean:82:2: error: `simp` made no progress
+   · omega          FormalConjectures/Wikipedia/BusyBeaver.lean:82:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/Wikipedia/BusyBeaver.lean:82:2: error: Tactic `native_decide` failed. Er
+
+── BusyBeaver.lean:BB_4  (textbook)
+   @[category textbook, AMS 3] theorem BB_4 : BB 4 = 107
+   · rfl            FormalConjectures/Wikipedia/BusyBeaver.lean:87:2: error: Tactic `rfl` failed: The left-han
+   · decide         FormalConjectures/Wikipedia/BusyBeaver.lean:87:2: error: Tactic `decide` failed for propos
+   · norm_num       FormalConjectures/Wikipedia/BusyBeaver.lean:86:29: error: unsolved goals
+   · simp           FormalConjectures/Wikipedia/BusyBeaver.lean:87:2: error: `simp` made no progress
+   · omega          FormalConjectures/Wikipedia/BusyBeaver.lean:87:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/Wikipedia/BusyBeaver.lean:87:2: error: Tactic `native_decide` failed. Er
+
+── Test.lean:C6_girth  (test)
+   @[category test, AMS 5] theorem C6_girth : C6.girth = 6
+   · rfl            FormalConjectures/WrittenOnTheWallII/Test.lean:413:2: error: Tactic `rfl` failed: The left
+   · decide         FormalConjectures/WrittenOnTheWallII/Test.lean:413:2: error: Tactic `decide` failed for pr
+   · norm_num       FormalConjectures/WrittenOnTheWallII/Test.lean:412:35: error: unsolved goals
+   · simp           FormalConjectures/WrittenOnTheWallII/Test.lean:413:2: error: `simp` made no progress
+   · omega          FormalConjectures/WrittenOnTheWallII/Test.lean:413:2: error: omega could not prove the goa
+   · native_decide  FormalConjectures/WrittenOnTheWallII/Test.lean:413:2: error: Tactic `native_decide` failed
+
+── PvsNP.lean:P_subset_NP  (textbook)
+   @[category textbook, AMS 68] theorem P_subset_NP : P ⊆ NP
+   · rfl            FormalConjectures/Millenium/PvsNP.lean:121:2: error: Tactic `rfl` failed: The left-hand si
+   · decide         FormalConjectures/Millenium/PvsNP.lean:121:2: error: failed to synthesize
+   · norm_num       FormalConjectures/Millenium/PvsNP.lean:120:14: error: unsolved goals
+   · simp           FormalConjectures/Millenium/PvsNP.lean:121:2: error: `simp` made no progress
+   · omega          FormalConjectures/Millenium/PvsNP.lean:121:2: error: omega could not prove the goal:
+   · native_decide  FormalConjectures/Millenium/PvsNP.lean:121:2: error: failed to synthesize
+
+═══ 1 proved / 16 attempted  [529s] ═══
+   ✓ 317940.lean:a_1  by rfl

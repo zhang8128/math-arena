@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Batch proof attempts against unproved statements in formal-conjectures.
+
+The premise, and the reason this exists: a proof attempt is *cheap and its
+verdict is unambiguous*. It compiles or it does not. That is the chess evaluator
+property, and it means the right strategy is breadth — fire many attempts and let
+the checker sort them — rather than carefully reasoning about one.
+
+For each `sorry` it substitutes a candidate tactic, compiles that single file,
+and records the verdict. Nothing is written back; the working tree is restored
+after every attempt.
+
+  attempt --list            show candidates without attempting
+  attempt -n 8              attempt the 8 smallest candidates
+  attempt --cat textbook    restrict to a category
+"""
+
+import argparse
+import pathlib
+import re
+import subprocess
+import sys
+import time
+
+FC = pathlib.Path(__file__).resolve().parents[1] / "lean" / "formal-conjectures"
+
+# Ordered cheapest-first. `native_decide` is last: it trusts the compiler rather
+# than the kernel, so a success there is weaker evidence than the others.
+TACTICS = ["rfl", "decide", "norm_num", "simp", "omega", "native_decide"]
+
+
+def candidates(cat_filter=None):
+    out = []
+    for f in sorted((FC / "FormalConjectures").rglob("*.lean")):
+        txt = f.read_text(errors="ignore")
+        for blk in re.split(r"(?=@\[category)", txt)[1:]:
+            m = re.match(r"@\[category\s+([^,\]]+)", blk)
+            if not m or "sorry" not in blk:
+                continue
+            cat = m.group(1).strip()
+            if cat_filter and cat != cat_filter:
+                continue
+            if cat not in ("test", "textbook"):
+                continue
+            nm = re.search(r"\b(?:theorem|lemma)\s+([\w.]+)", blk)
+            stmt = blk.split(":=")[0]
+            out.append(
+                {
+                    "file": f,
+                    "cat": cat,
+                    "name": nm.group(1) if nm else "?",
+                    "size": len(stmt),
+                    "stmt": " ".join(stmt.split()),
+                }
+            )
+    out.sort(key=lambda c: c["size"])
+    return out
+
+
+def try_tactic(c, tactic, timeout=120):
+    """Substitute one sorry with a tactic, compile that file, restore. Verdict only."""
+    path = c["file"]
+    original = path.read_text()
+    # replace only the sorry belonging to THIS declaration
+    pat = re.compile(
+        r"(\b(?:theorem|lemma)\s+" + re.escape(c["name"]) + r"\b.*?)\bsorry\b",
+        re.DOTALL,
+    )
+    patched, n = pat.subn(r"\1" + tactic, original, count=1)
+    if n == 0:
+        return "no-substitution"
+    try:
+        path.write_text(patched)
+        r = subprocess.run(
+            ["lake", "env", "lean", str(path.relative_to(FC))],
+            cwd=FC,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if r.returncode == 0 and "sorry" not in r.stderr:
+            return "PROVED"
+        err = (r.stderr or r.stdout).strip().splitlines()
+        first = next((l for l in err if "error" in l.lower()), err[0] if err else "?")
+        return first[:90]
+    except subprocess.TimeoutExpired:
+        return f"timeout>{timeout}s"
+    finally:
+        path.write_text(original)  # always restore
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-n", type=int, default=6)
+    ap.add_argument("--cat")
+    ap.add_argument("--list", action="store_true")
+    a = ap.parse_args()
+
+    cs = candidates(a.cat)
+    if a.list:
+        print(f"{len(cs)} unproved test/textbook statements")
+        for c in cs[: a.n]:
+            print(f"  [{c['cat']:8}] {c['file'].name:20} {c['name']:16} {c['stmt'][:70]}")
+        return 0
+
+    print(f"attempting {min(a.n, len(cs))} of {len(cs)} candidates, "
+          f"{len(TACTICS)} tactics each, stopping at first success\n")
+    proved, failed = [], []
+    t0 = time.time()
+    for c in cs[: a.n]:
+        print(f"── {c['file'].name}:{c['name']}  ({c['cat']})")
+        print(f"   {c['stmt'][:88]}")
+        got = None
+        for t in TACTICS:
+            v = try_tactic(c, t)
+            mark = "✓" if v == "PROVED" else "·"
+            print(f"   {mark} {t:14} {v if v != 'PROVED' else ''}")
+            if v == "PROVED":
+                got = t
+                break
+        (proved if got else failed).append((c, got))
+        print()
+    el = time.time() - t0
+    print(f"═══ {len(proved)} proved / {len(cs[:a.n])} attempted  [{el:.0f}s] ═══")
+    for c, t in proved:
+        print(f"   ✓ {c['file'].name}:{c['name']}  by {t}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
