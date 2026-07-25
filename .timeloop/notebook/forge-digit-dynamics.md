@@ -249,3 +249,41 @@ effects and both are needed.
 ### COST
 ~4 minutes. The mechanism took one line of modular arithmetic once the residue
 pattern `b ≡ 1 (mod 3)` was noticed in the outlier list.
+
+---
+
+## T6 — the congruence boost is (almost) the whole story
+
+### SEARCHED
+Normalised counts `c/g` for `d ∈ {3,5}`, `b ≤ 45`, grouped by `g = gcd(b−1, M_d)`.
+
+### RESULT
+| d | raw count spread | residual `c/g` spread |
+|---|---|---|
+| 3 | 2 → 24 | mean 2.88, stdev 1.83 |
+| 5 | 1 → 50 | mean 2.41, stdev 1.56 |
+
+For `d=5` the raw group means span **2.92 → 50.00** (ratio ≈ 17). After dividing
+by `g` they span **1.67 → 3.00** (ratio ≈ 1.8). Dividing by `g` flattens the data.
+
+**Answer to T5's question: the congruence boost accounts for the large majority
+of the variation.** T3's `b²+1` arithmetic is not a second independent effect of
+comparable size — it was the `d=2` shadow of this same law.
+
+### RULED OUT
+There is a **mild sublinear correction**: residual means drift downward as `g`
+rises (d=3: 3.33 → 1.88; d=5: 2.92 → 1.67). So the boost is slightly *less* than
+a full factor of `g`. Plausible cause: the freed congruence classes are not
+independent of the digit-range constraints, so large `g` over-counts. Do not
+model the boost as exactly linear in `g`.
+
+### STATUS
+`resolved`. Fixed-point abundance for digit-power maps is governed by
+`g = gcd(b−1, M_d)`, slightly sublinearly, with residual scatter of order 2–3.
+
+### NEXT
+Diminishing returns here. The remaining scatter (stdev ≈ 1.8 on a mean of ≈ 2.9)
+is small and probably irreducible without exact counts per digit-length. Move on.
+
+### COST
+~1 minute.
