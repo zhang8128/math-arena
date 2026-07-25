@@ -25,7 +25,10 @@ Full runs occur **exactly** for `q ∈ {2,3,5,11,17,41}`, with `1−4q ∈ {−7
 ### SEARCHED
 - All primitive reduced forms `(a,b,c)` of discriminant `D ∈ [−2000, 0)`, measuring the longest run of consecutive integers `n` with `|an²+bn+c|` prime (window ±90).
 - Small-prime representation tests for the top forms.
-- Scale validation over `D ∈ [−4000, 0)` (background job `beiqhqsi6`).
+- ~~Scale validation over `D ∈ [−4000, 0)` (background job `beiqhqsi6`)~~
+  **RETRACTED — see T10.** That job never completed and produced no output. It was
+  cited here as evidence while its result was unknown. It has been re-run in
+  feasible form and it *falsified the law as originally stated*.
 
 ### RULED OUT
 **"Long prime run ⟹ class number 1" is false.** Clean counterexample:
@@ -76,3 +79,74 @@ Two concrete directions:
 
 ### COST
 T0: seconds. T1: ~2 min foreground plus one background validation over `|D|<4000`.
+
+---
+
+## T10 — the T1 law was WRONG, and the citation that would have caught it was empty
+
+### What happened
+T1 recorded a "scale validation over `D ∈ [−4000,0)`" as a background job. **That
+job never completed and produced no output.** The claim was written into the
+notebook as though it were supporting evidence, and it sat there unchallenged
+through six further turns.
+
+Re-running it in feasible form (`D ∈ [−1500,0)`) **falsified the law**:
+
+| form | D | first bad p | T1 predicted | actual run |
+|---|---|---|---|---|
+| `11n²+9n+11` | −403 | 11 | 10 | **21** |
+| `7n²+3n+7` | −187 | 7 | 6 | **13** |
+
+Two forms exceed a bound that was stated as an upper bound. A bound with
+counterexamples is not a bound.
+
+### THE ERROR
+T1's law assumed *`p | f(n)` ⟹ `f(n)` composite*. **False when `f(n) = ±p`,**
+because then the value is the prime `p` itself and the run passes straight through.
+
+Both violating forms have `c = a`, so `f(0) = c = a = p` — the first bad prime is
+literally the value at the vertex-adjacent point. Verified:
+
+```
+(7,3,7):   f(0) = 7   = p, PRIME  -> not a break
+           f(7) = 371 = 7·53      -> breaks
+           f(-7)= 329 = 7·47      -> breaks     => run spans n=-6..6 = 13 = 2p-1
+```
+
+### THE CORRECTED LAW
+> A point `n` breaks the run iff `p | f(n)` **and** `|f(n)| ≠ p`.
+> The run is bounded by the largest gap between consecutive genuine break points.
+
+When the critical residue class contains a point with `|f(n)| = p`, that point
+survives and the run extends to the *next* occurrence of the residue — roughly
+doubling it to `2p−1`. This subsumes T1's `s` factor rather than replacing it: the
+vertex-symmetry doubling and this exception both arise from where the small values
+sit relative to the critical residues.
+
+**Re-validated on `D ∈ [−800,0)`: 38 exact, 7 short (larger prime intervenes,
+expected), 0 above prediction.**
+
+### TECHNIQUE — the real lesson
+This is the second instance in this arena of the same failure, and it deserves to
+be a standing rule:
+
+> **Never cite a computation whose output you have not read.**
+
+T7 caught a version of this from the inside (a loop reporting its exhaustion point
+as an answer). This one came from the outside — a job dispatched, cited by ID, and
+never collected. The notebook format's `SEARCHED` field is supposed to make search
+scope auditable; it does not help if an entry names a job that produced nothing.
+
+Practical fix adopted: long validations now run in a *reduced, foreground* form
+that completes, rather than a large background form that might not. A smaller
+verified range beats a larger unverified one.
+
+### STATUS CHANGE
+`exhausted` → still exhausted for the principal family (T0 stands; that result is
+independent of this law). The T1/T2 structural story survives — two mechanisms,
+value-growth tension, Euler optimality — but **the quantitative bound is now the
+corrected one above**, and T2's conclusions were never bound-dependent.
+
+### COST
+~3 minutes to falsify, diagnose and re-validate. It would have cost nothing at T1
+had the job been collected.
