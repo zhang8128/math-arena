@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Target intake for the arena. Draws from the Erdős Problems database.
+
+Why this exists: the arena's first 16 targets were hand-typed, which caps volume
+at whatever someone bothers to enter. Chess engines did not become superhuman on
+a curated position list. This turns target supply into a pipeline.
+
+Source: github.com/teorth/erdosproblems  (data/problems.yaml, ~1200 problems)
+Refresh:  bin/intake --refresh
+
+The scoring favours the intersection that is actually workable from here:
+
+  open          — unsolved, so the work is not a rediscovery
+  oeis          — an OEIS sequence exists, so there is computational purchase
+  formalized    — a machine-checkable Lean statement exists to aim at
+  tag affinity  — matches a capability the arena has already forged
+
+That last one is the training-room principle: prefer targets whose technique you
+have practised, or which force one you want.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DB = os.path.join(REPO, ".timeloop", "intake", "erdos_problems.yaml")
+URL = "https://raw.githubusercontent.com/teorth/erdosproblems/main/data/problems.yaml"
+
+# tags where the arena has forged applicable technique (see pool.jsonl `forges`)
+AFFINITY = {
+    "number theory": 3,
+    "primes": 3,
+    "additive basis": 2,
+    "unit fractions": 2,
+    "additive combinatorics": 2,
+    "sidon sets": 2,
+    "arithmetic progressions": 2,
+    "combinatorics": 1,
+    "covering systems": 1,
+}
+
+
+def load():
+    try:
+        import yaml
+    except ImportError:
+        sys.exit("needs pyyaml:  uv run --with pyyaml .timeloop/bin/intake ...")
+    if not os.path.exists(DB):
+        sys.exit(f"no local copy. run: {sys.argv[0]} --refresh")
+    return yaml.safe_load(open(DB))
+
+
+def refresh():
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    subprocess.run(["curl", "-sL", URL, "-o", DB, "--max-time", "90"], check=True)
+    print(f"refreshed {DB} ({os.path.getsize(DB):,} bytes)")
+
+
+def score(p: dict) -> tuple[int, list[str]]:
+    why = []
+    s = 0
+    if p.get("status", {}).get("state") == "open":
+        s += 5
+        why.append("open")
+    else:
+        return 0, ["not open"]
+    oeis = [o for o in (p.get("oeis") or []) if o not in ("N/A", "possible")]
+    if oeis:
+        s += 3
+        why.append(f"oeis:{','.join(oeis[:2])}")
+    if p.get("formalized", {}).get("state") == "yes":
+        s += 3
+        why.append("lean-formalized")
+    tag_hits = [t for t in p.get("tags", []) if t in AFFINITY]
+    if tag_hits:
+        s += sum(AFFINITY[t] for t in tag_hits)
+        why.append("affinity:" + ",".join(tag_hits[:2]))
+    if p.get("prize") and p["prize"] not in ("no", "-"):
+        why.append(f"prize:{p['prize']}")
+    return s, why
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--refresh", action="store_true")
+    ap.add_argument("-n", type=int, default=15, help="how many to surface")
+    ap.add_argument("--tag", help="restrict to a tag")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+
+    if a.refresh:
+        refresh()
+        return 0
+
+    probs = load()
+    ranked = []
+    for p in probs:
+        if a.tag and a.tag not in p.get("tags", []):
+            continue
+        s, why = score(p)
+        if s:
+            ranked.append((s, p, why))
+    ranked.sort(key=lambda r: -r[0])
+
+    if a.json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "erdos": p["number"],
+                        "score": s,
+                        "why": why,
+                        "tags": p.get("tags", []),
+                        "oeis": p.get("oeis"),
+                        "url": f"https://www.erdosproblems.com/{p['number']}",
+                    }
+                    for s, p, why in ranked[: a.n]
+                ],
+                indent=2,
+            )
+        )
+        return 0
+
+    total_open = sum(1 for p in probs if p.get("status", {}).get("state") == "open")
+    print(f"{len(probs)} problems, {total_open} open, {len(ranked)} scored"
+          + (f", tag={a.tag}" if a.tag else ""))
+    print(f"\n{'score':>5}  {'erdos':>6}  why")
+    for s, p, why in ranked[: a.n]:
+        print(f"{s:>5}  {p['number']:>6}  {' · '.join(why)}")
+        print(f"{'':>5}  {'':>6}  https://www.erdosproblems.com/{p['number']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
