@@ -84,13 +84,14 @@ def _crash_after_starting_detached_execution_group(
     settings_payload: Settings,
     artifact_root: str,
     api_enabled: bool,
+    codex_enabled: bool,
     cycle_number: int,
     process_index: int,
     quota: int,
     channel: Connection,
     execution_group_channel: Connection,
 ) -> None:
-    del settings_payload, api_enabled, cycle_number, process_index, quota, channel
+    del settings_payload, api_enabled, codex_enabled, cycle_number, process_index, quota, channel
     descendant = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
         start_new_session=True,

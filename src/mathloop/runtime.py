@@ -17,6 +17,10 @@ from threading import Event
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from mathloop.artifacts import ArtifactStore
+from mathloop.codex.client import CodexClient
+from mathloop.codex.domain import CodexModelRole
+from mathloop.codex.launch import CodexLaunchPolicy
+from mathloop.codex.worktrees import CodexWorktreeManager
 from mathloop.config import Settings
 from mathloop.domain import MethodVersion
 from mathloop.evolution import (
@@ -31,13 +35,14 @@ from mathloop.methods.base import (
     MethodResult,
     SolverMethod,
 )
+from mathloop.methods.codex_agent import register_codex_proof_strategy
 from mathloop.methods.integer_search import IntegerCounterexampleSearch
 from mathloop.methods.proof_sketch import ProofSketchMethod
 from mathloop.methods.sage import SagePolynomialMethod
 from mathloop.methods.symbolic import SymbolicInductionMethod
 from mathloop.predicates.calibration import build_calibration_registry
 from mathloop.processes import terminate_process_tree
-from mathloop.provenance import SAGE_IMAGE_DIGEST, method_provenance
+from mathloop.provenance import SAGE_IMAGE_DIGEST, codex_method_provenance, method_provenance
 from mathloop.providers.openai import OpenAIProvider
 from mathloop.reporting import Reporting
 from mathloop.scheduling import EVOLUTION_HOLDOUT_LANE, PortfolioPolicy, RuntimeScheduler
@@ -51,7 +56,11 @@ from mathloop.storage.db import Database
 from mathloop.storage.repository import Repository
 from mathloop.tools.docker import DockerLimits, DockerRunner
 from mathloop.verification import JsonRunner
-from mathloop.worker import ProcessExecutionBoundary, Worker
+from mathloop.worker import (
+    _CODEX_OUTER_TIMEOUT_GRACE_SECONDS,
+    ProcessExecutionBoundary,
+    Worker,
+)
 
 BASELINE_CREATED_AT = datetime(2026, 7, 22, tzinfo=UTC)
 MINIMUM_HOLDOUT_TRIALS = 2
@@ -85,6 +94,7 @@ class Runtime:
     reporting: Reporting
     sage_runner: JsonRunner
     api_enabled: bool
+    codex_enabled: bool = False
 
     def __post_init__(self) -> None:
         self.loop = AutonomousLoop(self)
@@ -96,6 +106,21 @@ class Runtime:
         return ingest_source_with_result(JsonlProblemSource(path), self.repository)
 
     def register_baseline_methods(self) -> tuple[UUID, ...]:
+        # `api_enabled` and `codex_enabled` settle through disjoint budgets
+        # (dollars vs. turns) and must never both be live in one runtime.
+        # `build_runtime` already refuses to construct a `Runtime` with both
+        # set, but this check does not depend on that: `Runtime` is a plain,
+        # unfrozen dataclass, so nothing stops a caller from constructing one
+        # directly (bypassing `build_runtime` entirely) with both flags set.
+        # Refusing here, at the one shared entry point every registration
+        # path actually goes through, is what makes the guarantee hold
+        # regardless of how the `Runtime` came to exist.
+        if self.api_enabled and self.codex_enabled:
+            raise ValueError(
+                "api_enabled and codex_enabled are mutually exclusive: the OpenAI "
+                "API and Codex external methods settle through disjoint budgets "
+                "and must never both be live in one runtime"
+            )
         self.repository.quarantine_legacy_provenance()
         predicate_registry = build_calibration_registry()
         implementations: list[SolverMethod] = [
@@ -126,6 +151,20 @@ class Runtime:
             ),
         ]
         if self.api_enabled and os.environ.get("OPENAI_API_KEY"):
+            # Symmetric half of the mutual-exclusion guarantee: Codex's own
+            # registration (`register_codex_proof_strategy`, below) already
+            # refuses to register alongside an existing "proof_sketch", but
+            # that only protects the "codex registers after the API" order.
+            # This check protects the reverse: if a "codex_proof_strategy"
+            # method is already registered in `self.methods` (e.g. because
+            # this registry is shared across more than one `register_
+            # baseline_methods` call), the API method must refuse too --
+            # otherwise reordering these two blocks in a future edit would
+            # silently reopen the one-directional gap.
+            if self.methods.contains("codex_proof_strategy"):
+                raise ValueError(
+                    "the OpenAI API and Codex external methods cannot both be registered"
+                )
             implementations.append(
                 DeferredOpenAIProofSketchMethod(
                     self.settings,
@@ -159,6 +198,35 @@ class Runtime:
                     implementation,
                     provenance=method_provenance(implementation.family),
                 )
+
+        if self.codex_enabled:
+            role = CodexModelRole.LUNA
+            model = self.settings.codex_model_luna
+            client = _build_codex_client(self.settings)
+            registered = register_codex_proof_strategy(
+                self.methods,
+                self.settings,
+                client,
+                model=model,
+                role=role,
+            )
+            if registered:
+                baseline_specs.append(
+                    (
+                        "codex_proof_strategy",
+                        {
+                            "external_provider": "codex",
+                            "codex_role": role.value,
+                            "codex_model": model,
+                            "provenance": codex_method_provenance(
+                                model=model,
+                                role=role,
+                                min_cli_version=self.settings.codex_min_cli_version,
+                            ),
+                        },
+                    )
+                )
+
         return tuple(
             self.repository.register_provenance_baseline(
                 family,
@@ -253,6 +321,24 @@ class AutonomousLoop:
         processes: list[_SupervisedWorkerProcess] = []
         settings_payload = self.runtime.settings
         started_at = time.monotonic()
+        # A codex turn can legitimately run for up to codex_turn_timeout_seconds
+        # (1800s by default) plus its own outer grace -- far longer than
+        # max_experiment_seconds (300s by default), which this per-worker-process
+        # deadline was originally sized against for the non-Codex autonomous
+        # loop only. Without this, a worker process still correctly running a
+        # single in-budget Codex turn would look "stuck" to this supervisor
+        # long before the turn's own deadline ever fires, and would be killed
+        # -- discarding a turn that already consumed real, non-refundable
+        # Codex quota. `codex_enabled` is fixed for the lifetime of this
+        # `Runtime`, so every worker process spawned from it may attempt a
+        # Codex turn in any of its `quota` iterations.
+        per_iteration_seconds: float = self.runtime.settings.max_experiment_seconds
+        if self.runtime.codex_enabled:
+            per_iteration_seconds = max(
+                per_iteration_seconds,
+                self.runtime.settings.codex_turn_timeout_seconds
+                + _CODEX_OUTER_TIMEOUT_GRACE_SECONDS,
+            )
         for index in range(process_count):
             quota = base_quota + int(index < remainder)
             parent_channel, child_channel = context.Pipe(duplex=False)
@@ -263,6 +349,7 @@ class AutonomousLoop:
                     settings_payload,
                     str(self.runtime.artifacts.root),
                     self.runtime.api_enabled,
+                    self.runtime.codex_enabled,
                     cycle_number,
                     index,
                     quota,
@@ -274,7 +361,7 @@ class AutonomousLoop:
             process.start()
             child_channel.close()
             child_group_channel.close()
-            deadline = started_at + quota * self.runtime.settings.max_experiment_seconds + 30
+            deadline = started_at + quota * per_iteration_seconds + 30
             processes.append(
                 _SupervisedWorkerProcess(
                     process=process,
@@ -299,14 +386,12 @@ class AutonomousLoop:
                         if active.process.is_alive():
                             _terminate_supervised_worker(
                                 active,
-                                terminate_timeout=(
-                                    self.runtime.settings.max_experiment_seconds + 2
-                                ),
+                                terminate_timeout=per_iteration_seconds + 2,
                             )
                     stop_forwarded = True
                     worker.deadline = min(
                         worker.deadline,
-                        time.monotonic() + self.runtime.settings.max_experiment_seconds + 2,
+                        time.monotonic() + per_iteration_seconds + 2,
                     )
             _drain_execution_group_events(worker, wait_seconds=0.05)
             if (
@@ -316,7 +401,7 @@ class AutonomousLoop:
             ):
                 _terminate_supervised_worker(
                     worker,
-                    terminate_timeout=self.runtime.settings.max_experiment_seconds + 2,
+                    terminate_timeout=per_iteration_seconds + 2,
                 )
             if worker.process.is_alive():
                 errors.append(f"worker process {worker.process.pid} could not be terminated")
@@ -568,6 +653,7 @@ def _worker_process_main(
     settings_payload: Settings,
     artifact_root: str,
     api_enabled: bool,
+    codex_enabled: bool,
     cycle_number: int,
     process_index: int,
     quota: int,
@@ -595,6 +681,7 @@ def _worker_process_main(
             repository,
             ArtifactStore(Path(artifact_root)),
             api_enabled=api_enabled,
+            codex_enabled=codex_enabled,
             settings=settings,
         )
         runtime.worker.execution_boundary = ProcessExecutionBoundary(
@@ -624,15 +711,43 @@ def build_runtime(
     artifacts: ArtifactStore,
     *,
     api_enabled: bool,
+    codex_enabled: bool = False,
     settings: Settings | None = None,
     verifier_runner: JsonRunner | None = None,
 ) -> Runtime:
     if type(api_enabled) is not bool:
         raise TypeError("api_enabled must be a boolean")
+    if type(codex_enabled) is not bool:
+        raise TypeError("codex_enabled must be a boolean")
+    if api_enabled and codex_enabled:
+        # Fails fast, before a Database/Worker/etc. is even constructed. This
+        # is necessary but not sufficient on its own: `Runtime` is a plain,
+        # unfrozen dataclass, so nothing stops a caller from constructing one
+        # directly with both flags set, bypassing this check entirely. The
+        # authoritative guarantee -- the one that holds regardless of how a
+        # `Runtime` came to exist -- lives in `register_baseline_methods`
+        # itself; this is a fast, clear failure for the common path only.
+        raise ValueError(
+            "api_enabled and codex_enabled are mutually exclusive: the OpenAI "
+            "API and Codex external methods settle through disjoint budgets "
+            "and must never both be live in one runtime"
+        )
     runtime_settings = settings or Settings(
         database_url=repository.database.database_url,
         artifact_root=artifacts.root,
     )
+    if runtime_settings.codex_enabled != codex_enabled:
+        # `codex_enabled` here is always authoritative for this Runtime,
+        # exactly like `api_enabled` (which has no persisted Settings
+        # counterpart at all). Without this, `register_codex_proof_strategy`
+        # -- which gates on `settings.codex_enabled`, not this parameter --
+        # could silently do nothing for a caller that asked for Codex here
+        # but never separately set MATHLOOP_CODEX_ENABLED, or could silently
+        # stay live for a caller that did not ask for it here but happened
+        # to inherit that environment variable from an earlier session.
+        # `model_copy` (not in-place mutation) so a caller-supplied Settings
+        # object already in use elsewhere is never mutated out from under it.
+        runtime_settings = runtime_settings.model_copy(update={"codex_enabled": codex_enabled})
     runner: JsonRunner
     if verifier_runner is None:
         runner = DockerRunner(
@@ -672,4 +787,26 @@ def build_runtime(
         reporting=reporting,
         sage_runner=runner,
         api_enabled=api_enabled,
+        codex_enabled=codex_enabled,
     )
+
+
+def _build_codex_client(settings: Settings) -> CodexClient:
+    """Build the one real `CodexClient` every Codex-enabled registration uses.
+
+    Nothing here holds a live OS resource across a fork boundary: the launch
+    policy and worktree manager are plain configuration values (paths and
+    ints), and `CodexClient` itself only spawns the real `codex exec`
+    subprocess inside `execute()`, never at construction. Constructing this
+    fresh in whichever process calls `register_baseline_methods` -- the
+    parent CLI process or a forked worker child -- is therefore always safe.
+    """
+    launch_policy = CodexLaunchPolicy(
+        codex_binary=settings.codex_cli_path,
+        codex_home=settings.codex_worktree_root / "codex-home",
+    )
+    worktree_manager = CodexWorktreeManager(
+        repo_root=settings.codex_repo_root,
+        worktree_root=settings.codex_worktree_root,
+    )
+    return CodexClient(launch_policy, worktree_manager)

@@ -2,6 +2,7 @@ from collections.abc import Iterator
 
 import pytest
 from testcontainers.postgres import PostgresContainer
+from typer.testing import CliRunner
 
 from mathloop.storage.db import Database
 from mathloop.storage.repository import Repository
@@ -31,3 +32,8 @@ def repository(database: Database) -> Iterator[Repository]:
             "RESTART IDENTITY CASCADE"
         )
     yield Repository(database)
+
+
+@pytest.fixture
+def cli_runner() -> CliRunner:
+    return CliRunner()

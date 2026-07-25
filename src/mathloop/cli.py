@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -16,6 +17,7 @@ from uuid import UUID
 import typer
 
 from mathloop.artifacts import ArtifactStore
+from mathloop.codex.supervisor import CodexSupervisor
 from mathloop.config import Settings
 from mathloop.provenance import SAGE_IMAGE_DIGEST
 from mathloop.runtime import Runtime, build_runtime
@@ -23,10 +25,29 @@ from mathloop.storage.db import Database
 from mathloop.storage.repository import Repository
 
 app = typer.Typer(help="Mathloop autonomous mathematics solver ecology.")
+codex_app = typer.Typer(help="Operate the bounded Codex proof-strategy provider.")
+app.add_typer(codex_app, name="codex")
+
+# The two credentials this whole plan forbids ever reaching a Codex child --
+# authentication is always the operator's saved ChatGPT CLI login, never a
+# metered API key. `codex init` checks these are absent from *this* process's
+# own environment; `CodexLaunchPolicy.environment` is the separate, load-
+# bearing guard that keeps them from ever reaching the launched child even if
+# they were present here.
+_CODEX_FORBIDDEN_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
+
+# Paths `codex init`'s git-cleanliness check tolerates as untracked/dirty
+# without failing the preflight: operator and application tooling that
+# legitimately lives alongside the source tree but is no part of it.
+_CODEX_ALLOWED_DIRTY_PREFIXES = (".mathloop", ".claude", ".engram")
+
+_CODEX_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 
 @contextmanager
-def _runtime(*, api_enabled: bool = False, initialize: bool = False) -> Iterator[Runtime]:
+def _runtime(
+    *, api_enabled: bool = False, codex_enabled: bool = False, initialize: bool = False
+) -> Iterator[Runtime]:
     settings = Settings()
     database = Database(settings.database_url)
     try:
@@ -37,6 +58,7 @@ def _runtime(*, api_enabled: bool = False, initialize: bool = False) -> Iterator
             repository,
             ArtifactStore(settings.artifact_root),
             api_enabled=api_enabled,
+            codex_enabled=codex_enabled,
             settings=settings,
         )
         yield runtime
@@ -162,6 +184,142 @@ def reproduce(claim_id: UUID) -> None:
         raise typer.Exit(code=1)
 
 
+@codex_app.command("init")
+def codex_init() -> None:
+    """Preflight-check the local Codex operating environment.
+
+    Never starts a Codex turn: every check here is either free (settings and
+    environment variables already in memory) or a read-only probe (`codex
+    --version`, `codex login status`, `git status --porcelain`, a Postgres
+    ping, a Docker image inspect). Reuses saved ChatGPT CLI authentication --
+    it only asks the CLI to report whether it is already logged in, never
+    performs a login itself.
+    """
+    settings = Settings()
+    checks: dict[str, dict[str, object]] = {}
+
+    version_ok, version_detail = _codex_cli_version(settings.codex_cli_path)
+    if version_ok:
+        version_ok = _codex_version_at_least(version_detail, settings.codex_min_cli_version)
+        if not version_ok:
+            version_detail = (
+                f"codex {version_detail} is older than the required minimum "
+                f"{settings.codex_min_cli_version}"
+            )
+    checks["codex_cli_version"] = {"ok": version_ok, "detail": version_detail}
+
+    login_ok, login_detail = _codex_login_status(settings.codex_cli_path)
+    checks["codex_login"] = {"ok": login_ok, "detail": login_detail}
+
+    env_ok, env_detail = _codex_launch_environment_clean()
+    checks["launch_environment"] = {"ok": env_ok, "detail": env_detail}
+
+    git_ok, git_detail = _codex_git_state(settings.codex_repo_root)
+    checks["git_repository"] = {"ok": git_ok, "detail": git_detail}
+
+    worktree_ok, worktree_detail = _codex_worktree_root_writable(settings.codex_worktree_root)
+    checks["worktree_root"] = {"ok": worktree_ok, "detail": worktree_detail}
+
+    postgres_ok, postgres_detail = _codex_postgres_available(settings.database_url)
+    checks["postgresql"] = {"ok": postgres_ok, "detail": postgres_detail}
+
+    sage_ok = _sage_image_available()
+    checks["sage_image"] = {
+        "ok": sage_ok,
+        "detail": SAGE_IMAGE_DIGEST if sage_ok else f"{SAGE_IMAGE_DIGEST} is unavailable",
+    }
+
+    overall_ok = all(bool(check["ok"]) for check in checks.values())
+    typer.echo(json.dumps({"ok": overall_ok, "checks": checks}, sort_keys=True))
+    if not overall_ok:
+        raise typer.Exit(code=1)
+
+
+@codex_app.command("start")
+def codex_start(
+    turns: int = typer.Option(..., "--turns", min=1),
+    workers: int = typer.Option(1, "--workers", min=1),
+) -> None:
+    """Run bounded Codex cycles; the durable ledger caps govern, not --turns."""
+    with _runtime(codex_enabled=True) as runtime:
+        supervisor = CodexSupervisor(runtime)
+        stop_requested = Event()
+
+        def request_stop(signum: int, frame: object) -> None:
+            del signum, frame
+            stop_requested.set()
+            # Reaches the same cooperative multi-process termination path
+            # `mathloop run` already uses: a worker still mid-turn finishes
+            # its *current* claim (Codex's own absolute deadline governs how
+            # long that can take) rather than being hard-killed, and no new
+            # claim is started after this fires.
+            runtime.loop.request_stop()
+
+        previous_interrupt = signal.signal(signal.SIGINT, request_stop)
+        previous_terminate = signal.signal(signal.SIGTERM, request_stop)
+        try:
+            payload = supervisor.start(turns, workers=workers, stop_requested=stop_requested)
+        finally:
+            signal.signal(signal.SIGINT, previous_interrupt)
+            signal.signal(signal.SIGTERM, previous_terminate)
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@codex_app.command("status")
+def codex_status() -> None:
+    """Read-only Codex ledger snapshot: never mutates anything."""
+    with _runtime() as runtime:
+        payload = CodexSupervisor(runtime).status()
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@codex_app.command("pause")
+def codex_pause() -> None:
+    """Durably pause Codex dispatch; the pause survives a process restart."""
+    with _runtime() as runtime:
+        payload = CodexSupervisor(runtime).pause()
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@codex_app.command("resume")
+def codex_resume() -> None:
+    """Durably resume Codex dispatch."""
+    with _runtime() as runtime:
+        payload = CodexSupervisor(runtime).resume()
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@codex_app.command("drain")
+def codex_drain(
+    grace_seconds: float = typer.Option(60.0, "--grace-seconds", min=0),
+) -> None:
+    """Pause, then wait for active Codex leases to clear before returning."""
+    with _runtime() as runtime:
+        supervisor = CodexSupervisor(runtime)
+        stop_requested = Event()
+
+        def request_stop(signum: int, frame: object) -> None:
+            del signum, frame
+            stop_requested.set()
+
+        previous_interrupt = signal.signal(signal.SIGINT, request_stop)
+        previous_terminate = signal.signal(signal.SIGTERM, request_stop)
+        try:
+            payload = supervisor.drain(grace_seconds=grace_seconds, stop_requested=stop_requested)
+        finally:
+            signal.signal(signal.SIGINT, previous_interrupt)
+            signal.signal(signal.SIGTERM, previous_terminate)
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@codex_app.command("report")
+def codex_report() -> None:
+    """Read-only Codex accounting summary: turns and tokens, never a dollar figure."""
+    with _runtime() as runtime:
+        payload = CodexSupervisor(runtime).report()
+    typer.echo(json.dumps(payload, sort_keys=True))
+
+
 def _validate_run_preconditions(runtime: Runtime) -> None:
     if not runtime.repository.ping():
         raise typer.BadParameter("database is unavailable")
@@ -194,3 +352,125 @@ def _sage_image_available() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return completed.returncode == 0
+
+
+# -- `codex init` preflight checks -------------------------------------------
+#
+# Every function below is a small, independently testable probe: none of
+# them requires a real `codex` binary or a real ChatGPT login to exercise in
+# a test (each takes its inputs explicitly and is driven through a fake
+# subprocess in tests), and none of them ever starts a Codex turn.
+
+
+def _codex_version_tuple(raw: str) -> tuple[int, int, int] | None:
+    match = _CODEX_VERSION_PATTERN.search(raw)
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
+def _codex_version_at_least(reported: str, minimum: str) -> bool:
+    reported_tuple = _codex_version_tuple(reported)
+    minimum_tuple = _codex_version_tuple(minimum)
+    if reported_tuple is None or minimum_tuple is None:
+        return False
+    return reported_tuple >= minimum_tuple
+
+
+def _codex_cli_version(codex_binary: Path) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            [str(codex_binary), "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"codex --version could not be run: {error}"
+    if completed.returncode != 0:
+        return False, f"codex --version exited with code {completed.returncode}"
+    parsed = _codex_version_tuple(completed.stdout)
+    if parsed is None:
+        return False, f"could not parse a version from codex --version output: {completed.stdout!r}"
+    return True, ".".join(str(part) for part in parsed)
+
+
+def _codex_login_status(codex_binary: Path) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            [str(codex_binary), "login", "status"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"codex login status could not be run: {error}"
+    if completed.returncode != 0:
+        detail = completed.stdout.strip() or completed.stderr.strip() or "not authenticated"
+        return False, detail
+    return True, completed.stdout.strip() or "authenticated"
+
+
+def _codex_launch_environment_clean() -> tuple[bool, str]:
+    present = [key for key in _CODEX_FORBIDDEN_ENV_KEYS if os.environ.get(key)]
+    if present:
+        return False, f"forbidden credentials present in the launch environment: {present}"
+    return True, "OPENAI_API_KEY and CODEX_API_KEY are absent"
+
+
+def _codex_git_state(repo_root: Path) -> tuple[bool, str]:
+    try:
+        inside = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"git is unavailable: {error}"
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return False, f"{repo_root} is not a git working tree"
+    status = subprocess.run(
+        ["git", "-C", str(repo_root), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    if status.returncode != 0:
+        return False, "git status --porcelain failed"
+    dirty = [
+        line[3:]
+        for line in status.stdout.splitlines()
+        if not line[3:].startswith(_CODEX_ALLOWED_DIRTY_PREFIXES)
+    ]
+    if dirty:
+        return False, f"working tree has undocumented changes: {dirty}"
+    return True, "git working tree is clean apart from documented operator paths"
+
+
+def _codex_worktree_root_writable(worktree_root: Path) -> tuple[bool, str]:
+    try:
+        worktree_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=worktree_root):
+            pass
+    except OSError as error:
+        return False, f"worktree root {worktree_root} is not writable: {error}"
+    return True, f"{worktree_root} is writable"
+
+
+def _codex_postgres_available(database_url: str) -> tuple[bool, str]:
+    database = Database(database_url)
+    try:
+        reachable = Repository(database).ping()
+    except Exception as error:  # a preflight check must report failure, never itself crash
+        return False, f"postgresql is unavailable: {error!r}"
+    finally:
+        database.close()
+    return reachable, "reachable" if reachable else "unreachable"
