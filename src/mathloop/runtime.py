@@ -860,6 +860,14 @@ def _build_codex_client(settings: Settings) -> CodexClient:
         codex_binary=settings.codex_cli_path,
         codex_home=settings.codex_home,
     )
+    # Load-bearing, not decorative: this is the one line that actually wires
+    # the real credential store into the real turn path (C2). A refactor
+    # that silently reintroduced a `codex_worktree_root`-derived path here
+    # would compile and pass type-checking unchanged -- only this assertion
+    # (or a test that seeds exclusively `settings.codex_home` with
+    # `auth.json`, as `tests/integration/test_codex_runtime.py` does) would
+    # catch it.
+    assert launch_policy.codex_home == settings.codex_home
     worktree_manager = CodexWorktreeManager(
         repo_root=settings.codex_repo_root,
         worktree_root=settings.codex_worktree_root,

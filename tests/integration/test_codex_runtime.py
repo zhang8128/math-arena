@@ -376,6 +376,11 @@ def _codex_env(monkeypatch: pytest.MonkeyPatch, repository: Repository, tmp_path
     monkeypatch.setenv("MATHLOOP_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setenv("MATHLOOP_INCOMING_ROOT", str(tmp_path / "incoming"))
     monkeypatch.setenv("MATHLOOP_CODEX_WORKTREE_ROOT", str(tmp_path / "codex-worktrees"))
+    # Pinned even though nothing in this scenario ever reaches a real turn
+    # (see below): a test's configuration surface should never include the
+    # operator's real credential store (`~/.codex`, `Settings.codex_home`'s
+    # default) by omission.
+    monkeypatch.setenv("MATHLOOP_CODEX_HOME", str(tmp_path / "codex-home"))
     # Never the real binary, even though this scenario never actually reaches
     # a codex exec invocation (the incoming root is empty, so nothing is ever
     # scheduled): a placeholder path fails loudly instead of silently

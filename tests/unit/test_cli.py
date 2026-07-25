@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 import mathloop.cli as cli_module
 from mathloop.cli import app
+from mathloop.codex.launch import CodexLaunchPolicy
 from mathloop.provenance import SAGE_IMAGE_DIGEST
 
 # ---------------------------------------------------------------------------
@@ -219,12 +220,16 @@ def test_codex_init_reports_an_old_cli_version_as_failing(monkeypatch: pytest.Mo
     assert cli_module._codex_version_at_least(detail, "0.145.0") is False
 
 
+def _launch_policy(codex_home: str = "/fake/codex-home") -> CodexLaunchPolicy:
+    return CodexLaunchPolicy(codex_binary=Path("codex"), codex_home=Path(codex_home))
+
+
 def test_codex_login_status_reports_absent_login(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli_module.subprocess, "run", _fake_run(1, stdout="Not logged in.\n")
     )
 
-    ok, detail = cli_module._codex_login_status(Path("codex"), Path("/fake/codex-home"))
+    ok, detail = cli_module._codex_login_status(_launch_policy())
 
     assert ok is False
     assert "Not logged in" in detail
@@ -235,7 +240,7 @@ def test_codex_login_status_reports_authenticated(monkeypatch: pytest.MonkeyPatc
         cli_module.subprocess, "run", _fake_run(0, stdout="Logged in with ChatGPT\n")
     )
 
-    ok, detail = cli_module._codex_login_status(Path("codex"), Path("/fake/codex-home"))
+    ok, detail = cli_module._codex_login_status(_launch_policy())
 
     assert ok is True
     assert "ChatGPT" in detail
@@ -257,10 +262,38 @@ def test_codex_login_status_checks_the_configured_codex_home_not_the_ambient_one
 
     monkeypatch.setattr(cli_module.subprocess, "run", run)
 
-    cli_module._codex_login_status(Path("codex"), Path("/configured/codex-home"))
+    cli_module._codex_login_status(_launch_policy("/configured/codex-home"))
 
     env = captured["env"]
     assert isinstance(env, dict)
+    assert env["CODEX_HOME"] == "/configured/codex-home"
+
+
+def test_codex_login_status_runs_under_the_restricted_launch_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 7 review R2: a real turn never runs with this process's full
+    environment -- only `CodexLaunchPolicy`'s 7-key allowlist (notably, no
+    `HOME`). The preflight must probe under that SAME restricted
+    environment, not the full ambient one, so anything the Codex CLI needs
+    outside the allowlist fails here rather than on the first paid turn.
+    """
+    monkeypatch.setenv("HOME", "/some/real/home")
+    monkeypatch.setenv("MATHLOOP_SHOULD_NEVER_BE_FORWARDED", "leak-me-not")
+    captured: dict[str, object] = {}
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(command, 0, stdout="Logged in with ChatGPT\n")
+
+    monkeypatch.setattr(cli_module.subprocess, "run", run)
+
+    cli_module._codex_login_status(_launch_policy("/configured/codex-home"))
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert "HOME" not in env
+    assert "MATHLOOP_SHOULD_NEVER_BE_FORWARDED" not in env
     assert env["CODEX_HOME"] == "/configured/codex-home"
 
 
@@ -390,6 +423,47 @@ def test_codex_git_state_rejects_a_staged_rename_even_if_the_origin_matches_an_a
 
     assert ok is False
     assert "danger.py" in detail
+
+
+def test_codex_git_state_rejects_a_sibling_named_directory(tmp_path: Path) -> None:
+    """Task 7 review R4 (I4 shape 1/2): a raw string prefix would have
+    matched `.mathloop-personal-notes/` against the `.mathloop` entry since
+    it merely shares a text prefix. Matching on the exact leading path
+    *component* refuses it: `.mathloop-personal-notes` is a single,
+    distinct path component, not `.mathloop` followed by more path.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    (repo / ".mathloop-personal-notes").mkdir()
+    (repo / ".mathloop-personal-notes" / "notes.txt").write_text("private\n")
+
+    ok, detail = cli_module._codex_git_state(repo)
+
+    assert ok is False
+    assert ".mathloop-personal-notes" in detail
+
+
+def test_codex_git_state_rejects_a_tracked_modification_under_an_allowed_prefix(
+    tmp_path: Path,
+) -> None:
+    """Task 7 review R4 (I4 shape 2/2): the allowlist excuses UNTRACKED
+    paths only. A tracked file already committed under `.mathloop/` that is
+    then modified (or deleted) must still be reported as dirty -- the
+    exemption is for genuinely untracked operator scratch space, not a
+    blanket pass for anything under that prefix.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    (repo / ".mathloop").mkdir()
+    (repo / ".mathloop" / "tracked.txt").write_text("original\n")
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-q", "-m", "add a tracked file under an allowed prefix", cwd=repo)
+    (repo / ".mathloop" / "tracked.txt").write_text("modified\n")
+
+    ok, detail = cli_module._codex_git_state(repo)
+
+    assert ok is False
+    assert ".mathloop/tracked.txt" in detail
 
 
 def test_codex_worktree_root_writable_reports_success(tmp_path: Path) -> None:

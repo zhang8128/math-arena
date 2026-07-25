@@ -17,6 +17,7 @@ from uuid import UUID
 import typer
 
 from mathloop.artifacts import ArtifactStore
+from mathloop.codex.launch import CodexLaunchPolicy
 from mathloop.codex.supervisor import CodexSupervisor
 from mathloop.config import Settings
 from mathloop.provenance import SAGE_IMAGE_DIGEST
@@ -214,7 +215,10 @@ def codex_init() -> None:
             )
     checks["codex_cli_version"] = {"ok": version_ok, "detail": version_detail}
 
-    login_ok, login_detail = _codex_login_status(settings.codex_cli_path, settings.codex_home)
+    launch_policy = CodexLaunchPolicy(
+        codex_binary=settings.codex_cli_path, codex_home=settings.codex_home
+    )
+    login_ok, login_detail = _codex_login_status(launch_policy)
     checks["codex_login"] = {"ok": login_ok, "detail": login_detail}
 
     env_ok, env_detail = _codex_launch_environment_clean()
@@ -404,22 +408,30 @@ def _codex_cli_version(codex_binary: Path) -> tuple[bool, str]:
     return True, ".".join(str(part) for part in parsed)
 
 
-def _codex_login_status(codex_binary: Path, codex_home: Path) -> tuple[bool, str]:
-    """Check login status against `codex_home` explicitly, not the ambient environment.
+def _codex_login_status(launch_policy: CodexLaunchPolicy) -> tuple[bool, str]:
+    """Check login status against the SAME store and environment a real turn gets.
 
-    `CodexLaunchPolicy.environment()` always overwrites `CODEX_HOME` with
-    `settings.codex_home` for a real turn, discarding whatever this process's
-    own environment happens to contain. Without passing the same value here,
-    this check could validate a completely different, irrelevant store (e.g.
-    an operator's interactive shell `CODEX_HOME`) and report success while
-    the store real turns will actually use is unauthenticated -- a
-    guaranteed false positive on the one check this preflight most needs to
-    get right.
+    Two distinct false-positive risks, both closed here:
+
+    1. `CodexLaunchPolicy.environment()` always overwrites `CODEX_HOME` with
+       `launch_policy.codex_home` for a real turn, discarding whatever this
+       process's own environment happens to contain. Passing `codex_home`
+       explicitly (rather than relying on the ambient `CODEX_HOME`) means
+       this check validates the store real turns will actually use, not a
+       completely different, irrelevant one (e.g. an operator's interactive
+       shell `CODEX_HOME`).
+    2. A real turn also never runs with this process's full `os.environ` --
+       only the 7-key allowlist `CodexLaunchPolicy.environment()` forwards
+       (notably, no `HOME`). Running this probe under the SAME restricted
+       environment (`launch_policy.environment(os.environ)`), rather than
+       the full ambient one, means anything the Codex CLI needs outside
+       that allowlist fails HERE, at preflight, rather than passing this
+       check and then failing on the first real, quota-consuming turn.
     """
     try:
         completed = subprocess.run(
-            [str(codex_binary), "login", "status"],
-            env={**os.environ, "CODEX_HOME": str(codex_home)},
+            [str(launch_policy.codex_binary), "login", "status"],
+            env=launch_policy.environment(os.environ),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
