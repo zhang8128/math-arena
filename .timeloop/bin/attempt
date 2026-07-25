@@ -29,6 +29,24 @@ import subprocess
 import sys
 import time
 
+
+def strip_comments(t: str) -> str:
+    """Lean block comments/docstrings and line comments.
+
+    Added 2026-07-25 after the harness scored two false proofs: a block whose
+    only `sorry` was the word appearing inside a comment (`answer(sorry)`
+    placeholder prose) was flagged as unproved, and the substitution then
+    "proved" it by editing that comment. The file compiled because nothing real
+    had changed.
+    """
+    t = re.sub(r"/-.*?-/", "", t, flags=re.DOTALL)
+    t = re.sub(r"--[^\n]*", "", t)
+    return t
+
+
+def real_sorry_count(path: pathlib.Path) -> int:
+    return len(re.findall(r"\bsorry\b", strip_comments(path.read_text(errors="ignore"))))
+
 FC = pathlib.Path(__file__).resolve().parents[1] / "lean" / "formal-conjectures"
 
 # Ordered cheapest-first. `native_decide` is last: it trusts the compiler rather
@@ -45,7 +63,7 @@ def candidates(cat_filter=None, all_tiers=False):
         txt = f.read_text(errors="ignore")
         for blk in re.split(r"(?=@\[category)", txt)[1:]:
             m = re.match(r"@\[category\s+([^,\]]+)", blk)
-            if not m or "sorry" not in blk:
+            if not m or "sorry" not in strip_comments(blk):
                 continue
             cat = m.group(1).strip()
             if cat_filter and cat != cat_filter:
@@ -81,8 +99,14 @@ def try_tactic(c, tactic, timeout=120):
     patched, n = pat.subn(r"\1" + tactic, original, count=1)
     if n == 0:
         return "no-substitution"
+    before = real_sorry_count(path)
     try:
         path.write_text(patched)
+        # A genuine substitution must remove exactly one REAL sorry. If the regex
+        # hit a comment or the wrong declaration, this catches it before the
+        # compiler ever runs.
+        if real_sorry_count(path) != before - 1:
+            return "bad-substitution (no real sorry removed)"
         r = subprocess.run(
             ["lake", "env", "lean", str(path.relative_to(FC))],
             cwd=FC,
@@ -90,7 +114,7 @@ def try_tactic(c, tactic, timeout=120):
             text=True,
             timeout=timeout,
         )
-        if r.returncode == 0 and "sorry" not in r.stderr:
+        if r.returncode == 0 and "sorry" not in r.stderr.lower():
             return "PROVED"
         err = (r.stderr or r.stdout).strip().splitlines()
         first = next((l for l in err if "error" in l.lower()), err[0] if err else "?")
