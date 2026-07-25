@@ -28,6 +28,15 @@ starts and again immediately before it exits -- refusing the turn if that
 file is ever missing or malformed. It also refuses the turn outright if an
 `OPENAI_API_KEY`/`CODEX_API_KEY` ever reaches it, rather than silently
 succeeding regardless.
+
+A fourth defect this fake used to conceal, found by direct binary
+inspection of the real, installed Codex CLI (0.145.0) rather than by
+running it: every fake CLI in this plan emitted `cli_version` on
+`thread.started`, and `CodexClient` required it unconditionally -- but the
+real CLI's serde tag table contains no such field near that event at all.
+This fake now deliberately omits it, so this test exercises the client's
+`codex --version` fallback through the complete real path (worker, ledger,
+persisted `codex_turns.cli_version`), not just in isolation.
 """
 
 import base64
@@ -131,7 +140,14 @@ def main():
     with open(os.path.join(codex_home, "invoked-exec.marker"), "a") as handle:
         handle.write("invoked\\n")
 
-    _emit({"type": "thread.started", "thread_id": "thread-fake", "cli_version": "0.145.0-test"})
+    # Deliberately omits `cli_version` here: direct inspection of the real,
+    # installed Codex CLI (0.145.0) found no such field anywhere near its
+    # real `thread.started` event. `CodexClient` must fall back to a
+    # separate `codex --version` query (handled by the `--version` branch
+    # above) rather than treating this as fatal -- this end-to-end test is
+    # what proves that fallback holds all the way through the real worker
+    # and ledger path, not just in isolation.
+    _emit({"type": "thread.started", "thread_id": "thread-fake"})
     _emit({"type": "turn.started"})
     if worktree is not None:
         with open(os.path.join(worktree, "NOTES.md"), "w") as handle:
@@ -292,7 +308,11 @@ def test_codex_supervisor_foundation_offline_end_to_end(
     # solvers, but none of them is ever scheduled or run below.
     runtime.register_baseline_methods()
     assert runtime.methods.contains("codex_proof_strategy")
-    assert not runtime.methods.contains("proof_sketch")  # no OPENAI_API_KEY was set
+    # api_enabled=False is what actually keeps "proof_sketch" from
+    # registering here (register_baseline_methods only attempts it when
+    # BOTH api_enabled and a live OPENAI_API_KEY are present); the
+    # monkeypatch.delenv above only removes an unrelated, redundant risk.
+    assert not runtime.methods.contains("proof_sketch")
 
     method_version = next(
         method for method in repository.list_methods() if method.family == "codex_proof_strategy"
@@ -377,7 +397,11 @@ def test_codex_supervisor_foundation_offline_end_to_end(
     assert model == settings.codex_model_luna
     assert status == CodexTurnStatus.COMPLETED.value
     assert thread_id == "thread-fake"
-    assert cli_version == "0.145.0-test"
+    # Not "0.145.0-test": the fake CLI's `thread.started` event deliberately
+    # omits `cli_version` (matching the real CLI), so this value can only be
+    # here because `CodexClient` fell back to its `codex --version` query
+    # against the same fake binary and parsed "codex-cli 0.145.0".
+    assert cli_version == "0.145.0"
     assert input_tokens == 100
     assert cached_input_tokens == 10
     assert output_tokens == 12
@@ -440,6 +464,16 @@ def test_codex_supervisor_foundation_offline_end_to_end(
         check=True,
     ).stdout
     assert method_artifact["patch_sha256"] == hashlib.sha256(expected_patch).hexdigest()
+
+    # The actual patch bytes are stored too, not merely a digest committing
+    # to bytes nobody could ever produce again (the disposable worktree that
+    # made them is already gone by this point) -- base64-decode what was
+    # persisted and confirm it is byte-identical to the independently
+    # reconstructed diff above, and that its own digest matches the recorded
+    # `patch_sha256` too.
+    stored_patch = base64.b64decode(method_artifact["patch_base64"])
+    assert stored_patch == expected_patch
+    assert hashlib.sha256(stored_patch).hexdigest() == method_artifact["patch_sha256"]
 
     # Non-authoritative: no claim, and therefore no path into the review
     # queue or publication surface, was ever created from this evidence.
@@ -552,14 +586,28 @@ def test_live_codex_cli_compatibility_smoke(tmp_path: Path) -> None:
 
     login_ok, login_detail = cli_module._codex_login_status(launch_policy)
     assert login_ok, f"codex is not ChatGPT-authenticated: {login_detail}"
+    # `login_ok` alone is only `returncode == 0` -- codex also supports an
+    # API-key credential in the same `auth.json`, which would exit 0 too. If
+    # that credential were ever an API key instead of a ChatGPT session, the
+    # "subscription turn" below would silently bill metered OpenAI API
+    # dollars instead -- exactly the outcome this whole plan forbids. The
+    # brief requires asserting a *ChatGPT* login, not merely *a* login.
+    assert "ChatGPT" in login_detail, (
+        f"codex login status did not report a ChatGPT session: {login_detail!r}"
+    )
 
     version_ok, version_detail = cli_module._codex_cli_version(settings.codex_cli_path)
     assert version_ok, f"codex --version failed: {version_detail}"
     assert cli_module._codex_version_at_least(version_detail, settings.codex_min_cli_version)
 
-    launch_environment = launch_policy.environment(os.environ)
-    assert "OPENAI_API_KEY" not in launch_environment
-    assert "CODEX_API_KEY" not in launch_environment
+    # The meaningful check is against the AMBIENT environment (could this
+    # process's own env leak a metered key at all), not the allowlisted
+    # output of `launch_policy.environment()` -- that dict structurally can
+    # never contain either key regardless of what's ambient, so asserting
+    # against it would be a tautology. Reuses the same preflight check
+    # `mathloop codex init` already runs.
+    env_ok, env_detail = cli_module._codex_launch_environment_clean()
+    assert env_ok, env_detail
 
     repo_root = tmp_path / "live-smoke-repo"
     base_sha = _init_git_repo(repo_root)
@@ -568,14 +616,21 @@ def test_live_codex_cli_compatibility_smoke(tmp_path: Path) -> None:
     worktree_manager = CodexWorktreeManager(
         repo_root=repo_root, worktree_root=tmp_path / "codex-worktrees"
     )
-    client = CodexClient(launch_policy, worktree_manager, timeout_seconds=120.0)
+    # A single 120-second timeout, sourced from the reservation's own
+    # `deadline_seconds` (matching how `CodexClient.execute` resolves its
+    # timeout in production: `self._timeout_seconds` only when explicitly
+    # set, else `reservation.deadline_seconds`) -- not a second, disconnected
+    # `timeout_seconds=` override on the client that `CodexClient` would
+    # actually prefer and that would silently make the reservation's own
+    # value dead.
+    client = CodexClient(launch_policy, worktree_manager)
     reservation = CodexTurnReservation(
         id=uuid4(),
         experiment_id=uuid4(),
         budget_day=datetime.now(UTC).date(),
         role=CodexModelRole.LUNA,
         model=settings.codex_model_luna,
-        deadline_seconds=100,
+        deadline_seconds=120,
         created_at=datetime.now(UTC),
     )
     request: CodexRequest[ProofSketch] = CodexRequest(

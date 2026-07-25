@@ -171,15 +171,24 @@ class CodexEventParser:
         text = item.get("text")
         if type(text) is not str:
             raise CodexEventError("agent_message item is missing a string 'text' field")
-        if self._final_message is not None:
-            raise CodexEventError("received more than one final agent message")
+        # The last agent message before the terminal event wins, not the
+        # first: real Codex turns routinely emit short assistant preambles
+        # before or between tool calls (the production prompt in
+        # methods/codex_agent.py explicitly invites the model to inspect the
+        # repository and run local tests, which only increases how often a
+        # preamble precedes the actual final answer). Rejecting a second
+        # agent_message outright would turn every such turn into a
+        # non-retryable parse failure after quota was already spent. This
+        # does not weaken the terminal-event ordering protection below or in
+        # `_require_not_terminal`: an agent_message received AFTER the
+        # terminal event is still rejected unconditionally.
         self._final_message = text
 
     def _apply_terminal(self, event_type: str, payload: dict[str, object]) -> None:
         self._require_not_terminal(event_type)
         usage = self._parse_usage(payload, required=event_type == "turn.completed")
         if event_type == "turn.completed" and self._final_message is None:
-            raise CodexEventError("turn.completed requires exactly one final agent message")
+            raise CodexEventError("turn.completed requires a final agent message")
         self._terminal_type = event_type
         self._usage = usage
 

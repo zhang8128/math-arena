@@ -28,6 +28,7 @@ worktree from being leaked on every single occurrence.
 
 import json
 import os
+import re
 import select
 import signal
 import subprocess
@@ -52,6 +53,8 @@ _DEFAULT_CLEANUP_TIMEOUT_SECONDS = 60.0
 _READ_CHUNK_BYTES = 65536
 _POLL_SECONDS = 0.05
 _REAP_GRACE_SECONDS = 0.5
+_CLI_VERSION_QUERY_TIMEOUT_SECONDS = 10.0
+_CLI_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+")
 
 
 class CodexClientError(RuntimeError):
@@ -279,7 +282,7 @@ class CodexClient:
             try:
                 return self._stream_turn(
                     request, emit_event, process, stderr_thread, stderr_chunks, worktree,
-                    deadline, timeout,
+                    deadline, timeout, env,
                 )
             except BaseException:
                 # Any exception past this point -- including one raised by a
@@ -309,6 +312,7 @@ class CodexClient:
         worktree: CodexWorktree,
         deadline: float,
         timeout: float,
+        environment: Mapping[str, str],
     ) -> CodexResponse[T]:
         parser = CodexEventParser(max_bytes=self._max_event_bytes)
         cli_version: str | None = None
@@ -369,8 +373,21 @@ class CodexClient:
         if transcript.final_message is None or transcript.usage is None:
             raise CodexClientError("codex turn completed without a final message or usage")
         if cli_version is None:
+            # The real Codex CLI's `thread.started` event has been confirmed
+            # (by direct binary inspection) to NOT reliably carry a
+            # `cli_version` field at all -- unlike this client's earlier,
+            # convenience-fake-shaped assumption, this must not be fatal.
+            # Fall back to a separate, zero-turn-cost `codex --version`
+            # query against the same binary and environment. This runs
+            # AFTER the turn's own terminal event already arrived, so it is
+            # not one more stage the turn's own deadline must stretch to
+            # cover -- the same reasoning already applied to worktree
+            # cleanup's own separate budget.
+            cli_version = _query_cli_version(self._launch_policy.codex_binary, environment)
+        if cli_version is None:
             raise CodexClientError(
-                "codex thread.started event did not report a non-empty 'cli_version'"
+                "could not determine the codex CLI version: the thread.started event "
+                "did not report one and the 'codex --version' fallback query also failed"
             )
         try:
             value = request.response_schema.model_validate_json(transcript.final_message)
@@ -446,6 +463,39 @@ def _read_line(fd: int, buffer: bytearray, deadline: float, max_bytes: int) -> b
                 return line
             return None
         buffer.extend(chunk)
+
+
+def _query_cli_version(codex_binary: Path, environment: Mapping[str, str]) -> str | None:
+    """Best-effort fallback CLI version query, used only when a `thread.started`
+    event does not itself report one.
+
+    Direct inspection of the real, installed Codex CLI (0.145.0) found no
+    `cli_version` field anywhere near its `thread.started` serialization --
+    the field this client originally required unconditionally, which would
+    turn every real turn into a spent-quota, non-retryable failure. `codex
+    --version` is a separate, free, zero-turn-cost info command (the same
+    one `mathloop codex init`'s preflight already calls) -- entirely
+    distinct from `codex exec`, which is what actually spends quota -- so
+    calling it here never touches the turn budget, live or in a test.
+    Returns `None` (never raises) on any failure; the caller decides what a
+    still-missing version means for the receipt.
+    """
+    try:
+        completed = subprocess.run(
+            [str(codex_binary), "--version"],
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_CLI_VERSION_QUERY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    match = _CLI_VERSION_PATTERN.search(completed.stdout)
+    return match.group(0) if match else None
 
 
 def _drain_stderr(stream: IO[bytes], sink: list[bytes], cap_bytes: int) -> None:

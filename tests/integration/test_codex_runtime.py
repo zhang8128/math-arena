@@ -116,6 +116,15 @@ def main():
     if sleep_seconds > 0:
         time.sleep(sleep_seconds)
 
+    # NOTE: the real, installed Codex CLI (0.145.0) has been confirmed by
+    # direct binary inspection to NOT reliably include `cli_version` here --
+    # `CodexClient` falls back to a separate `codex --version` query when
+    # this event omits it. This fake keeps emitting the convenient shape
+    # because this file's scenarios are about runtime/operator-command
+    # wiring, not the CLI-version fallback itself, which has its own
+    # dedicated regression coverage in `tests/unit/test_codex_client.py`
+    # and `tests/e2e/test_codex_canary.py`. Do not treat this field's
+    # presence here as evidence it is guaranteed present on the real CLI.
     _emit({"type": "thread.started", "thread_id": "thread-fake", "cli_version": "0.145.0-test"})
     _emit({"type": "turn.started"})
     if worktree is not None:

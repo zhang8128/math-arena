@@ -18,6 +18,7 @@ its role or instructions.
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 
@@ -127,6 +128,15 @@ class CodexProofStrategyMethod:
                 "model": response.receipt.model,
             },
             "patch_sha256": response.patch_sha256,
+            # The actual worktree diff, base64-encoded, alongside its digest
+            # above -- not merely a commitment to bytes nobody could ever
+            # produce again, since the disposable worktree that made them is
+            # already gone by the time this artifact is committed.
+            # `CodexWorktreeManager` already caps this at `max_patch_bytes`
+            # (4 MiB by default), so embedding it here adds no new size risk.
+            # Strictly non-authoritative evidence, exactly like the rest of
+            # this artifact: never an input to verification, never a claim.
+            "patch_base64": base64.b64encode(response.patch).decode("ascii"),
         }
         return MethodResult(
             status="lead",

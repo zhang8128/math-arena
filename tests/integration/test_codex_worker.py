@@ -63,6 +63,16 @@ def main() -> int:
     worktree = None
     if "--cd" in argv:
         worktree = Path(argv[argv.index("--cd") + 1])
+    # NOTE: the real, installed Codex CLI (0.145.0) has been confirmed by
+    # direct binary inspection to NOT reliably include `cli_version` here --
+    # `CodexClient` falls back to a separate `codex --version` query when
+    # this event omits it (see `tests/unit/test_codex_client.py::
+    # test_codex_client_falls_back_to_codex_version_when_thread_started_omits_it`
+    # for the dedicated regression test). This fake keeps emitting the
+    # convenient shape because this file's own scenarios are about the
+    # ledger-dispatch/event-persistence path, not the CLI-version fallback
+    # itself; do not treat this field's presence here as evidence it is
+    # guaranteed present on the real CLI.
     _emit(
         {
             "type": "thread.started",

@@ -60,6 +60,9 @@ def _emit(payload: dict) -> None:
 
 def main() -> int:
     argv = sys.argv[1:]
+    if argv[:1] == ["--version"]:
+        sys.stdout.write("codex-cli 0.145.0\\n")
+        return 0
     mode = argv[-1] if argv else "success"
     worktree = None
     if "--cd" in argv:
@@ -84,14 +87,11 @@ def main() -> int:
     if tmpdir:
         (Path(tmpdir) / "fake-codex.pid").write_text(str(os.getpid()))
 
-    def emit_thread_and_turn_started() -> None:
-        _emit(
-            {
-                "type": "thread.started",
-                "thread_id": "thread-fake-1",
-                "cli_version": "0.145.0-test",
-            }
-        )
+    def emit_thread_and_turn_started(with_cli_version: bool = True) -> None:
+        payload = {"type": "thread.started", "thread_id": "thread-fake-1"}
+        if with_cli_version:
+            payload["cli_version"] = "0.145.0-test"
+        _emit(payload)
         _emit({"type": "turn.started"})
 
     def emit_agent_message_and_completion() -> None:
@@ -138,6 +138,30 @@ def main() -> int:
         emit_thread_and_turn_started()
         emit_agent_message_and_completion()
         return 3
+
+    if mode == "no_cli_version":
+        # Mirrors the real, installed Codex CLI (0.145.0): direct binary
+        # inspection found no `cli_version` field anywhere near its real
+        # `thread.started` serialization. The client must fall back to a
+        # separate `codex --version` query (handled above) rather than
+        # treating this as fatal.
+        emit_thread_and_turn_started(with_cli_version=False)
+        emit_agent_message_and_completion()
+        return 0
+
+    if mode == "preamble_then_final":
+        # Real Codex turns routinely emit a short assistant preamble before
+        # the actual final answer -- the second agent_message must win, not
+        # raise.
+        emit_thread_and_turn_started()
+        _emit(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "thinking out loud first"},
+            }
+        )
+        emit_agent_message_and_completion()
+        return 0
 
     if mode == "malformed":
         emit_thread_and_turn_started()
@@ -346,6 +370,37 @@ def test_codex_client_returns_schema_value_usage_and_patch(fake_codex: Path) -> 
     assert response.receipt.usage.output_tokens == 12
     assert response.patch_sha256 == hashlib.sha256(response.patch).hexdigest()
     assert any(event.event_type == "turn.started" for event in events)
+
+
+def test_codex_client_falls_back_to_codex_version_when_thread_started_omits_it(
+    fake_codex: Path,
+) -> None:
+    """Direct inspection of the real, installed Codex CLI (0.145.0) found no
+    `cli_version` field anywhere near its real `thread.started` event.
+    Treating that as fatal would spend the operator's quota on every real
+    turn and then fail non-retryably. The client must fall back to a
+    separate, zero-turn-cost `codex --version` query against the same
+    binary instead.
+    """
+    response = client(fake_codex).execute(
+        request(mode="no_cli_version", response_schema=ProofSketch),
+        events.append,
+    )
+    assert response.receipt.cli_version == "0.145.0"
+
+
+def test_codex_client_uses_the_last_agent_message_when_codex_emits_a_preamble(
+    fake_codex: Path,
+) -> None:
+    """Real Codex turns routinely emit a short assistant preamble before the
+    actual final answer; the client must use the last agent_message before
+    the terminal event, not raise on seeing a second one.
+    """
+    response = client(fake_codex).execute(
+        request(mode="preamble_then_final", response_schema=ProofSketch),
+        events.append,
+    )
+    assert response.value.strategy == "induction"
 
 
 def test_codex_client_timeout_kills_descendants_and_never_completes(

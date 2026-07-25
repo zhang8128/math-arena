@@ -217,7 +217,13 @@ def test_parser_requires_final_agent_message_when_turn_completes() -> None:
         parser.feed(encoded({"type": "turn.completed", "usage": usage_payload()}))
 
 
-def test_parser_rejects_second_final_agent_message() -> None:
+def test_parser_last_agent_message_before_terminal_wins() -> None:
+    """Real Codex turns routinely emit assistant preambles before the final
+    answer (made more likely by the production prompt inviting the model to
+    inspect the repository and run tests first) -- a second `agent_message`
+    must not be fatal. The LAST one seen before the terminal event is the
+    one that counts, not the first.
+    """
     parser = CodexEventParser(max_bytes=4096)
     parser.feed(encoded({"type": "thread.started", "thread_id": "thread-1"}))
     parser.feed(encoded({"type": "turn.started"}))
@@ -229,15 +235,17 @@ def test_parser_rejects_second_final_agent_message() -> None:
             }
         )
     )
-    with pytest.raises(CodexEventError):
-        parser.feed(
-            encoded(
-                {
-                    "type": "item.completed",
-                    "item": {"type": "agent_message", "text": "second"},
-                }
-            )
+    parser.feed(
+        encoded(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "second"},
+            }
         )
+    )
+    parser.feed(encoded({"type": "turn.completed", "usage": usage_payload()}))
+    transcript = parser.finish()
+    assert transcript.final_message == "second"
 
 
 def test_parser_rejects_bool_as_int_usage_fields() -> None:
