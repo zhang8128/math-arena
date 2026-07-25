@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     codex_cli_path: Path = Path("codex")
     codex_repo_root: Path = Path(".")
     codex_worktree_root: Path = Path(".mathloop/codex-worktrees")
+    # The operator's own, already-authenticated Codex CLI store. Deliberately
+    # NOT derived from `codex_worktree_root` (which is agent-writable
+    # disposable-worktree scratch space -- OAuth credentials must never live
+    # there) and never seeded or written to by this application: "reuse saved
+    # ChatGPT Codex authentication" means pointing at the store the operator
+    # already logged into, not creating a new one.
+    codex_home: Path = Path("~/.codex")
     codex_daily_turn_limit: int = Field(default=100, ge=1)
     codex_concurrent_turn_limit: int = Field(default=4, ge=1)
     codex_turn_timeout_seconds: int = Field(default=1800, ge=60)
@@ -48,6 +55,7 @@ class Settings(BaseSettings):
         self.incoming_root = self.incoming_root.expanduser().resolve()
         self.codex_repo_root = self.codex_repo_root.expanduser().resolve()
         self.codex_worktree_root = self.codex_worktree_root.expanduser().resolve()
+        self.codex_home = self.codex_home.expanduser().resolve()
         if self.lease_seconds <= self.max_experiment_seconds:
             raise ValueError("lease_seconds must exceed max_experiment_seconds")
         validate_database_usd(

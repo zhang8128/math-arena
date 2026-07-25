@@ -43,11 +43,46 @@ _FAKE_CODEX_SOURCE = '''\
 import json
 import os
 import sys
+import time
 
 
 def _emit(payload):
     sys.stdout.write(json.dumps(payload) + "\\n")
     sys.stdout.flush()
+
+
+def _codex_home():
+    return os.environ.get("CODEX_HOME", "")
+
+
+def _is_authenticated():
+    # Mirrors the real CLI's own requirement: a genuine `codex` binary
+    # refuses to run at all without an authenticated CODEX_HOME. A fake that
+    # skipped this check would conceal exactly the production defect (an
+    # unseeded or misconfigured CODEX_HOME) tests exist to catch -- both
+    # `login status` and a real turn attempt consult the SAME marker file, so
+    # a test can prove they agree.
+    home = _codex_home()
+    return bool(home) and os.path.exists(os.path.join(home, "auth.json"))
+
+
+def _turn_sleep_seconds():
+    # CODEX_HOME is the only directory this fake CLI is guaranteed to have
+    # (CodexLaunchPolicy.environment() always sets it, regardless of the
+    # allowlisted environment it otherwise forwards) -- so a test that wants
+    # to hold a turn "in flight" for a controlled duration drops a plain text
+    # file there rather than an environment variable, since arbitrary
+    # env vars (e.g. a hypothetical FAKE_CODEX_TURN_SLEEP_SECONDS) are NOT
+    # forwarded to the real launch environment at all.
+    home = _codex_home()
+    if not home:
+        return 0.0
+    marker = os.path.join(home, "turn-sleep-seconds.txt")
+    if not os.path.exists(marker):
+        return 0.0
+    with open(marker) as handle:
+        content = handle.read().strip()
+    return float(content) if content else 0.0
 
 
 def main():
@@ -57,24 +92,29 @@ def main():
         sys.stdout.write("codex-cli " + version + "\\n")
         return 0
     if argv[:2] == ["login", "status"]:
-        if os.environ.get("FAKE_CODEX_LOGIN_OK", "1") == "1":
+        if _is_authenticated():
             sys.stdout.write("Logged in with ChatGPT\\n")
             return 0
         sys.stdout.write("Not logged in.\\n")
         return 1
 
-    # Anything else is a real `codex exec` turn. Record that one happened --
-    # `codex init` tests assert this marker is never created -- then behave
-    # like a normal, fast, successful turn.
-    codex_home = os.environ.get("CODEX_HOME")
-    if codex_home:
-        os.makedirs(codex_home, exist_ok=True)
-        with open(os.path.join(codex_home, "invoked-exec.marker"), "a") as handle:
-            handle.write("invoked\\n")
+    # Anything else is a real `codex exec` turn.
+    if not _is_authenticated():
+        sys.stderr.write("error: not logged in; run `codex login`\\n")
+        return 1
+
+    codex_home = _codex_home()
+    os.makedirs(codex_home, exist_ok=True)
+    with open(os.path.join(codex_home, "invoked-exec.marker"), "a") as handle:
+        handle.write("invoked\\n")
 
     worktree = None
     if "--cd" in argv:
         worktree = argv[argv.index("--cd") + 1]
+
+    sleep_seconds = _turn_sleep_seconds()
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
 
     _emit({"type": "thread.started", "thread_id": "thread-fake", "cli_version": "0.145.0-test"})
     _emit({"type": "turn.started"})
@@ -107,6 +147,10 @@ def main():
             },
         }
     )
+    # Written only after the full turn genuinely finished -- a worker killed
+    # mid-flight (mid-sleep, or anywhere before this line) never reaches it.
+    with open(os.path.join(codex_home, "exec-completed.marker"), "a") as handle:
+        handle.write("completed\\n")
     return 0
 
 
@@ -143,15 +187,47 @@ def _init_repo(repo: Path) -> None:
     _git("commit", "-q", "-m", "seed", cwd=repo)
 
 
-def _settings(tmp_path: Path, fake_codex: Path, **overrides: object) -> Settings:
+def _codex_home_path(tmp_path: Path) -> Path:
+    return tmp_path / "codex-home"
+
+
+def _seed_authenticated_codex_home(codex_home: Path) -> None:
+    """Seed a fake, already-authenticated Codex CLI store for tests.
+
+    Mirrors what a real operator's `~/.codex/auth.json` provides: real
+    turns and the fake CLI's own `login status` handler both key off this
+    file's presence (see `_FAKE_CODEX_SOURCE`), never an environment
+    variable, so this is the one thing that must exist for a test's turns to
+    actually run to completion rather than fail unauthenticated.
+    """
+    codex_home.mkdir(parents=True, exist_ok=True)
+    (codex_home / "auth.json").write_text('{"fake": "credential"}\n')
+
+
+def _settings(
+    repository: Repository, tmp_path: Path, fake_codex: Path, **overrides: object
+) -> Settings:
     repo_root = tmp_path / "source-repo"
     _init_repo(repo_root)
+    codex_home = _codex_home_path(tmp_path)
+    _seed_authenticated_codex_home(codex_home)
     fields: dict[str, object] = {
+        # Without this, `Settings.database_url` falls back to its own
+        # default (a local dev Postgres on 55432), not this test's real
+        # testcontainers instance. `build_runtime`'s own `repository`
+        # parameter shields the CALLING process from that mismatch, but a
+        # forked multi-process worker (`_worker_process_main`) reconnects
+        # from `settings.database_url` alone -- so a Settings object that
+        # never set this would send that worker to a DIFFERENT database
+        # entirely, silently, with no exception (it just finds nothing this
+        # test scheduled and nothing to do).
+        "database_url": repository.database.database_url,
         "artifact_root": tmp_path / "artifacts",
         "incoming_root": tmp_path / "incoming",
         "codex_cli_path": fake_codex,
         "codex_repo_root": repo_root,
         "codex_worktree_root": tmp_path / "codex-worktrees",
+        "codex_home": codex_home,
         "codex_turn_timeout_seconds": 60,
     }
     fields.update(overrides)
@@ -246,7 +322,7 @@ def test_register_baseline_methods_rejects_codex_registered_then_api(
     afterward.
     """
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
-    settings = _settings(tmp_path, fake_codex)
+    settings = _settings(repository, tmp_path, fake_codex)
     codex_runtime = build_runtime(
         repository, ArtifactStore(settings.artifact_root), api_enabled=False,
         codex_enabled=True, settings=settings,
@@ -270,7 +346,7 @@ def test_register_baseline_methods_rejects_api_registered_then_codex(
 ) -> None:
     """The order Task 6 already covered, re-verified in this shared-registry shape."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
-    settings = _settings(tmp_path, fake_codex)
+    settings = _settings(repository, tmp_path, fake_codex)
     api_runtime = build_runtime(
         repository, ArtifactStore(settings.artifact_root), api_enabled=True,
         codex_enabled=False, settings=settings,
@@ -327,6 +403,7 @@ def test_codex_start_never_exceeds_the_durable_daily_cap_even_when_turns_asks_fo
     repository: Repository, tmp_path: Path, fake_codex: Path
 ) -> None:
     settings = _settings(
+        repository,
         tmp_path,
         fake_codex,
         codex_daily_turn_limit=2,
@@ -351,13 +428,209 @@ def test_codex_start_never_exceeds_the_durable_daily_cap_even_when_turns_asks_fo
     assert repository.codex_usage_status(now).daily_reserved == 2
 
 
+def test_codex_start_re_narrows_each_cycle_to_the_remaining_turn_budget(
+    repository: Repository, tmp_path: Path, fake_codex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task 7 review I1: `worker_iterations` must be re-narrowed to the
+    REMAINING budget every cycle, not just once before the loop -- otherwise
+    a first cycle that reserves fewer than `max_turns` lets a later cycle
+    run a full-size batch again, and `start(6)` could durably over-reserve
+    toward roughly double what was asked for.
+    """
+    settings = _settings(repository, tmp_path, fake_codex)
+    runtime = build_runtime(
+        repository, ArtifactStore(settings.artifact_root), api_enabled=False,
+        codex_enabled=True, settings=settings,
+    )
+    supervisor = CodexSupervisor(runtime)
+    observed_worker_iterations: list[int] = []
+    reservations_per_cycle = iter([2, 0])  # cycle 1 reserves 2 of the 6 requested
+
+    def fake_cycle() -> dict[str, object]:
+        observed_worker_iterations.append(runtime.loop.worker_iterations)
+        count = next(reservations_per_cycle, 0)
+        for _ in range(count):
+            repository.record_metric(
+                "codex_turn.reserved", {}, idempotency_key=f"fake-reservation:{uuid4()}"
+            )
+        return {"scheduled": list(range(count)), "worker_runs": count}
+
+    monkeypatch.setattr(runtime.loop, "cycle", fake_cycle)
+
+    payload = supervisor.start(max_turns=6, workers=1)
+
+    assert observed_worker_iterations[0] == 6  # first cycle: the full requested budget
+    assert observed_worker_iterations[1] == 4  # second cycle: 6 requested - 2 reserved = 4 left
+    assert payload["started_turns"] == 2
+
+
+def test_codex_start_does_not_permanently_ratchet_a_later_calls_batch_size_down(
+    repository: Repository, tmp_path: Path, fake_codex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task 7 review I1: a small `start(1)` must not permanently shrink a
+    later, larger `start(6)` on the same supervisor -- the per-cycle
+    narrowing must always narrow from a pristine baseline, never from
+    whatever a prior call already left `runtime.loop` holding.
+    """
+    settings = _settings(repository, tmp_path, fake_codex)
+    runtime = build_runtime(
+        repository, ArtifactStore(settings.artifact_root), api_enabled=False,
+        codex_enabled=True, settings=settings,
+    )
+    supervisor = CodexSupervisor(runtime)
+
+    def fake_cycle_noop() -> dict[str, object]:
+        return {"scheduled": [], "worker_runs": 0}
+
+    monkeypatch.setattr(runtime.loop, "cycle", fake_cycle_noop)
+    supervisor.start(max_turns=1, workers=1)
+    assert runtime.loop.worker_iterations == 1  # shrunk by the first call
+
+    observed: list[int] = []
+
+    def fake_cycle_record() -> dict[str, object]:
+        observed.append(runtime.loop.worker_iterations)
+        return {"scheduled": [], "worker_runs": 0}
+
+    monkeypatch.setattr(runtime.loop, "cycle", fake_cycle_record)
+    supervisor.start(max_turns=6, workers=1)
+
+    assert observed[0] == 6  # not permanently capped at 1 by the earlier call
+
+
+def test_codex_start_clamps_workers_to_the_concurrent_turn_limit(
+    repository: Repository, tmp_path: Path, fake_codex: Path
+) -> None:
+    """Task 7 review I3: `--workers` has no upper bound of its own, but
+    `reserve_codex_turn`'s concurrency cap denial is currently terminal for
+    the experiment it was attempted against -- so asking for more workers
+    than the concurrency policy allows would permanently fail real
+    problem/method pairs for no reason. Clamping here means this call never
+    itself creates that self-inflicted over-subscription.
+    """
+    settings = _settings(repository, tmp_path, fake_codex, codex_concurrent_turn_limit=2)
+    runtime = build_runtime(
+        repository, ArtifactStore(settings.artifact_root), api_enabled=False,
+        codex_enabled=True, settings=settings,
+    )
+    supervisor = CodexSupervisor(runtime)
+
+    payload = supervisor.start(max_turns=1, workers=8)
+
+    assert payload["workers"] == 2
+    assert runtime.loop.worker_processes == 2
+
+
+def test_codex_turn_fails_when_codex_home_is_unauthenticated(
+    repository: Repository, tmp_path: Path, fake_codex: Path
+) -> None:
+    """Task 7 review C2: an unseeded/misconfigured CODEX_HOME must make a
+    real turn fail loudly, not run silently unauthenticated and consume
+    real, non-refundable daily quota for zero output. Also proves the fake
+    CLI itself now enforces this -- a fake that always succeeded regardless
+    of CODEX_HOME would conceal the production defect this test exists to
+    catch.
+    """
+    settings = _settings(
+        repository, tmp_path, fake_codex, codex_home=tmp_path / "unauthenticated-codex-home"
+    )
+    _ingest_codex_eligible_problem(repository)
+    runtime = build_runtime(
+        repository, ArtifactStore(settings.artifact_root), api_enabled=False,
+        codex_enabled=True, settings=settings,
+    )
+    supervisor = CodexSupervisor(runtime)
+
+    supervisor.start(max_turns=1, workers=1)
+
+    with repository.database.transaction() as connection:
+        rows = connection.execute("SELECT status FROM codex_turns").fetchall()
+    assert rows  # a reservation was durably made and consumed the day's slot
+    assert all(status != "completed" for (status,) in rows)
+
+
+# ---------------------------------------------------------------------------
+# Graceful multi-process SIGINT/SIGTERM: must drain, never hard-kill a turn
+# ---------------------------------------------------------------------------
+
+
+def test_codex_start_sigint_lets_an_in_flight_multi_worker_turn_finish_not_kill_it(
+    repository: Repository, tmp_path: Path, fake_codex: Path
+) -> None:
+    """Task 7 review C1 (Critical).
+
+    On the multi-process path (`--workers > 1`), a cooperative stop request
+    must never SIGTERM a Codex turn's own process group directly -- only the
+    forked worker process itself, which then finishes its *current* turn
+    before exiting on its own. The fake CLI sleeps mid-turn; a completion
+    marker written only after the full turn genuinely finishes proves
+    whether it was allowed to finish or was killed mid-flight. Before the
+    fix, `_run_workers`'s stop-requested cascade called
+    `_terminate_supervised_worker` immediately, which SIGTERMs every
+    registered execution descendant -- including the live `codex exec`
+    process group -- so this same scenario would have killed the sleeping
+    fake CLI well before it could write its completion marker.
+    """
+    settings = _settings(repository, tmp_path, fake_codex, codex_concurrent_turn_limit=4)
+    (settings.codex_home / "turn-sleep-seconds.txt").write_text("2.0")
+    for _ in range(6):
+        _ingest_codex_eligible_problem(repository)
+    runtime = build_runtime(
+        repository, ArtifactStore(settings.artifact_root), api_enabled=False,
+        codex_enabled=True, settings=settings,
+    )
+    # Drives `_run_workers` directly rather than through `CodexSupervisor
+    # .start()`'s full `cycle()` (which also runs scheduling, ingestion, and
+    # evolution/holdout-routing every cycle): this test is about ONE specific
+    # property of the multi-process worker supervision loop, and scheduling
+    # once, directly, up front makes exactly how many codex experiments end
+    # up in flight deterministic and inspectable, independent of the
+    # portfolio policy's lane split or the evolution step's own holdout
+    # routing (which can itself allocate Codex work some cycles).
+    runtime.register_baseline_methods()
+    scheduled = runtime.schedule(10, seed=1)
+    assert scheduled
+    runtime.loop.worker_iterations = 6
+    runtime.loop.worker_processes = 2
+
+    def run_workers() -> None:
+        runtime.loop._run_workers(cycle_number=1)
+
+    runner_thread = threading.Thread(target=run_workers, daemon=True)
+    runner_thread.start()
+
+    invoked_marker = settings.codex_home / "invoked-exec.marker"
+    poll_deadline = time.monotonic() + 15.0
+    while time.monotonic() < poll_deadline:
+        if invoked_marker.exists() and invoked_marker.read_text().count("invoked") >= 1:
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("fake codex exec was never invoked within the timeout")
+
+    # A turn is now genuinely in flight (sleeping inside the fake CLI). This
+    # is the exact moment an operator's Ctrl-C would land in production.
+    runtime.loop.request_stop()
+    runner_thread.join(timeout=20.0)
+    assert not runner_thread.is_alive()
+
+    completed_marker = settings.codex_home / "exec-completed.marker"
+    assert completed_marker.exists()
+    with repository.database.transaction() as connection:
+        rows = connection.execute(
+            "SELECT status FROM codex_turns ORDER BY created_at"
+        ).fetchall()
+    assert rows
+    assert all(status == "completed" for (status,) in rows)
+
+
 # ---------------------------------------------------------------------------
 # `codex status` / `pause` / `resume`
 # ---------------------------------------------------------------------------
 
 
 def _supervisor(repository: Repository, tmp_path: Path, fake_codex: Path) -> CodexSupervisor:
-    settings = _settings(tmp_path, fake_codex)
+    settings = _settings(repository, tmp_path, fake_codex)
     runtime = build_runtime(
         repository, ArtifactStore(settings.artifact_root), api_enabled=False,
         codex_enabled=True, settings=settings,
@@ -452,7 +725,7 @@ def test_codex_start_refuses_to_run_while_paused(
 def test_codex_drain_waits_for_an_active_lease_to_clear_then_returns(
     repository: Repository, tmp_path: Path, fake_codex: Path
 ) -> None:
-    settings = _settings(tmp_path, fake_codex)
+    settings = _settings(repository, tmp_path, fake_codex)
     experiment_id = _enqueue_experiment(repository)
     reservation = repository.reserve_codex_turn(
         experiment_id, "worker-1", CodexModelRole.LUNA, "gpt-5.6-luna",
@@ -492,7 +765,7 @@ def test_codex_drain_waits_for_an_active_lease_to_clear_then_returns(
 def test_codex_drain_reports_not_drained_when_the_grace_period_expires(
     repository: Repository, tmp_path: Path, fake_codex: Path
 ) -> None:
-    settings = _settings(tmp_path, fake_codex)
+    settings = _settings(repository, tmp_path, fake_codex)
     experiment_id = _enqueue_experiment(repository)
     reservation = repository.reserve_codex_turn(
         experiment_id, "worker-1", CodexModelRole.LUNA, "gpt-5.6-luna",
@@ -534,11 +807,14 @@ def _policy_from(settings: Settings) -> CodexPolicy:
 def _init_env(monkeypatch: pytest.MonkeyPatch, repository: Repository, tmp_path: Path) -> Path:
     repo_root = tmp_path / "codex-repo"
     _init_repo(repo_root)
+    codex_home = _codex_home_path(tmp_path)
+    _seed_authenticated_codex_home(codex_home)
     monkeypatch.setenv("MATHLOOP_DATABASE_URL", repository.database.database_url)
     monkeypatch.setenv("MATHLOOP_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setenv("MATHLOOP_INCOMING_ROOT", str(tmp_path / "incoming"))
     monkeypatch.setenv("MATHLOOP_CODEX_REPO_ROOT", str(repo_root))
     monkeypatch.setenv("MATHLOOP_CODEX_WORKTREE_ROOT", str(tmp_path / "codex-worktrees"))
+    monkeypatch.setenv("MATHLOOP_CODEX_HOME", str(codex_home))
     return repo_root
 
 
@@ -572,7 +848,10 @@ def test_codex_init_fails_when_login_is_absent(
 ) -> None:
     _init_env(monkeypatch, repository, tmp_path)
     monkeypatch.setenv("MATHLOOP_CODEX_CLI_PATH", str(fake_codex))
-    monkeypatch.setenv("FAKE_CODEX_LOGIN_OK", "0")
+    # Point at a directory with no seeded `auth.json` -- the fake CLI (like
+    # the real one) treats that as "not logged in", exactly the same marker
+    # a real turn attempt also consults.
+    monkeypatch.setenv("MATHLOOP_CODEX_HOME", str(tmp_path / "unauthenticated-codex-home"))
     monkeypatch.setattr(cli_module, "_sage_image_available", lambda: True)
 
     result = cli_runner.invoke(app, ["codex", "init"])
@@ -584,6 +863,39 @@ def test_codex_init_fails_when_login_is_absent(
     # The failure is isolated to the login check -- everything else still ran
     # and reported its own, independent result.
     assert payload["checks"]["codex_cli_version"]["ok"] is True
+
+
+def test_codex_init_login_check_uses_the_configured_codex_home_not_the_ambient_one(
+    cli_runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    repository: Repository,
+    tmp_path: Path,
+    fake_codex: Path,
+) -> None:
+    """Task 7 review C2: the false-positive this preflight most needs to avoid.
+
+    `CodexLaunchPolicy.environment()` always overwrites `CODEX_HOME` with
+    `settings.codex_home` for a real turn -- so the login probe must
+    validate THAT value, not whatever this process happens to have
+    inherited. Here the ambient `CODEX_HOME` (this process's own, inherited
+    environment variable) is authenticated, but `settings.codex_home` (via
+    `MATHLOOP_CODEX_HOME`) is not; if the probe used the ambient value
+    instead, it would report success even though real turns would still run
+    unauthenticated.
+    """
+    _init_env(monkeypatch, repository, tmp_path)
+    monkeypatch.setenv("MATHLOOP_CODEX_CLI_PATH", str(fake_codex))
+    ambient_codex_home = tmp_path / "ambient-authenticated-codex-home"
+    _seed_authenticated_codex_home(ambient_codex_home)
+    monkeypatch.setenv("CODEX_HOME", str(ambient_codex_home))
+    monkeypatch.setenv("MATHLOOP_CODEX_HOME", str(tmp_path / "unauthenticated-codex-home"))
+    monkeypatch.setattr(cli_module, "_sage_image_available", lambda: True)
+
+    result = cli_runner.invoke(app, ["codex", "init"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["checks"]["codex_login"]["ok"] is False
 
 
 def test_codex_init_fails_when_the_cli_version_is_too_old(
@@ -678,7 +990,7 @@ def test_codex_init_never_starts_a_codex_turn(
 
     cli_runner.invoke(app, ["codex", "init"])
 
-    marker = tmp_path / "codex-worktrees" / "codex-home" / "invoked-exec.marker"
+    marker = _codex_home_path(tmp_path) / "invoked-exec.marker"
     assert not marker.exists()
     assert repository.count_events("codex_turn.reserved") == 0
 

@@ -202,14 +202,26 @@ class Runtime:
         if self.codex_enabled:
             role = CodexModelRole.LUNA
             model = self.settings.codex_model_luna
-            client = _build_codex_client(self.settings)
-            registered = register_codex_proof_strategy(
-                self.methods,
-                self.settings,
-                client,
-                model=model,
-                role=role,
-            )
+            # Idempotent against a repeat call on the SAME registry -- unlike
+            # `register_codex_proof_strategy`'s own raw `registry.register`,
+            # which raises "method already registered" on a second call.
+            # `register_baseline_methods` being safe to call more than once
+            # is an existing invariant every other family here already
+            # relies on (e.g. two back-to-back calls in
+            # `test_runtime_loop.py`, and now `CodexSupervisor.start()`
+            # itself, which calls it at the top of EVERY `start()` -- so a
+            # supervisor that outlives more than one `start()` call would
+            # otherwise crash on the second one).
+            registered = self.methods.contains("codex_proof_strategy")
+            if not registered:
+                client = _build_codex_client(self.settings)
+                registered = register_codex_proof_strategy(
+                    self.methods,
+                    self.settings,
+                    client,
+                    model=model,
+                    role=role,
+                )
             if registered:
                 baseline_specs.append(
                     (
@@ -339,6 +351,16 @@ class AutonomousLoop:
                 self.runtime.settings.codex_turn_timeout_seconds
                 + _CODEX_OUTER_TIMEOUT_GRACE_SECONDS,
             )
+        # Fixed spawn/registration overhead (forkserver spawn, `build_runtime`,
+        # `register_baseline_methods`) added once per worker process, on top
+        # of its full `quota * per_iteration_seconds` turn budget. A flat +30s
+        # was ~10% margin at the original 300s-per-iteration sizing; keeping
+        # it flat at 1860s-per-iteration (Codex mode) would shrink that same
+        # margin to ~1.6% even though the absolute overhead it covers did not
+        # grow. Scaling it to the SAME ~10% ratio preserves the margin this
+        # constant was originally sized to provide, regardless of which mode
+        # is active.
+        spawn_overhead_slack_seconds = max(30.0, per_iteration_seconds * 0.1)
         for index in range(process_count):
             quota = base_quota + int(index < remainder)
             parent_channel, child_channel = context.Pipe(duplex=False)
@@ -361,7 +383,7 @@ class AutonomousLoop:
             process.start()
             child_channel.close()
             child_group_channel.close()
-            deadline = started_at + quota * per_iteration_seconds + 30
+            deadline = started_at + quota * per_iteration_seconds + spawn_overhead_slack_seconds
             processes.append(
                 _SupervisedWorkerProcess(
                     process=process,
@@ -381,18 +403,41 @@ class AutonomousLoop:
                 worker.process.join(timeout=0.05)
                 _drain_execution_group_events(worker)
                 if self.stop_requested.is_set() and not stop_forwarded:
+                    shrunk_deadline = time.monotonic() + per_iteration_seconds + 2
                     for active in processes:
                         _drain_execution_group_events(active)
                         if active.process.is_alive():
-                            _terminate_supervised_worker(
-                                active,
-                                terminate_timeout=per_iteration_seconds + 2,
-                            )
+                            if self.runtime.codex_enabled:
+                                # Cooperative stop ONLY: signal the forked
+                                # worker process itself, never its execution
+                                # descendants (a live Codex turn's own `codex
+                                # exec` runs in its own process group, since
+                                # `CodexClient` starts it with
+                                # `start_new_session=True`). `.terminate()`
+                                # sends SIGTERM to just this PID;
+                                # `_worker_process_main` installs its own
+                                # SIGTERM handler that only sets a flag it
+                                # checks BETWEEN iterations, so this can never
+                                # abort a turn already in flight -- it only
+                                # keeps a new one from being claimed. Calling
+                                # `_terminate_supervised_worker` here instead
+                                # (as the non-Codex branch below still does)
+                                # would SIGTERM the turn's own process group
+                                # immediately, killing it mid-flight even
+                                # though `turn.started` already durably
+                                # consumed real, non-refundable quota for it.
+                                # The full tree-kill IS still reachable as a
+                                # last resort, below, if a worker fails to
+                                # exit on its own within the same grace this
+                                # loop already budgets for a legitimate turn.
+                                active.process.terminate()
+                            else:
+                                _terminate_supervised_worker(
+                                    active,
+                                    terminate_timeout=per_iteration_seconds + 2,
+                                )
+                        active.deadline = min(active.deadline, shrunk_deadline)
                     stop_forwarded = True
-                    worker.deadline = min(
-                        worker.deadline,
-                        time.monotonic() + per_iteration_seconds + 2,
-                    )
             _drain_execution_group_events(worker, wait_seconds=0.05)
             if (
                 worker.process.is_alive()
@@ -800,10 +845,20 @@ def _build_codex_client(settings: Settings) -> CodexClient:
     subprocess inside `execute()`, never at construction. Constructing this
     fresh in whichever process calls `register_baseline_methods` -- the
     parent CLI process or a forked worker child -- is therefore always safe.
+
+    `codex_home` is `settings.codex_home` -- the operator's own,
+    already-authenticated Codex CLI store (default `~/.codex`) -- NOT a path
+    derived from `codex_worktree_root`. A fresh directory under the
+    disposable-worktree root has no credentials in it at all (every real
+    turn would launch unauthenticated and fail, silently burning durable
+    daily/role quota, since `reserve_codex_turn`'s accounting counts a
+    reservation regardless of its eventual status), and even once seeded it
+    would be the wrong place for OAuth credentials to live: sibling to
+    worktrees the Codex agent itself has workspace-write access to.
     """
     launch_policy = CodexLaunchPolicy(
         codex_binary=settings.codex_cli_path,
-        codex_home=settings.codex_worktree_root / "codex-home",
+        codex_home=settings.codex_home,
     )
     worktree_manager = CodexWorktreeManager(
         repo_root=settings.codex_repo_root,

@@ -47,6 +47,15 @@ class CodexSupervisor:
     def __init__(self, runtime: Runtime) -> None:
         self.runtime = runtime
         self.repository = runtime.repository
+        # Captured once, before `start()` ever mutates `runtime.loop`'s own
+        # attributes: `start()` re-narrows `worker_iterations`/
+        # `queue_capacity` toward each cycle's REMAINING allowance (see
+        # below), and must always narrow from this pristine baseline, never
+        # from whatever a PRIOR `start()` call on this same supervisor left
+        # behind -- otherwise `start(1)` followed by `start(6)` would
+        # silently and permanently cap the second call at 1.
+        self._default_worker_iterations = runtime.loop.worker_iterations
+        self._default_queue_capacity = runtime.loop.queue_capacity
 
     # -- operator commands ---------------------------------------------------
 
@@ -72,9 +81,23 @@ class CodexSupervisor:
             raise ValueError("max_turns must be a positive integer")
         if type(workers) is not int or workers <= 0:
             raise ValueError("workers must be a positive integer")
+        # Clamped, not merely requested: `--workers` has no upper bound of its
+        # own, and `reserve_codex_turn`'s concurrency cap denies (never
+        # queues) any reservation attempt beyond it. That denial is currently
+        # terminal for the experiment it was attempted against (Task 4/5's
+        # accepted, out-of-scope-here failure classification), so asking for
+        # more workers than the concurrency policy allows would permanently
+        # fail real problem/method pairs for no reason -- clamping here means
+        # this call never itself creates that over-subscription. It does NOT
+        # eliminate the risk entirely: a lease already held by a different,
+        # concurrently running process still counts against the same cap and
+        # can still cause a denial regardless of how few workers this call
+        # requests.
+        effective_workers = min(workers, self.runtime.settings.codex_concurrent_turn_limit)
         if self.is_paused():
             return {
                 "requested_turns": max_turns,
+                "workers": effective_workers,
                 "started_turns": 0,
                 "cycles_run": 0,
                 "paused": True,
@@ -82,25 +105,31 @@ class CodexSupervisor:
                 "usage": self._usage_payload(),
             }
         self.runtime.register_baseline_methods()
-        self.runtime.loop.worker_processes = workers
-        # A soft, best-effort narrowing of a single cycle's own batch size
-        # toward the requested count -- the durable ledger caps above are
-        # what actually enforce the hard limit; this only reduces how far a
-        # single cycle can overshoot `max_turns` before this loop gets a
-        # chance to check again.
-        self.runtime.loop.worker_iterations = min(self.runtime.loop.worker_iterations, max_turns)
-        self.runtime.loop.queue_capacity = min(self.runtime.loop.queue_capacity, max_turns)
+        self.runtime.loop.worker_processes = effective_workers
         started_before = self.repository.count_events(_RESERVED_EVENT)
         cycles_run = 0
         interrupted = False
         while cycles_run < max_turns:
-            if (self.repository.count_events(_RESERVED_EVENT) - started_before) >= max_turns:
+            remaining = max_turns - (self.repository.count_events(_RESERVED_EVENT) - started_before)
+            if remaining <= 0:
                 break
             if self.is_paused():
                 break
             if stop_requested is not None and stop_requested.is_set():
                 interrupted = True
                 break
+            # Re-narrowed every iteration to the REMAINING allowance, always
+            # from the pristine baseline captured at construction -- not just
+            # once before the loop, and not from whatever a prior `start()`
+            # call left `runtime.loop` holding. A single cycle that reserves
+            # fewer than `max_turns` (e.g. because only some experiments were
+            # eligible) must not let the NEXT cycle run a full-size batch
+            # again -- that is how a caller asking for 6 could durably
+            # over-reserve toward 2x. This is still only a soft narrowing of
+            # one cycle's own batch size, not the hard limit: the durable
+            # ledger caps above are what actually enforce that.
+            self.runtime.loop.worker_iterations = min(self._default_worker_iterations, remaining)
+            self.runtime.loop.queue_capacity = min(self._default_queue_capacity, remaining)
             report = self.runtime.loop.cycle()
             cycles_run += 1
             if stop_requested is not None and stop_requested.is_set():
@@ -114,6 +143,7 @@ class CodexSupervisor:
         started_turns = self.repository.count_events(_RESERVED_EVENT) - started_before
         return {
             "requested_turns": max_turns,
+            "workers": effective_workers,
             "started_turns": started_turns,
             "cycles_run": cycles_run,
             "paused": self.is_paused(),

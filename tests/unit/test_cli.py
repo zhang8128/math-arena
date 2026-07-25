@@ -224,7 +224,7 @@ def test_codex_login_status_reports_absent_login(monkeypatch: pytest.MonkeyPatch
         cli_module.subprocess, "run", _fake_run(1, stdout="Not logged in.\n")
     )
 
-    ok, detail = cli_module._codex_login_status(Path("codex"))
+    ok, detail = cli_module._codex_login_status(Path("codex"), Path("/fake/codex-home"))
 
     assert ok is False
     assert "Not logged in" in detail
@@ -235,10 +235,33 @@ def test_codex_login_status_reports_authenticated(monkeypatch: pytest.MonkeyPatc
         cli_module.subprocess, "run", _fake_run(0, stdout="Logged in with ChatGPT\n")
     )
 
-    ok, detail = cli_module._codex_login_status(Path("codex"))
+    ok, detail = cli_module._codex_login_status(Path("codex"), Path("/fake/codex-home"))
 
     assert ok is True
     assert "ChatGPT" in detail
+
+
+def test_codex_login_status_checks_the_configured_codex_home_not_the_ambient_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 7 review C2: the login probe must validate the SAME CODEX_HOME
+    real turns will use, passed explicitly, never whatever this process's
+    own environment happens to contain.
+    """
+    monkeypatch.setenv("CODEX_HOME", "/some/irrelevant/ambient/codex-home")
+    captured: dict[str, object] = {}
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(command, 0, stdout="Logged in with ChatGPT\n")
+
+    monkeypatch.setattr(cli_module.subprocess, "run", run)
+
+    cli_module._codex_login_status(Path("codex"), Path("/configured/codex-home"))
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["CODEX_HOME"] == "/configured/codex-home"
 
 
 @pytest.mark.parametrize("forbidden_key", ["OPENAI_API_KEY", "CODEX_API_KEY"])
@@ -304,12 +327,69 @@ def test_codex_git_state_accepts_documented_operator_paths(tmp_path: Path) -> No
     _init_git_repo(repo)
     (repo / ".mathloop").mkdir()
     (repo / ".mathloop" / "state.json").write_text("{}\n")
-    (repo / ".claude").mkdir()
-    (repo / ".claude" / "settings.json").write_text("{}\n")
 
     ok, _detail = cli_module._codex_git_state(repo)
 
     assert ok is True
+
+
+def test_codex_git_state_rejects_an_untracked_path_outside_the_documented_allowlist(
+    tmp_path: Path,
+) -> None:
+    """Task 7 review I4: only `.mathloop/` (backed by `.gitignore`) is
+    documented. `.claude/`/`.engram/` were removed from the allowlist --
+    neither appears in `.gitignore`, the plan, or any design doc, so
+    excusing them was accidental (sized to one implementer's own sandbox),
+    not a genuine operator-path allowlist entry.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text("{}\n")
+
+    ok, detail = cli_module._codex_git_state(repo)
+
+    assert ok is False
+    assert ".claude" in detail
+
+
+def test_codex_git_state_rejects_a_non_main_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    _git("checkout", "-q", "-b", "feature", cwd=repo)
+
+    ok, detail = cli_module._codex_git_state(repo)
+
+    assert ok is False
+    assert "main" in detail
+
+
+def test_codex_git_state_rejects_a_staged_rename_even_if_the_origin_matches_an_allowed_prefix(
+    tmp_path: Path,
+) -> None:
+    """Task 7 review I4 (sharpest finding): a TRACKED change -- including a
+    staged rename -- must never be excused regardless of path text.
+
+    Porcelain v1 renders a staged rename as `"R  ORIG -> DEST"` in the same
+    path field a raw-string-prefix check would have matched against ORIG
+    alone, which would have hidden a change that actually landed at DEST
+    (which could be anywhere, including inside `src/`). Restricting the
+    allowlist to genuinely UNTRACKED ("??") lines closes this structurally:
+    a rename's status code is never "??", so it is never even considered
+    for the exemption, regardless of what its origin path looks like.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    (repo / ".mathloop").mkdir()
+    (repo / ".mathloop" / "tracked.txt").write_text("original\n")
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-q", "-m", "add a tracked file under an allowed prefix", cwd=repo)
+    _git("mv", ".mathloop/tracked.txt", "danger.py", cwd=repo)
+
+    ok, detail = cli_module._codex_git_state(repo)
+
+    assert ok is False
+    assert "danger.py" in detail
 
 
 def test_codex_worktree_root_writable_reports_success(tmp_path: Path) -> None:

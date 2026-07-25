@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import Event
 from uuid import UUID
 
@@ -36,10 +36,16 @@ app.add_typer(codex_app, name="codex")
 # they were present here.
 _CODEX_FORBIDDEN_ENV_KEYS = ("OPENAI_API_KEY", "CODEX_API_KEY")
 
-# Paths `codex init`'s git-cleanliness check tolerates as untracked/dirty
-# without failing the preflight: operator and application tooling that
-# legitimately lives alongside the source tree but is no part of it.
-_CODEX_ALLOWED_DIRTY_PREFIXES = (".mathloop", ".claude", ".engram")
+# Leading path components `codex init`'s git-cleanliness check tolerates as
+# UNTRACKED (never tracked-and-modified, deleted, or renamed -- see
+# `_codex_git_state`) without failing the preflight. Restricted to paths this
+# plan actually documents as ignored operator state: `.mathloop/` is Codex's
+# own worktree/turn-ledger scratch space and is listed in `.gitignore`. Do
+# not add entries here that are merely untracked in one operator's sandbox --
+# `.claude/`/`.engram/` were removed for exactly that reason (Task 7 review):
+# neither appears in `.gitignore`, the plan, or any design doc, so excusing
+# them was accidental, not documented.
+_CODEX_ALLOWED_UNTRACKED_PATH_COMPONENTS = frozenset({".mathloop"})
 
 _CODEX_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
@@ -208,7 +214,7 @@ def codex_init() -> None:
             )
     checks["codex_cli_version"] = {"ok": version_ok, "detail": version_detail}
 
-    login_ok, login_detail = _codex_login_status(settings.codex_cli_path)
+    login_ok, login_detail = _codex_login_status(settings.codex_cli_path, settings.codex_home)
     checks["codex_login"] = {"ok": login_ok, "detail": login_detail}
 
     env_ok, env_detail = _codex_launch_environment_clean()
@@ -398,10 +404,22 @@ def _codex_cli_version(codex_binary: Path) -> tuple[bool, str]:
     return True, ".".join(str(part) for part in parsed)
 
 
-def _codex_login_status(codex_binary: Path) -> tuple[bool, str]:
+def _codex_login_status(codex_binary: Path, codex_home: Path) -> tuple[bool, str]:
+    """Check login status against `codex_home` explicitly, not the ambient environment.
+
+    `CodexLaunchPolicy.environment()` always overwrites `CODEX_HOME` with
+    `settings.codex_home` for a real turn, discarding whatever this process's
+    own environment happens to contain. Without passing the same value here,
+    this check could validate a completely different, irrelevant store (e.g.
+    an operator's interactive shell `CODEX_HOME`) and report success while
+    the store real turns will actually use is unauthenticated -- a
+    guaranteed false positive on the one check this preflight most needs to
+    get right.
+    """
     try:
         completed = subprocess.run(
             [str(codex_binary), "login", "status"],
+            env={**os.environ, "CODEX_HOME": str(codex_home)},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -436,6 +454,20 @@ def _codex_git_state(repo_root: Path) -> tuple[bool, str]:
         return False, f"git is unavailable: {error}"
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return False, f"{repo_root} is not a git working tree"
+
+    branch = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    if branch.returncode != 0:
+        return False, "git rev-parse --abbrev-ref HEAD failed"
+    current_branch = branch.stdout.strip()
+    if current_branch != "main":
+        return False, f"expected the main branch checked out, found {current_branch!r}"
+
     status = subprocess.run(
         ["git", "-C", str(repo_root), "status", "--porcelain"],
         capture_output=True,
@@ -445,14 +477,30 @@ def _codex_git_state(repo_root: Path) -> tuple[bool, str]:
     )
     if status.returncode != 0:
         return False, "git status --porcelain failed"
+    # Only a genuinely UNTRACKED ("??") line, whose path's leading component
+    # exactly matches a documented entry, is excused. A tracked modification,
+    # deletion, or rename is never excused regardless of path text -- porcelain
+    # v1 renders a staged rename as "R  ORIG -> DEST" in the same path field a
+    # raw-string-prefix check would have matched against ORIG alone, hiding a
+    # change that actually landed at DEST (which could be anywhere, including
+    # inside src/). Matching on the exact leading path component (not a raw
+    # string prefix) also refuses a same-prefix sibling name like
+    # `.mathloop-personal-notes/`.
     dirty = [
-        line[3:]
-        for line in status.stdout.splitlines()
-        if not line[3:].startswith(_CODEX_ALLOWED_DIRTY_PREFIXES)
+        path_field
+        for status_code, path_field in (
+            (line[:2], line[3:]) for line in status.stdout.splitlines() if line
+        )
+        if not (status_code == "??" and _is_documented_untracked_path(path_field))
     ]
     if dirty:
         return False, f"working tree has undocumented changes: {dirty}"
     return True, "git working tree is clean apart from documented operator paths"
+
+
+def _is_documented_untracked_path(path_field: str) -> bool:
+    first_component = PurePosixPath(path_field).parts[0] if path_field else ""
+    return first_component in _CODEX_ALLOWED_UNTRACKED_PATH_COMPONENTS
 
 
 def _codex_worktree_root_writable(worktree_root: Path) -> tuple[bool, str]:
