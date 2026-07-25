@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Find and kill orphaned time-loop compute processes.
+
+Exists because on 2026-07-25 two arena jobs ran for 4h21m and 1h40m, pinning a
+core each and producing zero bytes of output, while the session had moved on.
+The lesson recorded at the time was "never cite a computation whose output you
+have not read" — but that only fixed the citation. This fixes the process.
+
+Scope is deliberately narrow: it only ever touches processes whose command line
+references THIS repo's .timeloop/runs/ directory. It cannot touch a user's
+editors, servers, or anything else, by construction.
+
+  reap --report   exit 0, print JSON for a Claude Code hook (never kills)
+  reap --kill     kill matches, print what died
+  reap            human-readable listing, kills nothing
+"""
+
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MARKER = os.path.join(".timeloop", "runs")
+# Only complain at Stop about things that have outlived a normal turn.
+REPORT_AFTER_SECONDS = 300
+
+
+def _etime_to_seconds(etime: str) -> int:
+    """Parse BSD ps etime: [[dd-]hh:]mm:ss"""
+    days = 0
+    if "-" in etime:
+        d, etime = etime.split("-", 1)
+        days = int(d)
+    parts = [int(p) for p in etime.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    h, m, s = parts
+    return days * 86400 + h * 3600 + m * 60 + s
+
+
+def _cwd_of(pid: int) -> str:
+    """Working directory of a pid, via lsof. Empty string if unavailable."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-a", "-d", "cwd", "-p", str(pid), "-Fn"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+        for line in out.splitlines():
+            if line.startswith("n"):
+                return line[1:]
+    except Exception:
+        pass
+    return ""
+
+
+def _is_ours(pid: int, args: str) -> bool:
+    """Belongs to THIS repo's arena. Absolute path in argv, or cwd under the repo.
+
+    The argv check alone missed relative launches (`.venv/bin/python3
+    .timeloop/runs/x.py`) — caught by the decoy test, not by reading the code.
+    """
+    if REPO in args:
+        return True
+    return _cwd_of(pid).startswith(REPO)
+
+
+def find() -> list[dict]:
+    out = subprocess.run(
+        ["ps", "-eo", "pid,etime,args"], capture_output=True, text=True
+    ).stdout.splitlines()[1:]
+    me = os.getpid()
+    found = []
+    for line in out:
+        m = re.match(r"\s*(\d+)\s+(\S+)\s+(.*)", line)
+        if not m:
+            continue
+        pid, etime, args = int(m.group(1)), m.group(2), m.group(3)
+        if pid == me:
+            continue
+        # narrow by construction: must reference the arena's runs directory
+        if MARKER not in args:
+            continue
+        if "/reap" in args:
+            continue
+        # ...and must actually belong to this repo
+        if not _is_ours(pid, args):
+            continue
+        found.append(
+            {
+                "pid": pid,
+                "seconds": _etime_to_seconds(etime),
+                "elapsed": etime,
+                "script": (re.search(r"\.timeloop/runs/(\S+)", args) or [None, "?"])[1]
+                if re.search(r"\.timeloop/runs/(\S+)", args)
+                else "?",
+            }
+        )
+    return found
+
+
+def kill(procs: list[dict]) -> list[dict]:
+    for p in procs:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.kill(p["pid"], sig)
+            except ProcessLookupError:
+                break
+            except PermissionError:
+                p["error"] = "permission denied"
+                break
+    return procs
+
+
+def main() -> int:
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    procs = find()
+
+    if mode == "--report":
+        stale = [p for p in procs if p["seconds"] >= REPORT_AFTER_SECONDS]
+        if stale:
+            lines = ", ".join(
+                f"{p['script']} (pid {p['pid']}, {p['elapsed']})" for p in stale
+            )
+            print(
+                json.dumps(
+                    {
+                        "systemMessage": (
+                            f"⏱  {len(stale)} time-loop process(es) still running past "
+                            f"5 min: {lines}. Collect the output or run "
+                            f".timeloop/bin/reap --kill"
+                        )
+                    }
+                )
+            )
+        return 0
+
+    if mode == "--kill":
+        if not procs:
+            print("no time-loop processes running")
+            return 0
+        killed = kill(procs)
+        for p in killed:
+            status = p.get("error", "killed")
+            print(f"{status}: pid {p['pid']} {p['script']} (ran {p['elapsed']})")
+        return 0
+
+    if not procs:
+        print("no time-loop processes running")
+    for p in procs:
+        print(f"pid {p['pid']:>7}  {p['elapsed']:>12}  {p['script']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

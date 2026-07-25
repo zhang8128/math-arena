@@ -94,6 +94,35 @@ confident-sounding output that is wrong or vacuous.
 5. **Never delete a prior turn's finding to make room.** Contradict it explicitly
    if it was wrong, and say why.
 
+## Cleaning up after yourself
+
+On 2026-07-25 two arena jobs ran **4h21m** and **1h40m**, pinning a core each and
+producing zero bytes, while the session had long moved on. The lesson recorded at
+the time — *never cite a computation whose output you have not read* — fixed the
+citation and did nothing about the process. Half a lesson.
+
+Three layers now, so it cannot depend on remembering:
+
+1. **Prefer foreground, reduced scope.** A validation that fits in one turn beats
+   one that might not finish. A smaller verified range beats a larger unverified
+   one — this is already the rule after T10, and it is also the cheapest way to
+   never orphan anything.
+2. **`Stop` hook → `bin/reap --report`.** After every turn, any arena process
+   running past 5 minutes is named in a system message. Forgetting becomes
+   visible instead of silent.
+3. **`SessionEnd` hook → `bin/reap --kill`.** Nothing survives the session.
+
+`bin/reap` is deliberately narrow: it only matches processes whose command line
+references `.timeloop/runs/` **and** which belong to this repo (absolute path in
+argv, or `cwd` under the repo). It cannot touch anything else. Verified against a
+decoy outside the repo, which it correctly ignored.
+
+Run it by hand any time: `.timeloop/bin/reap` lists, `--kill` reaps.
+
+*(The cwd check exists because the first version matched only on argv and missed
+relative launches — caught by the decoy test, not by reading the code. Testing
+the janitor found a bug in the janitor.)*
+
 ## Tracks
 
 **`open`** — known conjectures. Realistic goal is not to solve them but to retire
