@@ -1,3 +1,8 @@
-# Lean build artifacts and the mathlib cache — multi-GB, reproducible via:
+# Lean build artifacts and mathlib cache — multi-GB, reproducible via:
 #   cd arena && lake exe cache get && lake build
 arena/.lake/
+
+# Upstream clone, reproducible via:
+#   git clone --depth 1 https://github.com/google-deepmind/formal-conjectures.git
+#   cd formal-conjectures && lake exe cache get && lake build FormalConjecturesUtil
+formal-conjectures/
