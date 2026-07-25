@@ -32,10 +32,15 @@ from threading import Event
 
 from mathloop.codex.domain import CodexModelRole, CodexPolicy
 from mathloop.runtime import Runtime
+from mathloop.storage.repository import CODEX_ACTIVE_LEASE_ID_QUERY
 
 _PAUSED_EVENT = "codex_supervisor.paused"
 _RESUMED_EVENT = "codex_supervisor.resumed"
 _RESERVED_EVENT = "codex_turn.reserved"
+# Turns that have a real on-disk worktree right now. Deliberately NOT the same
+# set as the concurrency-holding one (`CODEX_ACTIVE_LEASE_ID_QUERY`), which also
+# includes unexpired `reserved`/`ambiguous` rows that own no worktree; `status()`
+# reports both, under separate keys.
 _ACTIVE_TURN_STATUSES = ("dispatched", "running")
 _FAILURE_TURN_STATUSES = ("failed", "timed_out", "ambiguous")
 _DEFAULT_DRAIN_POLL_SECONDS = 0.2
@@ -152,11 +157,33 @@ class CodexSupervisor:
         }
 
     def status(self) -> dict[str, object]:
-        """Read-only snapshot: never appends an event or otherwise mutates the ledger."""
+        """Read-only snapshot: never appends an event or otherwise mutates the ledger.
+
+        Reports two deliberately different turn-id lists, because they answer
+        two different operator questions and are not always the same set:
+
+        * `active_worktree_ids` -- turns that currently have a real on-disk
+          worktree under `codex_worktree_root` (`dispatched`/`running`).
+        * `active_lease_turn_ids` -- every turn holding one of the
+          `concurrent_turn_limit` slots, which additionally includes
+          still-unexpired `reserved` and `ambiguous` rows that have no worktree
+          of their own. Computed from the exact same predicate
+          `reserve_codex_turn` enforces the cap against, and at the same
+          timestamp, so `len(active_lease_turn_ids)` and
+          `usage["active_leases"]` cannot drift by construction -- only if a
+          concurrent writer settles a turn between these two reads, which are
+          separate transactions (this is a diagnostic snapshot, not a
+          serializable one). An operator can never again be shown a nonzero
+          lease count with no way to see which rows are responsible for it.
+        """
+        # One timestamp for both reads, so the count and the id list can never
+        # straddle a lease boundary and disagree.
+        now = datetime.now(UTC)
         return {
             "paused": self.is_paused(),
-            "usage": self._usage_payload(),
+            "usage": self._usage_payload(now),
             "active_worktree_ids": self._active_turn_ids(),
+            "active_lease_turn_ids": self._active_lease_turn_ids(now),
             "last_failure": self._last_failure(),
             "min_cli_version": self.runtime.settings.codex_min_cli_version,
             "observed_cli_version": self._observed_cli_version(),
@@ -270,8 +297,8 @@ class CodexSupervisor:
             reserved_sol_turns=settings.codex_reserved_sol_turns,
         )
 
-    def _usage_payload(self) -> dict[str, object]:
-        usage = self.repository.codex_usage_status(datetime.now(UTC))
+    def _usage_payload(self, now: datetime | None = None) -> dict[str, object]:
+        usage = self.repository.codex_usage_status(datetime.now(UTC) if now is None else now)
         policy = self._policy()
         return {
             "budget_day": usage.budget_day.isoformat(),
@@ -292,6 +319,17 @@ class CodexSupervisor:
                 "SELECT id FROM codex_turns WHERE status = ANY(%(statuses)s) ORDER BY created_at",
                 {"statuses": list(_ACTIVE_TURN_STATUSES)},
             ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def _active_lease_turn_ids(self, now: datetime) -> list[str]:
+        """Every turn currently holding a concurrency slot, newest last.
+
+        Uses `CODEX_ACTIVE_LEASE_ID_QUERY` -- built from the very same
+        predicate `codex_usage_status().active_leases` counts -- rather than a
+        status list of its own, so this list and that count cannot drift apart.
+        """
+        with self.repository.database.transaction() as connection:
+            rows = connection.execute(CODEX_ACTIVE_LEASE_ID_QUERY, {"now": now}).fetchall()
         return [str(row[0]) for row in rows]
 
     def _last_failure(self) -> dict[str, object] | None:

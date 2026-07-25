@@ -875,14 +875,25 @@ def test_reconcile_frees_concurrency_for_lease_expired_before_dispatch(
 
 
 def test_reconcile_never_un_consumes_a_dispatched_turn(repository: Repository) -> None:
-    """Concurrency for a dispatched turn must stay consumed forever, not just its experiment.
+    """A dispatched turn is never retried -- but its concurrency slot is not lost forever.
 
-    A dispatched turn's true outcome is unknown once its lease lapses without a
-    terminal event -- the underlying Codex CLI process might still be running.
-    Reconciliation settles the ledger row to `ambiguous` for bookkeeping, but it
-    must never treat that settlement as freeing a concurrency slot: doing so
-    would let a second turn dispatch while the first might still be in flight,
-    exactly the double-dispatch risk this ledger exists to prevent.
+    Two guarantees that were previously conflated, separated here deliberately.
+
+    Never un-consumed (the plan's constraint, unchanged): the row stays
+    terminal, its budget_day/role quota stays spent, and the owning experiment
+    can never be re-reserved or re-dispatched. That is what "dispatched or
+    ambiguous work is never retried automatically" means.
+
+    Not permanently un-reservable (the bug this replaces): a *concurrency slot*
+    is a live-work resource, not a quota. While the lease is still live, a
+    `dispatched` row holds its slot unconditionally -- an expired lease alone is
+    not proof the Codex CLI process stopped, and freeing it early is the
+    double-dispatch risk this ledger exists to prevent. That is asserted below
+    and is deliberately still lease-INdependent for `dispatched`. But once the
+    row has been settled to `ambiguous` AND its lease has lapsed, the slot must
+    come back: holding it forever meant `concurrent_turn_limit` failures, each
+    a routine one, permanently bricked the lane with nothing in `src/` able to
+    release it.
     """
     policy = CodexPolicy(
         daily_turn_limit=5,
@@ -921,23 +932,220 @@ def test_reconcile_never_un_consumes_a_dispatched_turn(repository: Repository) -
         repository.reserve_codex_turn_for_existing_experiment(reservation.experiment_id) is None
     ), "a dispatched turn that lapses without a terminal event is never re-reservable"
 
-    assert (
-        repository.reserve_codex_turn(
-            experiment_id=_enqueue_experiment(repository),
-            worker_id="worker-3",
-            role=CodexModelRole.TERRA,
-            model="gpt-5.6-terra",
-            policy=policy,
-            now=past_lease,
-        )
-        is None
-    ), "settling a dispatched turn to ambiguous must not free its concurrency slot either"
+    # Still consumed for accounting: the day and role quotas keep counting it
+    # forever, so freeing its slot below is not a refund of anything.
+    settled_usage = repository.codex_usage_status(past_lease)
+    assert settled_usage.daily_reserved == 1
+    assert settled_usage.role_reserved["terra"] == 1
+
+    freed = repository.reserve_codex_turn(
+        experiment_id=_enqueue_experiment(repository),
+        worker_id="worker-3",
+        role=CodexModelRole.TERRA,
+        model="gpt-5.6-terra",
+        policy=policy,
+        now=past_lease,
+    )
+    assert freed is not None, (
+        "an ambiguous row whose lease has lapsed must release its concurrency slot: it is "
+        "settled and its process is gone, so continuing to hold the slot would subtract "
+        "capacity from the lane permanently, with nothing able to give it back"
+    )
+    assert freed.experiment_id != reservation.experiment_id, (
+        "the recovered slot goes to a DIFFERENT experiment -- the ambiguous turn itself is "
+        "never re-dispatched"
+    )
 
 
 def test_reconcile_is_a_noop_when_nothing_has_expired(repository: Repository) -> None:
     now = datetime.now(UTC)
     reserve_one(repository, now=now)
     assert repository.reconcile_codex_turns(now) == 0
+
+
+# ---------------------------------------------------------------------------
+# Concurrency-slot lifecycle for worker-settled `ambiguous` turns
+# ---------------------------------------------------------------------------
+
+
+_AMBIGUOUS_POLICY = CodexPolicy(
+    daily_turn_limit=40,
+    concurrent_turn_limit=1,
+    model_turn_limits={"luna": 0, "terra": 40, "sol": 0},
+    reserved_sol_turns=0,
+    turn_timeout_seconds=60,
+)
+
+
+def _settle_ambiguous(
+    repository: Repository, *, worker_id: str, now: datetime
+) -> CodexTurnReservation:
+    """Reserve, dispatch, then settle `ambiguous` exactly as `Worker` routinely does.
+
+    `Worker._run_codex_experiment` writes `AMBIGUOUS` for every dispatched turn
+    that fails for a non-timeout reason -- nonzero `codex exec` exit, parser
+    rejection, schema validation failure, outer-boundary timeout, a lost
+    experiment lease -- because `external_execution_started` is `True` for all
+    of them (`on_dispatched()` runs immediately before `Popen`). This is the
+    ordinary failure path, not an exotic one, and `CodexClient` has already
+    group-killed the child before any of it is reached.
+    """
+    reservation = reserve_one(repository, worker_id=worker_id, policy=_AMBIGUOUS_POLICY, now=now)
+    repository.mark_codex_turn_dispatched(reservation.id, worker_id)
+    repository.fail_codex_turn(
+        reservation.id,
+        status=CodexTurnStatus.AMBIGUOUS,
+        failure_kind="external",
+        failure_message="codex exec exited nonzero after dispatch",
+        now=now,
+    )
+    return reservation
+
+
+def test_ambiguous_turn_still_holds_its_slot_while_its_lease_is_live(
+    repository: Repository,
+) -> None:
+    """Settling to `ambiguous` does not free the slot early -- only the lease does.
+
+    The slot is released by elapsed lease time, exactly as for `reserved`, not
+    by the settlement itself. Anything sooner would be the opposite bug.
+    """
+    now = datetime.now(UTC)
+    _settle_ambiguous(repository, worker_id="worker-1", now=now)
+
+    assert repository.codex_usage_status(now).active_leases == 1
+    assert (
+        repository.reserve_codex_turn(
+            experiment_id=_enqueue_experiment(repository),
+            worker_id="worker-2",
+            role=CodexModelRole.TERRA,
+            model="gpt-5.6-terra",
+            policy=_AMBIGUOUS_POLICY,
+            now=now,
+        )
+        is None
+    ), "an ambiguous turn keeps its concurrency slot for the remainder of its lease"
+
+
+def test_worker_settled_ambiguous_turn_releases_its_slot_once_its_lease_lapses(
+    repository: Repository,
+) -> None:
+    """The Codex lane must survive its own routine failure mode.
+
+    Regression test for a defect that bricked the lane permanently: `ambiguous`
+    was both terminal (so `fail_codex_turn`/`complete_codex_turn` refused to
+    touch it) and counted as a live lease with no lease predicate at all, so
+    nothing in `src/`, no CLI command and no repository method could ever
+    release its slot. Recovery required hand-editing Postgres.
+
+    Note this path involves no `reconcile_codex_turns` whatsoever -- that
+    function is deliberately never called from `src/`. This is purely the
+    worker's own settlement, which is why the defect fired in normal operation.
+    """
+    now = datetime.now(UTC)
+    reservation = _settle_ambiguous(repository, worker_id="worker-1", now=now)
+
+    after_lease = now + timedelta(seconds=61)
+    assert repository.codex_usage_status(after_lease).active_leases == 0
+
+    recovered = repository.reserve_codex_turn(
+        experiment_id=_enqueue_experiment(repository),
+        worker_id="worker-2",
+        role=CodexModelRole.TERRA,
+        model="gpt-5.6-terra",
+        policy=_AMBIGUOUS_POLICY,
+        now=after_lease,
+    )
+    assert recovered is not None, "the lane must be usable again after an ambiguous settlement"
+
+    # Freeing the slot is not retrying: the row is still terminal, still
+    # counted against the day/role budget, and its experiment is still dead.
+    with repository.database.transaction() as connection:
+        row = connection.execute(
+            "SELECT status, failure_kind FROM codex_turns WHERE id = %(id)s",
+            {"id": reservation.id},
+        ).fetchone()
+    assert row == ("ambiguous", "external")
+    assert repository.reserve_codex_turn_for_existing_experiment(reservation.experiment_id) is None
+    assert repository.codex_usage_status(after_lease).daily_reserved == 2
+
+
+def test_repeated_ambiguous_failures_never_exhaust_the_codex_lane(
+    repository: Repository,
+) -> None:
+    """Six consecutive ambiguous settlements in a row must still leave the lane usable.
+
+    Every other Codex integration test in this suite reserves exactly one turn
+    against a freshly truncated database, which is precisely why an
+    accumulating-state defect stayed invisible: with `concurrent_turn_limit`
+    slots leaked one per failure, the lane died silently on the Nth turn and
+    every subsequent denial permanently failed a queued experiment
+    (`Worker` maps a `None` reservation to `fail(..., "budget", retryable=False)`).
+    """
+    start = datetime.now(UTC)
+    for index in range(6):
+        # Each turn starts after the previous turn's lease has fully lapsed.
+        moment = start + timedelta(seconds=61 * index)
+        reservation = _settle_ambiguous(repository, worker_id=f"worker-{index}", now=moment)
+        assert reservation is not None
+
+    end = start + timedelta(seconds=61 * 6)
+    assert repository.codex_usage_status(end).active_leases == 0
+    assert repository.codex_usage_status(end).daily_reserved == 6, (
+        "every one of the six turns stays consumed against the day budget"
+    )
+    assert (
+        repository.reserve_codex_turn(
+            experiment_id=_enqueue_experiment(repository),
+            worker_id="worker-final",
+            role=CodexModelRole.TERRA,
+            model="gpt-5.6-terra",
+            policy=_AMBIGUOUS_POLICY,
+            now=end,
+        )
+        is not None
+    ), "the lane is still alive after six routine failures"
+
+
+def test_dispatched_and_running_turns_hold_their_slots_regardless_of_lease_age(
+    repository: Repository,
+) -> None:
+    """`dispatched`/`running` must stay lease-INdependent, even a year past expiry.
+
+    The companion guard to the `ambiguous` release above. Making these two
+    lease-bounded as well would be the opposite bug: their lease is an expected
+    deadline, not proof that the Codex CLI process stopped, so freeing their
+    slot on elapsed time alone would let a second turn dispatch while the first
+    might still be running. `running` is seeded directly because no code path
+    currently writes it.
+    """
+    now = datetime.now(UTC)
+    for status in (CodexTurnStatus.DISPATCHED, CodexTurnStatus.RUNNING):
+        experiment_id = _enqueue_experiment(repository)
+        with repository.database.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO codex_turns (
+                    id, experiment_id, budget_day, role, model, status,
+                    lease_owner, lease_expires_at, created_at, updated_at
+                ) VALUES (
+                    gen_random_uuid(), %(experiment_id)s, %(day)s, 'terra', 'gpt-5.6-terra',
+                    %(status)s, 'worker-1', %(expired)s, %(now)s, %(now)s
+                )
+                """,
+                {
+                    "experiment_id": experiment_id,
+                    "day": now.date(),
+                    "status": status.value,
+                    "expired": now - timedelta(days=365),
+                    "now": now,
+                },
+            )
+
+    long_after = now + timedelta(days=365)
+    assert repository.codex_usage_status(long_after).active_leases == 2, (
+        "neither dispatched nor running work is ever un-consumed by elapsed time alone"
+    )
 
 
 # ---------------------------------------------------------------------------

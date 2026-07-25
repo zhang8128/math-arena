@@ -560,10 +560,18 @@ def test_offline_fake_codex_login_status_agrees_with_the_real_clis_actual_behavi
     fake's own `login status` branch would otherwise go completely
     unexercised -- exactly the gap that let it silently diverge from the
     real CLI (wrong stream, wrong preposition) without any test noticing.
-    This calls the real `_codex_login_status` against the fake CLI directly:
-    it fails if the fake ever regresses to reporting success on stdout
-    instead of stderr, or if `_codex_login_status`'s success branch ever
-    stops falling back to stderr.
+    This calls the real `_codex_login_status` against the fake CLI directly,
+    and additionally inspects the fake's raw streams.
+
+    The stream assertion is not redundant with the `_codex_login_status`
+    one. `_codex_login_status`'s success branch reads
+    `stdout.strip() or stderr.strip()`, so stdout WINS whenever it is
+    non-empty: a fake that regressed to writing "Logged in using ChatGPT" on
+    stdout would still satisfy `"ChatGPT" in login_detail`, and the return
+    value alone therefore cannot witness which stream the message came from.
+    Only running the fake directly and asserting stdout is empty pins the
+    stream -- the exact property the real 0.145.0 CLI has and the one this
+    fake previously got wrong.
     """
     codex_home = tmp_path / "codex-home"
     _seed_authenticated_codex_home(codex_home)
@@ -574,6 +582,18 @@ def test_offline_fake_codex_login_status_agrees_with_the_real_clis_actual_behavi
 
     assert login_ok is True
     assert "ChatGPT" in login_detail
+
+    completed = subprocess.run(
+        [str(fake_codex), "login", "status"],
+        env=launch_policy.environment(os.environ),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout == "", "the real CLI reports login success on stderr, never stdout"
+    assert "Logged in using ChatGPT" in completed.stderr
 
 
 # ---------------------------------------------------------------------------

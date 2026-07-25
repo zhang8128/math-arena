@@ -508,7 +508,14 @@ def _query_cli_version(codex_binary: Path, environment: Mapping[str, str]) -> st
     distinct from `codex exec`, which is what actually spends quota -- so
     calling it here never touches the turn budget, live or in a test.
     Returns `None` (never raises) on any failure; the caller decides what a
-    still-missing version means for the receipt.
+    still-missing version means for the receipt. That contract has to hold for
+    the WHOLE operation, not just process creation: by the time this runs the
+    turn has already been paid for, and any exception escaping here is
+    converted, far upstream, into an `ExecutionFailed` -> `AMBIGUOUS`
+    settlement that throws away an otherwise fully successful turn (valid
+    schema value, real usage, captured patch) over one inconsequential
+    metadata query. So every OS-level error from any phase -- `communicate`,
+    `getpgid`, `killpg`, the reap -- is caught, not merely the `Popen`.
 
     Started with `start_new_session=True` and killed by process group, not
     just by pid, on timeout: the real `codex` binary is a Node wrapper that
@@ -529,15 +536,30 @@ def _query_cli_version(codex_binary: Path, environment: Mapping[str, str]) -> st
     except OSError:
         return None
     try:
-        stdout, _stderr = process.communicate(timeout=_CLI_VERSION_QUERY_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
         try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.communicate()
-        return None
-    if process.returncode != 0:
+            stdout, _stderr = process.communicate(timeout=_CLI_VERSION_QUERY_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                # `ProcessLookupError` (ESRCH): the group is already gone.
+                # `PermissionError` (EPERM): observed in practice on Darwin
+                # against an already-exited-but-unreaped group leader, exactly
+                # as documented at length in `_signal_group` below. Neither
+                # leaves anything for us to do, and the reap below still runs.
+                pass
+            # Bounded, unlike the bare `communicate()` this replaces: that call
+            # was the one place a wedged descendant holding the inherited
+            # stdout pipe open could block this function indefinitely, long
+            # after the turn it belongs to had already finished.
+            try:
+                process.communicate(timeout=_REAP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            return None
+        if process.returncode != 0:
+            return None
+    except OSError:
         return None
     match = _CLI_VERSION_PATTERN.search(stdout)
     return match.group(0) if match else None

@@ -204,20 +204,58 @@ _CODEX_USAGE_FIELDS = (
     "output_tokens",
     "reasoning_output_tokens",
 )
-# A reservation whose lease lapses before dispatch never ran anything, so it is
-# safe to free its slot purely by elapsed time. A dispatched or running turn is
-# different: its lease is an expected deadline, not proof the underlying Codex
-# CLI process has stopped, so it must keep consuming its concurrency slot even
-# past that deadline. `ambiguous` is included unconditionally for the same
-# reason -- reconciliation settles an expired dispatch to `ambiguous` precisely
-# because the outcome is unknown, and settling it must never be read as freeing
-# the slot it held. Only a worker-confirmed terminal status (completed, failed,
-# timed_out) -- reached through `complete_codex_turn`/`fail_codex_turn` -- frees
-# concurrency for dispatched work.
-_CODEX_ACTIVE_LEASE_QUERY = """
+# Which rows are currently holding one of the `concurrent_turn_limit` slots.
+#
+# `dispatched`/`running` hold their slot UNCONDITIONALLY, with no lease
+# predicate: the lease is an expected deadline, not proof that the underlying
+# Codex CLI process has stopped, so an expired lease alone must never free the
+# slot of work that may still be in flight. Only an explicit settlement --
+# `complete_codex_turn`/`fail_codex_turn`, or `reconcile_codex_turns` -- ever
+# moves such a row out of this set.
+#
+# `reserved` and `ambiguous` are both LEASE-BOUNDED: they hold their slot only
+# until `lease_expires_at`, and release it thereafter.
+#
+#   * `reserved` -- nothing was ever dispatched, so elapsed time alone is
+#     sufficient proof that no process is running.
+#   * `ambiguous` -- this is the worker's *routine* settlement for any
+#     dispatched turn that fails for a non-timeout reason (nonzero `codex exec`
+#     exit, parser rejection, schema validation failure, outer-boundary
+#     timeout, a lost experiment lease). On every one of those paths the child
+#     process group is confirmed dead first -- `CodexClient` group-kills on
+#     every exception path before the failure ever reaches `Worker` -- so no
+#     process survives the settlement. `ambiguous` records that the turn's
+#     *outcome* is unknown (an accounting claim: quota was already spent), NOT
+#     that its process might still be alive (a liveness claim). Holding the
+#     slot unconditionally conflated the two and made every such failure
+#     permanently subtract one slot from the lane: after `concurrent_turn_limit`
+#     of them the lane could never reserve again, with nothing in `src/`, no CLI
+#     command, and no repository method able to release it.
+#
+# Releasing the slot is NOT retrying the turn. The row stays terminal
+# (`complete_codex_turn`/`fail_codex_turn` both refuse to touch a terminal
+# status), its budget_day and role quota stay consumed (the daily/role caps and
+# `codex_usage_status` count rows regardless of status), and the owning
+# experiment is never re-dispatched (`reserve_codex_turn` returns `None` for any
+# existing row that is not still `reserved`). Only the concurrency slot -- a
+# live-work resource, meaningless once the work is over -- comes back, and only
+# once the lease that bounded that work has lapsed.
+_CODEX_ACTIVE_LEASE_PREDICATE = """
+    (status IN ('reserved', 'ambiguous') AND lease_expires_at > %(now)s)
+    OR status IN ('dispatched', 'running')
+"""
+_CODEX_ACTIVE_LEASE_QUERY = f"""
     SELECT count(*) FROM codex_turns
-    WHERE (status = 'reserved' AND lease_expires_at > %(now)s)
-       OR status IN ('dispatched', 'running', 'ambiguous')
+    WHERE {_CODEX_ACTIVE_LEASE_PREDICATE}
+"""
+# The same predicate, returning the blocking rows themselves. Derived from the
+# one predicate above rather than restated, so an operator-facing status surface
+# can never drift into reporting a nonzero lease count beside an empty list of
+# what is holding those leases.
+CODEX_ACTIVE_LEASE_ID_QUERY = f"""
+    SELECT id FROM codex_turns
+    WHERE {_CODEX_ACTIVE_LEASE_PREDICATE}
+    ORDER BY created_at
 """
 
 
@@ -3961,6 +3999,13 @@ class Repository:
         Post-dispatch expiry (`dispatched` or `running`) is resolved as
         `ambiguous`: the durable dispatch commitment means the outcome can never
         be un-consumed, only recorded as unknown.
+
+        Settling a row here never re-opens it for work: both dispositions are
+        terminal, both keep their budget_day/role quota consumed, and neither
+        experiment can be re-reserved afterwards. It does release the row's
+        concurrency slot -- but only because this sweep touches a row solely
+        once `lease_expires_at` has already passed, which is the same condition
+        under which `_CODEX_ACTIVE_LEASE_PREDICATE` stops counting it anyway.
         """
         self._validate_lease_timestamp(now)
         with self.database.transaction() as connection:

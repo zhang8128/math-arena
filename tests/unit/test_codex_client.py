@@ -11,15 +11,18 @@ which are invisible to a test that mocks `subprocess.Popen`.
 import hashlib
 import os
 import pickle
+import signal
 import subprocess
 import time
 from collections.abc import Iterator
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
+from mathloop.codex import client as client_module
 from mathloop.codex.client import (
     CodexClient,
     CodexClientError,
@@ -69,6 +72,18 @@ def main() -> int:
         codex_home = os.environ.get("CODEX_HOME")
         if codex_home and os.path.exists(os.path.join(codex_home, "version-should-fail")):
             return 1
+        if codex_home and os.path.exists(os.path.join(codex_home, "version-should-hang")):
+            # Deliberately shaped like the real `codex` binary: a wrapper that
+            # spawns a vendored native child which INHERITS this process's
+            # stdout pipe. Killing only the direct child would leave that
+            # grandchild holding the read end open, which is precisely what
+            # would wedge the reaping communicate() call afterwards.
+            grandchild = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            Path(codex_home, "version-hang.pid").write_text(
+                str(os.getpid()) + "\\n" + str(grandchild.pid) + "\\n"
+            )
+            time.sleep(120)
+            return 0
         sys.stdout.write("codex-cli 0.145.0\\n")
         return 0
     mode = argv[-1] if argv else "success"
@@ -418,6 +433,134 @@ def test_codex_client_uses_an_unknown_sentinel_when_both_cli_version_sources_fai
     finally:
         marker.unlink()
     assert response.receipt.cli_version == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# `_query_cli_version` failure branches.
+#
+# This query runs AFTER the turn has already been paid for, so its documented
+# "returns None, never raises" contract is load-bearing: anything escaping it
+# becomes `ExecutionFailed` -> `AMBIGUOUS` far upstream, discarding an
+# otherwise fully successful turn (valid schema value, real usage, captured
+# patch) over one inconsequential metadata lookup. Exposure is every real
+# turn, since the real CLI never emits `cli_version` and this fallback always
+# fires. The timeout/kill branch below had never once executed in CI: the
+# existing coverage makes `--version` exit nonzero rather than hang, which
+# takes an entirely different path.
+# ---------------------------------------------------------------------------
+
+
+def _version_query_environment() -> dict[str, str]:
+    codex_home = Path(str(_repo_state["codex_home"]))
+    codex_home.mkdir(parents=True, exist_ok=True)
+    return {"PATH": os.environ.get("PATH", ""), "CODEX_HOME": str(codex_home)}
+
+
+def _hang_the_version_query() -> Path:
+    codex_home = Path(str(_repo_state["codex_home"]))
+    codex_home.mkdir(parents=True, exist_ok=True)
+    (codex_home / "version-should-hang").write_text("1")
+    return codex_home
+
+
+def _hung_version_query_pids(codex_home: Path) -> tuple[int, int]:
+    pid_path = codex_home / "version-hang.pid"
+    assert pid_path.exists(), "the hanging fake never got far enough to record its pids"
+    child_pid, grandchild_pid = (int(line) for line in pid_path.read_text().split())
+    return child_pid, grandchild_pid
+
+
+def _wait_until_dead(pid: int, *, budget_seconds: float = 5.0) -> bool:
+    """Poll until `pid` is gone. A SIGKILLed process is not reaped instantly."""
+    deadline = time.monotonic() + budget_seconds
+    while descendant_is_running(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+    return True
+
+
+def test_cli_version_query_kills_the_whole_group_when_the_version_probe_hangs(
+    fake_codex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung `codex --version` must be bounded and group-killed, not merely abandoned.
+
+    The fake spawns a grandchild that inherits its stdout pipe, mirroring the
+    real `codex` binary (a Node wrapper around a vendored native binary).
+    Killing only the direct child would leave that grandchild alive, still
+    holding the read end of the pipe open.
+    """
+    monkeypatch.setattr(client_module, "_CLI_VERSION_QUERY_TIMEOUT_SECONDS", 1.5)
+    codex_home = _hang_the_version_query()
+
+    started_at = time.monotonic()
+    assert client_module._query_cli_version(fake_codex, _version_query_environment()) is None
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 30.0, "bounded by its own timeout, never by the probe's own runtime"
+    child_pid, grandchild_pid = _hung_version_query_pids(codex_home)
+    assert _wait_until_dead(child_pid), "the direct child survived the version-query timeout"
+    assert _wait_until_dead(grandchild_pid), "the inheriting grandchild was orphaned, not killed"
+
+
+def test_cli_version_query_returns_none_when_the_group_kill_is_refused(
+    fake_codex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`PermissionError` from `killpg` must not escape a function that cannot raise.
+
+    Not hypothetical: `_signal_group` in this same module documents, at
+    length, Darwin returning `EPERM` (not `ESRCH`) for `killpg` against an
+    unreaped zombie group leader -- "observed in practice". Before the guard
+    was widened, only `ProcessLookupError` was caught here.
+
+    This also pins the second `communicate()`'s timeout: the group survives
+    the refused kill and keeps sleeping, so an unbounded reaping
+    `communicate()` would block here for the fake's entire 120-second sleep
+    rather than the two seconds this asserts.
+    """
+    monkeypatch.setattr(client_module, "_CLI_VERSION_QUERY_TIMEOUT_SECONDS", 1.5)
+    codex_home = _hang_the_version_query()
+    real_killpg = os.killpg
+
+    def refuse_to_signal(process_group_id: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(client_module.os, "killpg", refuse_to_signal)
+    try:
+        started_at = time.monotonic()
+        assert client_module._query_cli_version(fake_codex, _version_query_environment()) is None
+        elapsed = time.monotonic() - started_at
+
+        assert elapsed < 30.0, "the reaping communicate() must be bounded, not open-ended"
+        _, grandchild_pid = _hung_version_query_pids(codex_home)
+        assert descendant_is_running(grandchild_pid) is True, (
+            "the refused kill genuinely left the group alive -- so this test really did "
+            "exercise the swallow, rather than passing because everything died anyway"
+        )
+    finally:
+        with suppress(AssertionError, ProcessLookupError, PermissionError, ValueError):
+            child_pid, _ = _hung_version_query_pids(codex_home)
+            real_killpg(child_pid, signal.SIGKILL)
+
+
+def test_cli_version_query_returns_none_when_communicate_itself_fails(
+    fake_codex: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An `OSError` from `communicate` must be swallowed like one from `Popen`.
+
+    The guard used to wrap only `Popen` construction, so an I/O error while
+    reading the probe's stdout escaped a function whose whole contract is that
+    it never raises.
+    """
+
+    def raise_oserror(
+        self: subprocess.Popen[str], *args: object, **kwargs: object
+    ) -> tuple[str, str]:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", raise_oserror)
+
+    assert client_module._query_cli_version(fake_codex, _version_query_environment()) is None
 
 
 def test_codex_client_uses_the_last_agent_message_when_codex_emits_a_preamble(

@@ -799,6 +799,51 @@ def test_codex_drain_reports_not_drained_when_the_grace_period_expires(
     assert payload["paused"] is True
 
 
+def test_codex_status_names_every_turn_that_is_holding_a_concurrency_slot(
+    repository: Repository, tmp_path: Path, fake_codex: Path
+) -> None:
+    """A nonzero `active_leases` must never be reported without naming the rows.
+
+    `active_worktree_ids` only lists `dispatched`/`running` turns, which is
+    correct for its own question (which turns own an on-disk worktree) but
+    leaves an operator staring at `"active_leases": N` beside
+    `"active_worktree_ids": []` whenever the blocking rows are unexpired
+    `reserved` or `ambiguous` ones -- the exact shape a lane wedged by
+    ambiguous settlements produces, and the one place an operator would look
+    to diagnose it. `active_lease_turn_ids` answers that question directly and
+    is derived from the very same predicate the cap is enforced against.
+    """
+    settings = _settings(repository, tmp_path, fake_codex)
+    experiment_id = _enqueue_experiment(repository)
+    reservation = repository.reserve_codex_turn(
+        experiment_id, "worker-1", CodexModelRole.LUNA, "gpt-5.6-luna",
+        _policy_from(settings), datetime.now(UTC),
+    )
+    assert reservation is not None
+    repository.mark_codex_turn_dispatched(reservation.id, "worker-1")
+    repository.fail_codex_turn(
+        reservation.id,
+        status=CodexTurnStatus.AMBIGUOUS,
+        failure_kind="external",
+        failure_message="codex exec exited nonzero after dispatch",
+    )
+    runtime = build_runtime(
+        repository, ArtifactStore(settings.artifact_root), api_enabled=False,
+        codex_enabled=True, settings=settings,
+    )
+
+    payload = CodexSupervisor(runtime).status()
+
+    usage = payload["usage"]
+    assert isinstance(usage, dict)
+    assert usage["active_leases"] == 1
+    assert payload["active_worktree_ids"] == [], "a settled turn no longer owns a worktree"
+    assert payload["active_lease_turn_ids"] == [str(reservation.id)], (
+        "the row actually holding the slot is visible in `codex status`"
+    )
+    assert len(payload["active_lease_turn_ids"]) == usage["active_leases"]  # type: ignore[arg-type]
+
+
 def _policy_from(settings: Settings) -> CodexPolicy:
     return CodexPolicy(
         daily_turn_limit=settings.codex_daily_turn_limit,

@@ -334,6 +334,70 @@ spy covers all three real call sites (`Worker._verify_persisted_candidate`,
 why the assertion was never actually wrong, only its documented
 justification.
 
+## Fix round 3: the final whole-branch review, and what changed
+
+The whole-branch review returned merge-ready with must-fix items.
+
+**Critical — `ambiguous` turns permanently consumed concurrency slots.**
+`ambiguous` was simultaneously terminal (so `complete_codex_turn` and
+`fail_codex_turn` both refused to touch it) and counted as a live lease with
+no lease predicate at all, so nothing in `src/`, no CLI command and no
+repository method could ever release its slot; recovery required hand-editing
+Postgres. This fired in *normal* operation, not an edge case: `AMBIGUOUS` is
+the worker's routine settlement for any dispatched turn that fails for a
+non-timeout reason (nonzero `codex exec` exit, parser rejection, schema
+validation failure, outer-boundary timeout, lost lease), because
+`external_execution_started` is `True` for all of them. After
+`concurrent_turn_limit` such failures the lane was dead forever, and every
+later denial permanently failed a queued experiment via
+`fail(..., "budget", retryable=False)`.
+
+Root cause: Task 4 held the slot on `ambiguous` because *reconciliation*
+writes it when process liveness is genuinely unknown. Tasks 5–7 then made
+`AMBIGUOUS` the standard *worker* settlement — where `CodexClient` group-kills
+and confirms the process dead first. A liveness claim ("the process may still
+be running", which justifies holding a slot) was silently reused as an
+accounting claim ("we don't know the outcome", which does not).
+
+`ambiguous` is now lease-bounded exactly like `reserved`:
+
+```sql
+WHERE (status IN ('reserved', 'ambiguous') AND lease_expires_at > %(now)s)
+   OR status IN ('dispatched', 'running')
+```
+
+`dispatched`/`running` remain deliberately lease-**in**dependent — freeing
+those on elapsed time alone would be the opposite bug, and is guarded by its
+own test. Freeing a slot is not retrying: the row stays terminal, its
+budget_day/role quota stays consumed, and the experiment is never
+re-dispatched; only the live-work resource returns.
+
+`codex status` also gained `active_lease_turn_ids`, built from the identical
+predicate, so a nonzero `active_leases` can never again be reported beside an
+empty list of what is holding it (`active_worktree_ids` keeps its narrower,
+worktree-owning meaning).
+
+**Minor, on the paid-turn path — `_query_cli_version` could raise.** Only
+`Popen` construction was guarded, so an `OSError` from `communicate`, or a
+`PermissionError` from `getpgid`/`killpg`, escaped a function documented never
+to raise — becoming `ExecutionFailed` → `AMBIGUOUS` and discarding an
+already-paid, fully successful turn. The `EPERM`-from-`killpg` case is not
+hypothetical; this module documents observing it on Darwin against an unreaped
+zombie leader. The guard now covers the whole operation, `PermissionError`
+joins `ProcessLookupError` on the kill, and the previously unbounded reaping
+`communicate()` has a timeout.
+
+**Trivial — a false claim about what a test guards.** The offline canary's
+login-status docstring claimed it would fail if the fake regressed to
+reporting success on stdout; mutation showed it would not, because
+`_codex_login_status` prefers stdout when non-empty. The test now asserts on
+the stream directly.
+
+**Test-suite blind spot.** No test in this branch exercised a second, third or
+fourth turn — every Codex integration test reserved one turn against a freshly
+truncated database, which is exactly why an accumulating-state defect was
+invisible. Multi-turn accumulation coverage was added.
+
 ## Live compatibility smoke test — defined, not yet run
 
 `tests/e2e/test_codex_canary.py::test_live_codex_cli_compatibility_smoke` is
@@ -358,6 +422,33 @@ before execution, per:
 MATHLOOP_RUN_LIVE_CODEX=1 uv run pytest -q tests/e2e/test_codex_canary.py -m live_codex
 ```
 
+## Verdicted design: provenance keys off the configured floor, not the live CLI
+
+Method provenance for `codex_proof_strategy` folds in
+`settings.codex_min_cli_version` — the **configured minimum version floor** —
+and never the version the installed CLI actually reports. `codex_method_provenance`
+builds its component string as
+`method:codex_proof_strategy:role=…:model=…:min_cli_version=<the setting>`
+(`src/mathloop/provenance.py`), and both call sites
+(`runtime.register_baseline_methods` and `register_codex_proof_strategy`) pass
+`settings.codex_min_cli_version` directly.
+
+The practical consequence, stated plainly because it is the literal negation of
+"provenance changes with CLI version": **upgrading the real Codex CLI from
+0.145.0 to 0.150.0 does not change method provenance.** Two runs whose leads
+were produced by materially different CLI builds share one provenance identity
+unless the operator also raises `MATHLOOP_CODEX_MIN_CLI_VERSION`. Raising the
+floor is what mints a new identity.
+
+This is deliberate, not a defect. The floor is a property of the configuration
+under which work was authorized — stable, declared ahead of time, and knowable
+without running anything — whereas the observed version is discovered per turn
+and would make provenance non-deterministic across machines with different
+local installs. The observed version is not lost: every completed turn persists
+its own `cli_version` on the `codex_turns` row and in the
+`codex_turn.completed` event, and `codex status` reports both `min_cli_version`
+and `observed_cli_version` side by side.
+
 ## Foundation-wide concerns carried forward (not fixed by this task)
 
 Recorded here for completeness; none of these were introduced by, or in
@@ -366,9 +457,14 @@ scope for, Task 8:
 - **`reconcile_codex_turns` is defined but deliberately never called from
   `src/`** — Task 4's accepted concurrency review depends on this premise
   holding; re-confirmed unchanged by this task (grepped directly).
-- **Ten Sol turns are reserved and deliberately unconsumed** in this phase;
-  the promotion plan's fresh review gate is their intended, still-unbuilt,
-  consumer.
+- **Ten Sol turns are reserved and deliberately unspent** in this phase; the
+  promotion plan's fresh review gate is their intended, still-unbuilt,
+  consumer. The *setting* is not inert, though:
+  `MATHLOOP_CODEX_RESERVED_SOL_TURNS` is enforced on every reservation today
+  as a cap on non-Sol day totals (`daily_turn_limit - reserved_sol_turns`),
+  so Luna is denied at 90 turns/day rather than 100. What is unspent is the
+  reserved Sol turns themselves, purely because `runtime.py` registers the
+  Luna role only and nothing ever asks for a Sol turn.
 - Task 7's own carried-forward concerns (the `--workers` concurrency
   residual risk when a lease is held by a separate process, and the
   registry double-registration asymmetry) are unchanged by this task and
