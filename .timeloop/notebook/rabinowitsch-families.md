@@ -1,0 +1,78 @@
+# rabinowitsch-families
+
+Maximal prime runs in quadratic families and what actually governs them.
+
+## STATUS
+`exhausted` for the principal family `n^2+n+q`.
+`resolved` (structurally) for general primitive forms — see the law in STRUCTURE.
+
+---
+
+## T0 — the principal family is closed
+
+### SEARCHED
+`n^2+n+q` for all `q ∈ [2,200)`, primality of `n^2+n+q` for every `n ∈ [0,q-2]`.
+
+### RULED OUT
+Full runs occur **exactly** for `q ∈ {2,3,5,11,17,41}`, with `1−4q ∈ {−7,−11,−19,−43,−67,−163}` — the Heegner numbers above 3. This is **Rabinowitsch (1913)**: full run ⟺ `Q(√(1−4q))` has class number 1. Baker–Heegner–Stark closes the list at −163.
+
+**No `q > 41` exists.** Do not extend this range.
+
+---
+
+## T1 — the naive generalization is FALSE, and the real mechanism is different
+
+### SEARCHED
+- All primitive reduced forms `(a,b,c)` of discriminant `D ∈ [−2000, 0)`, measuring the longest run of consecutive integers `n` with `|an²+bn+c|` prime (window ±90).
+- Small-prime representation tests for the top forms.
+- Scale validation over `D ∈ [−4000, 0)` (background job `beiqhqsi6`).
+
+### RULED OUT
+**"Long prime run ⟹ class number 1" is false.** Clean counterexample:
+
+| form | D | h(D) | run |
+|---|---|---|---|
+| `6n²+6n+31` | −708 | **4** | 58 |
+| `2n²+29` | −232 | 2 | 57 |
+| `3n²+3n+23` | −267 | 2 | 44 |
+| `10n²+19` | −760 | 4 | 37 |
+
+Class number is **not** the governing quantity for general forms. It only looks that way if you restrict to the principal form, which is what Rabinowitsch does.
+
+### STRUCTURE
+
+There are **two independent mechanisms** by which a form avoids small prime factors, and the classical theory only names the first:
+
+1. **Inertness.** `p | f(n)` for some `n` requires `D` to be a QR mod `p`. If `D` is a non-residue mod every small `p`, no small prime ever divides a value. For the principal form this is exactly the class-number-1 condition — hence Rabinowitsch.
+
+2. **Coefficient absorption.** If `p | gcd(a,b)` then `f(n) ≡ c (mod p)` for *every* `n`, and primitivity forces `p ∤ c`. So `p` can **never** divide a value — regardless of whether `p` splits.
+
+Mechanism 2 is unavailable to the principal form (`a=1`) and is why non-principal forms with large class number still produce long runs. `6n²+6n+31` has `gcd(a,b)=6`, so 2 and 3 are structurally excluded even though both split in `D=−708`.
+
+**The law.** Let `p` = the smallest prime with `p ∤ gcd(a,b)` that divides some value (equivalently: the smallest prime not absorbed, for which `D` is a QR). Then
+
+```
+run  ≤  s·(p−1) + [vertex integral],    s = 2 if a | b else 1
+```
+
+The factor `s` is the vertex position: `a | b` puts the vertex at an integer or half-integer, so values are symmetric about it and the run doubles. Otherwise the run is one-sided.
+
+Equality holds unless a prime *larger* than `p` intervenes inside the window — e.g. `6n²+6n+31` predicts 60 but realises 58, because `59 · 89 = 5251 = f(−30)`.
+
+**Rabinowitsch falls out as a corollary.** For `(1,1,q)`: `a|b` so `s=2`, and maximising the run means maximising `p`, i.e. requiring `D` to be a non-residue mod every prime below `q` — which is precisely `h(D)=1`. The class number was never the mechanism; it was the special case of "first bad prime as large as possible" when absorption is unavailable.
+
+### TECHNIQUE
+- Searching `(a,b,c)` directly double-counts: translation `n → n+k` preserves the discriminant, so records appear as long chains of shifts of one polynomial. **Canonicalise by reduced form**, then measure the run centred on the vertex.
+- Recording the run *without* the discriminant makes the pattern invisible; recording it *without* `gcd(a,b)` makes mechanism 2 invisible. Both invariants are required.
+- Cost was trivial (<1s for `|D|<1000`). Knowing which invariant to tabulate was the entire difficulty — same lesson as T0.
+
+### HONESTY
+Prime-generating polynomials are a well-studied classical topic and this law is very likely known in the literature; the arena derived it independently rather than discovering it. The durable value here is the **retired search space** and the corrected causal story, not priority.
+
+### NEXT
+Two concrete directions:
+1. Test whether the law survives for **higher-degree** families (cubics `n³+an+b`), where "first bad prime" generalises but the vertex/symmetry factor does not.
+2. The law says run is bounded by the first non-absorbed split prime. **Maximise it directly**: search for `(a,b,c)` where `gcd(a,b)` absorbs many small primes *and* `D` is inert at the rest. This is a constructive search rather than a scan, and should find longer runs than scanning does.
+
+### COST
+T0: seconds. T1: ~2 min foreground plus one background validation over `|D|<4000`.
