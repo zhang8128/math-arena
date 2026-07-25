@@ -160,3 +160,92 @@ solutions, which would point at a different mechanism than the 2-digit conic.
 ### COST
 ~2 minutes. The failed reduction was cheap to establish; the construction came
 from reading the values rather than the summary statistics.
+
+---
+
+## T5 — the outliers explained: an automatic congruence, proved and quantified
+
+### SEARCHED
+Fixed-point counts by digit length for `d=3`, `b ∈ [2,45]`; then counts grouped
+by `gcd(b−1, M_d)` for `d ∈ {2,3,4,5}` over `b ≤ 120` (`d=2`) and `b ≤ 45` (`d≥3`).
+
+### FIRST: T4's next-action confirmed
+The outlier excess is concentrated in **3-digit** fixed points, as suspected:
+`b=16` has 19 of its 24 at length 3, `b=22` has 12/16, `b=25` has 14/20,
+`b=31` has 11/14, `b=43` has 10/12. The 2-digit conic is not where the action is.
+
+### THE MECHANISM (proved)
+
+Every outlier base for `d=3` satisfies `b ≡ 1 (mod 3)`. That is not a coincidence.
+
+Let `M_d = ∏ { p prime : (p−1) | (d−1) }`, the largest modulus with `x^d ≡ x
+(mod M_d)` for **all** integers `x` (Fermat, applied prime by prime).
+So `M_2 = 2`, `M_3 = 6`, `M_4 = 2`, `M_5 = 30`.
+
+**Claim.** For every `n`, `T_{b,d}(n) ≡ n (mod g)` where `g = gcd(b−1, M_d)`.
+
+*Proof.* Write `n = Σ dᵢ bⁱ`. Since `b ≡ 1 (mod b−1)`, we get `n ≡ Σ dᵢ (mod b−1)`.
+Hence
+```
+T(n) − n ≡ Σ (dᵢ^d − dᵢ)   (mod b−1).
+```
+Each term `dᵢ^d − dᵢ ≡ 0 (mod M_d)` by definition of `M_d`. So the whole sum is
+`≡ 0` modulo `gcd(b−1, M_d)`, giving `T(n) ≡ n (mod g)`. ∎
+
+**Consequence.** The equation `T(n) = n` has one congruence condition satisfied
+*for free*, for every `n`. Solution density is therefore boosted by a factor of
+`g` relative to a base where `g = 1`.
+
+### QUANTITATIVE VERIFICATION
+
+Mean fixed-point count grouped by `g = gcd(b−1, M_d)`:
+
+| d | M_d | g=1 | g=2 | g=3 | g=5 | g=6 | g=10 | g=15 | g=30 |
+|---|---|---|---|---|---|---|---|---|---|
+| 2 | 2 | 2.77 | 6.32 | | | | | | |
+| 3 | 6 | 3.33 | 5.07 | 11.00 | | 11.29 | | | |
+| 4 | 2 | 2.36 | 3.45 | | | | | | |
+| 5 | 30 | 2.92 | 5.00 | 7.00 | 9.67 | 11.00 | 18.33 | 45.00 | 50.00 |
+
+**Monotone in `g` in every row, with no exceptions.** The `d=5` row is the sharp
+test: eight distinct values of `g` spanning 1→30, and the mean count rises
+2.92 → 50.00 across them, the same order as `g` itself.
+
+### STRUCTURE
+This is the "casting out nines" phenomenon doing real work. The classical fact
+`n ≡ digit sum (mod b−1)` is usually treated as a checksum trick; here it forces
+an *automatic* congruence on the entire dynamical system, and the strength of
+that constraint — `gcd(b−1, M_d)` — predicts how rich the fixed-point structure is.
+
+It also retroactively explains T3: for `d=2`, `M_2 = 2`, so the only distinction
+is whether `b` is odd or even. That is why the `d=2` counts looked like they were
+governed purely by `b²+1`'s factorisation — the congruence boost is a flat factor
+of 2 there and never varies enough to notice. **The `d=2` case was too degenerate
+to reveal the general law.**
+
+### TECHNIQUE
+- Grouping by a *derived invariant* rather than by `b` was the whole move. The
+  raw count column is noise; `gcd(b−1, M_d)` sorts it perfectly.
+- Generalising over `d` was what made the law visible and testable. `d=5` with
+  `M_5 = 30` gives eight distinct `g` values and turns a suggestive pattern into
+  a monotone table. **Pick the parameter that maximises the number of distinct
+  predicted classes.**
+
+### HONESTY
+The congruence itself is elementary and certainly known; digital invariants are
+a studied topic. What the arena contributes is the *quantitative* link — that
+`gcd(b−1, M_d)` predicts fixed-point abundance, verified across four exponents
+and eight congruence classes — and the observation that `d=2` is too degenerate
+to see it.
+
+### NEXT
+The law predicts *relative* abundance but not absolute counts. Concrete test:
+divide each count by `g` and check whether the residual is roughly constant, or
+whether a second factor (e.g. the `b²+1` factorisation from T3) still contributes
+independently. If the normalised counts are flat, the congruence boost is the
+*whole* story; if not, T3's arithmetic and T5's congruence are two separate
+effects and both are needed.
+
+### COST
+~4 minutes. The mechanism took one line of modular arithmetic once the residue
+pattern `b ≡ 1 (mod 3)` was noticed in the outlier list.
