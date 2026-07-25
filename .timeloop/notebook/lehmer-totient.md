@@ -63,3 +63,10 @@ obstruction on the `pᵢ` rather than a size argument. The size direction is clo
 
 ### COST
 ~3 minutes, including one wrong answer caught and corrected.
+
+---
+
+## NOVELTY: `published`
+Recorded in the HONESTY section above from the outset — the reduction and bounds
+here were identified as classical when written, with the specific attributions
+(Giuga; Borwein–Borwein–Borwein–Girgensohn; Cohen–Hagis) named inline.

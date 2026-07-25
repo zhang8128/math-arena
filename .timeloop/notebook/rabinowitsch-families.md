@@ -154,3 +154,32 @@ corrected one above**, and T2's conclusions were never bound-dependent.
 ### COST
 ~3 minutes to falsify, diagnose and re-validate. It would have cost nothing at T1
 had the job been collected.
+
+---
+
+## NOVELTY: `published` — and further than I assumed
+
+Checked 2026-07-25 (retrofitted; the T1/T2 entries hedged as "very likely
+classical" without a single search — the laziness the NOVELTY field exists to
+prevent).
+
+- **The h > 1 case is done.** Frobenius–Rabinowitsch gives class number **one**
+  from primality of consecutive polynomial values; **M. D. Hendy extended it to
+  class number two.** So T1's "long runs happen at h = 4" is not a gap in the
+  theory, it is a region the theory already covers.
+- **T2's value-growth tension is Bateman–Horn**, named explicitly in the recent
+  literature on optimising prime density in these families.
+- Active recent work: *Redefining Euler–Rabinowitsch Polynomials with Heegner
+  Number Based Quadratic Formulation* (arXiv 2508.02821) constructs a parametric
+  family indexed by Heegner numbers and optimises it via Bateman–Horn.
+
+**Verdict:** T0–T2 and T10 are correct independent rediscovery of a live,
+well-developed area. The `gcd(a,b)` absorption framing was not directly located
+in these searches, but given Hendy's h = 2 result and the maturity of the field,
+assume it is known rather than new.
+
+**Queries tried:** "prime generating quadratic polynomial long prime runs
+gcd(a,b) divides small primes discriminant class number Rabinowitsch
+generalization".
+
+Sources: arxiv.org/abs/2508.02821 · link.springer.com/article/10.1007/s10998-022-00487-1 · mathworld.wolfram.com/Prime-GeneratingPolynomial.html

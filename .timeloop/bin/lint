@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Mechanical checks on the arena's own record. No judgment, no taste.
+
+Design rule, and the reason this file is small: **automate the checks, not the
+judgments.** A successor should inherit instruments, not opinions. Every check
+here is one a machine can settle — a missing field, a contradiction between two
+files, a claim with no stated range. Anything needing a view about whether a
+result is *interesting* or *correct* is deliberately absent.
+
+Each finding names the failure it descends from, so a successor can judge whether
+the check still earns its place rather than obeying it blindly.
+
+  lint            human-readable report
+  lint --report   JSON for a Claude Code hook (silent when clean)
+"""
+
+import json
+import os
+import re
+import sys
+import pathlib
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+NOTEBOOK = ROOT / "notebook"
+LEDGER = ROOT / "ledger.md"
+
+REQUIRED = ["STATUS"]
+CLOSED = ("resolved", "exhausted")
+VALID_STATUS = {"open", "counterexample", "resolved", "exhausted", "parked"}
+
+
+def check_notebooks() -> list[str]:
+    """Schema conformance. Descends from: the protocol living only in prose,
+    which is the weakest rung of the durability gradient."""
+    out = []
+    for f in sorted(NOTEBOOK.glob("*.md")):
+        txt = f.read_text(errors="ignore")
+        for field in REQUIRED:
+            if f"## {field}" not in txt and f"### {field}" not in txt:
+                out.append(f"{f.name}: missing required '{field}' section")
+        m = re.search(r"##+ STATUS\s*\n+(.+)", txt)
+        if m:
+            declared = {w.strip("`*.,") for w in m.group(1).split()}
+            if not (declared & VALID_STATUS):
+                out.append(f"{f.name}: STATUS names no valid state {sorted(VALID_STATUS)}")
+        # NOVELTY is required once a target claims to be closed.
+        # Descends from: five results hedged as "very likely classical" with
+        # zero searches run, while WebSearch was available the whole time.
+        if any(c in txt.lower() for c in CLOSED) and "NOVELTY" not in txt:
+            out.append(
+                f"{f.name}: claims a closed status but has no NOVELTY field "
+                f"(look it up; do not guess)"
+            )
+    return out
+
+
+# REMOVED 2026-07-25: "claims must state a range".
+#
+# The idea was to flag `verified`/`confirmed` appearing without a number, to
+# catch the recurring habit of reporting a search limit as a property of the
+# problem. It was written, run against the real record, and produced 4 findings
+# of which 4 were false positives: the word appearing in prose *about*
+# verification, inside a quoted rule, and as a section header.
+#
+# Deleted rather than tuned. A check with a high false-positive rate trains its
+# reader to skim, and a skimmed check is worse than an absent one because it
+# also buries the checks that work. Do not re-add without a mechanical way to
+# distinguish a claim from a mention — which is a hard NLP problem, not a lint.
+
+
+def check_ledger_agrees() -> list[str]:
+    """Ledger and notebook must not contradict each other on closure.
+
+    Descends from: ARENA.md carrying two sections that contradicted the rest of
+    the file after the evaluator landed. Caught by rereading, which does not scale.
+    """
+    out = []
+    if not LEDGER.exists():
+        return ["ledger.md missing"]
+    led = LEDGER.read_text(errors="ignore")
+    for f in sorted(NOTEBOOK.glob("*.md")):
+        slug = f.stem
+        txt = f.read_text(errors="ignore").lower()
+        m = re.search(r"##+ status\s*\n+(.+)", txt)
+        if not m:
+            continue
+        closed_in_notebook = any(c in m.group(1) for c in CLOSED)
+        mentioned = slug.split("-t")[0] in led
+        if closed_in_notebook and not mentioned:
+            out.append(f"{f.name}: closed in notebook but slug never appears in ledger.md")
+    return out
+
+
+CHECKS = [
+    ("notebook schema", check_notebooks),
+    ("ledger agrees with notebooks", check_ledger_agrees),
+]
+
+
+def main() -> int:
+    report = len(sys.argv) > 1 and sys.argv[1] == "--report"
+    findings = []
+    for name, fn in CHECKS:
+        try:
+            for msg in fn():
+                findings.append((name, msg))
+        except Exception as e:  # a broken check must never block a turn
+            findings.append((name, f"check itself failed: {e}"))
+
+    if report:
+        if findings:
+            head = f"🧹 arena lint: {len(findings)} finding(s)"
+            body = "; ".join(m for _, m in findings[:3])
+            more = f" (+{len(findings)-3} more, run .timeloop/bin/lint)" if len(findings) > 3 else ""
+            print(json.dumps({"systemMessage": f"{head} — {body}{more}"}))
+        return 0
+
+    if not findings:
+        print("arena lint: clean")
+        return 0
+    cur = None
+    for name, msg in findings:
+        if name != cur:
+            print(f"\n── {name}")
+            cur = name
+        print(f"   {msg}")
+    print(f"\n{len(findings)} finding(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

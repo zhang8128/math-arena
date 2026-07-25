@@ -13,6 +13,13 @@ after every attempt.
   attempt --list            show candidates without attempting
   attempt -n 8              attempt the 8 smallest candidates
   attempt --cat textbook    restrict to a category
+  attempt --sweep           long run over every candidate
+
+Sweep mode writes one JSON line per candidate *as it finishes*, so a partial
+run is still usable and progress is checkable at any moment. It resumes by
+skipping candidates already present in the output file, and it stops at
+--max-hours. Both properties exist because on 2026-07-25 two background jobs
+ran for hours and wrote zero bytes.
 """
 
 import argparse
@@ -29,7 +36,10 @@ FC = pathlib.Path(__file__).resolve().parents[1] / "lean" / "formal-conjectures"
 TACTICS = ["rfl", "decide", "norm_num", "simp", "omega", "native_decide"]
 
 
-def candidates(cat_filter=None):
+TIERS = ["test", "textbook", "research solved", "research open", "API"]
+
+
+def candidates(cat_filter=None, all_tiers=False):
     out = []
     for f in sorted((FC / "FormalConjectures").rglob("*.lean")):
         txt = f.read_text(errors="ignore")
@@ -40,7 +50,8 @@ def candidates(cat_filter=None):
             cat = m.group(1).strip()
             if cat_filter and cat != cat_filter:
                 continue
-            if cat not in ("test", "textbook"):
+            allowed = TIERS if all_tiers else ("test", "textbook")
+            if cat not in allowed:
                 continue
             nm = re.search(r"\b(?:theorem|lemma)\s+([\w.]+)", blk)
             stmt = blk.split(":=")[0]
@@ -53,7 +64,8 @@ def candidates(cat_filter=None):
                     "stmt": " ".join(stmt.split()),
                 }
             )
-    out.sort(key=lambda c: c["size"])
+    # tractability tier first, then statement size within tier
+    out.sort(key=lambda c: (TIERS.index(c["cat"]) if c["cat"] in TIERS else 9, c["size"]))
     return out
 
 
@@ -89,12 +101,63 @@ def try_tactic(c, tactic, timeout=120):
         path.write_text(original)  # always restore
 
 
+def sweep(a):
+    import json, os
+    out = pathlib.Path(a.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    done = set()
+    if out.exists():
+        for line in out.read_text().splitlines():
+            try:
+                done.add(json.loads(line)["key"])
+            except Exception:
+                pass
+    cs = candidates(all_tiers=True)
+    todo = [c for c in cs if f"{c['file'].name}:{c['name']}" not in done]
+    print(f"sweep: {len(cs)} candidates, {len(done)} already done, {len(todo)} to go",
+          flush=True)
+    t0 = time.time()
+    proved = 0
+    with out.open("a") as fh:
+        for i, c in enumerate(todo, 1):
+            if time.time() - t0 > a.max_hours * 3600:
+                print(f"stopping at --max-hours={a.max_hours}", flush=True)
+                break
+            key = f"{c['file'].name}:{c['name']}"
+            got, tried = None, {}
+            for t in TACTICS:
+                v = try_tactic(c, t, timeout=60)
+                tried[t] = v
+                if v == "PROVED":
+                    got = t
+                    break
+            if got:
+                proved += 1
+            fh.write(json.dumps({"key": key, "cat": c["cat"], "size": c["size"],
+                                 "proved_by": got, "stmt": c["stmt"][:200],
+                                 "tried": tried}) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+            if i % 10 == 0 or got:
+                el = (time.time() - t0) / 60
+                print(f"[{i}/{len(todo)}] {el:.0f}m  proved={proved}"
+                      + (f"  <-- {key} by {got}" if got else ""), flush=True)
+    print(f"sweep done: {proved} proved in {(time.time()-t0)/60:.0f}m", flush=True)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", type=int, default=6)
     ap.add_argument("--cat")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--sweep", action="store_true")
+    ap.add_argument("--out", default=".timeloop/runs/sweep.jsonl")
+    ap.add_argument("--max-hours", type=float, default=10.0)
     a = ap.parse_args()
+
+    if a.sweep:
+        return sweep(a)
 
     cs = candidates(a.cat)
     if a.list:

@@ -130,3 +130,10 @@ filter one set by the other.
 
 ### COST
 ~1 minute.
+
+---
+
+## NOVELTY: `published`
+Recorded in the HONESTY section above from the outset — the reduction and bounds
+here were identified as classical when written, with the specific attributions
+(Giuga; Borwein–Borwein–Borwein–Girgensohn; Cohen–Hagis) named inline.

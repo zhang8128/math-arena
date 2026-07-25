@@ -103,3 +103,9 @@ than by any small-prime criterion.
 ~5 minutes across two searches. The refutation was cheap; the T1 suggestion that
 prompted it would have cost a future turn hours had it been recorded as promising
 and left untested.
+
+---
+
+## NOVELTY: `published`
+See `rabinowitsch-families.md` NOVELTY section. T2's value-growth tension is the
+Bateman–Horn heuristic, named explicitly in the current literature on this family.

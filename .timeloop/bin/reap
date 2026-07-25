@@ -71,6 +71,19 @@ def _is_ours(pid: int, args: str) -> bool:
     return _cwd_of(pid).startswith(REPO)
 
 
+def _program_of(args: str) -> str:
+    """Best label for what a process actually is."""
+    m = re.search(r"\.timeloop/(?:bin|runs)/([\w.-]+)", args)
+    if m and not m.group(1).endswith((".jsonl", ".txt", ".json")):
+        return m.group(1)
+    for tok in args.split():
+        if "/.timeloop/" in tok or tok.startswith(".timeloop/"):
+            base = tok.rsplit("/", 1)[-1]
+            if not base.endswith((".jsonl", ".txt", ".json")):
+                return base
+    return "?"
+
+
 def find() -> list[dict]:
     out = subprocess.run(
         ["ps", "-eo", "pid,etime,args"], capture_output=True, text=True
@@ -97,9 +110,9 @@ def find() -> list[dict]:
                 "pid": pid,
                 "seconds": _etime_to_seconds(etime),
                 "elapsed": etime,
-                "script": (re.search(r"\.timeloop/runs/(\S+)", args) or [None, "?"])[1]
-                if re.search(r"\.timeloop/runs/(\S+)", args)
-                else "?",
+                # name the *program*, not whatever path happens to appear first
+                # (an --out argument was being reported as the script name)
+                "script": _program_of(args),
             }
         )
     return found

@@ -7,6 +7,11 @@
             "type": "command",
             "command": "/Users/kairos/Projects/personal/math/.timeloop/bin/reap --report 2>/dev/null || true",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "/Users/kairos/Projects/personal/math/.timeloop/bin/lint --report 2>/dev/null || true",
+            "timeout": 15
           }
         ]
       }

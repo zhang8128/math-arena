@@ -287,3 +287,29 @@ is small and probably irreducible without exact counts per digit-length. Move on
 
 ### COST
 ~1 minute.
+
+---
+
+## NOVELTY: `not found` — with the queries recorded, so the next turn knows the search was shallow rather than the result new
+
+Checked 2026-07-25 (retrofitted).
+
+Searches surfaced the standard perfect-digital-invariant material — Wikipedia,
+OEIS wiki, HandWiki, narcissistic/Armstrong/Munchausen numbers — but **none of
+it contained the `gcd(b−1, M_d)` congruence result** of T5, nor the
+quantitative claim that fixed-point abundance scales with it.
+
+**This is not a claim of novelty.** It is a record that a general web search did
+not surface it. The elementary congruence (`n ≡ digit sum mod b−1`, plus
+`x^d ≡ x mod M_d`) is certainly classical in its parts; whether their combination
+into an abundance predictor is stated somewhere is unresolved. A proper check
+needs a literature database rather than a web search.
+
+**Queries tried:** "perfect digital invariant fixed points base b digit power sum
+congruence gcd(b-1) Fermat modulus".
+
+**Next turn:** if this matters, search MathSciNet/zbMATH for "perfect digital
+invariant" + "congruence", or ask on a forum. Do not upgrade this to `new`
+without one of those.
+
+Sources: en.wikipedia.org/wiki/Perfect_digital_invariant · oeis.org/wiki/Perfect_Digital_Invariants
