@@ -48,6 +48,7 @@ def real_sorry_count(path: pathlib.Path) -> int:
     return len(re.findall(r"\bsorry\b", strip_comments(path.read_text(errors="ignore"))))
 
 FC = pathlib.Path(__file__).resolve().parents[1] / "lean" / "formal-conjectures"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "lib"))
 
 # Ordered cheapest-first. `native_decide` is last: it trusts the compiler rather
 # than the kernel, so a success there is weaker evidence than the others.
@@ -137,6 +138,23 @@ def sweep(a):
             except Exception:
                 pass
     cs = candidates(all_tiers=True)
+    # Skip statements that provably need a two-sided (sInf/sSup) or limit
+    # argument — no finite certificate exists, so no tactic can close them.
+    # Retires ~63% of the frontier. See lib/tractability.py for the honest scope.
+    from tractability import score, verdict
+    kept, skipped = [], 0
+    for c in cs:
+        try:
+            v = verdict(score(c["stmt"], c["file"].read_text(errors="ignore"))[0])
+        except Exception:
+            v = "maybe"
+        if v == "skip":
+            skipped += 1
+        else:
+            kept.append(c)
+    print(f"tractability filter: {skipped} skipped (two-sided/limit), {len(kept)} kept",
+          flush=True)
+    cs = kept
     todo = [c for c in cs if f"{c['file'].name}:{c['name']}" not in done]
     print(f"sweep: {len(cs)} candidates, {len(done)} already done, {len(todo)} to go",
           flush=True)
