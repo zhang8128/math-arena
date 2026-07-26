@@ -181,3 +181,48 @@ fails costs nothing and returns a verdict, and the failures map the wall exactly
 **Next measurement, not next assertion:** does a non-naive generator beat 6 %?
 That question is now answerable by running it, which is the entire point of
 having built the apparatus.
+
+---
+
+## The control group, 2026-07-26 — and the number that actually matters
+
+The filtered sweep ran to its 9-hour cap: **402 of 875 attempted, 1 proved (0.2%)**.
+Resumable; `sweep2.jsonl` is the permanent baseline.
+
+| tier | attempted | proved |
+|---|---|---|
+| `research solved` | 301 | **0** |
+| `textbook` | 59 | **0** |
+| `test` | 42 | 1 |
+
+The single proof — `a 1 = 1` by `rfl` — was **audited**, not assumed:
+`#print axioms` gives `[propext, Classical.choice, Quot.sound]`, no `sorryAx`.
+It is a definitional unfolding.
+
+The 6% figure reported earlier is **retracted**: it came from the broken harness
+over a 16-statement sample. The corrected number, over 402 statements already
+filtered to remove the provably hopeless, is 0.2%.
+
+### The comparison that reframes the project
+
+| approach | attempts | machine-checked theorems | wall-clock |
+|---|---|---|---|
+| blind tactic sweep | 402 | 1 (trivial) | 9 hours |
+| **guided pipeline** (T14, T16) | **2** | **2** | **40 min** |
+
+Same evaluator, same library, same machine. The difference is entirely whether
+the mathematics came first.
+
+In both guided successes, **zero** failed compile cycles were mathematical — they
+were mathlib navigation and statement shape. The checker was not the obstacle;
+it was the guide.
+
+**So "can this system prove theorems?" was the wrong question.** It can, reliably,
+given something to prove. The bottleneck is upstream: generating results worth
+formalising. The arena already does that (T0–T12 found real structure
+repeatedly); the two halves simply were not connected until T16.
+
+### Consequence for what to build next
+Do **not** invest further in tactic search — 402 attempts say what it is worth.
+Invest in the *predict → confirm → prove* loop, and point it at the forge track,
+where the parameter spaces are genuinely unexplored.
