@@ -373,3 +373,62 @@ novelty; it changes its *status* from measured to proved.
 
 ### COST
 ~15 minutes, five compile cycles.
+
+---
+
+## T16 — the full loop, end to end: predict → confirm → prove
+
+First run of the arena's two halves as one pipeline on a fresh target. Not
+"attack a formal statement cold" — which gets 6% — but the order that actually
+worked at T14: **explore, understand, then formalise.**
+
+### PREDICT (from structure, not from data)
+T5's mechanism rests on one fact: `b ≡ 1 (mod b−1)`, so `n ≡ digit sum`. Asking
+what *else* satisfies that shape gives the answer immediately: `b ≡ −1 (mod b+1)`,
+so `bⁱ ≡ (−1)ⁱ` and `n` is congruent to the **alternating** digit sum mod `b+1`
+— casting out elevens.
+
+So there should be an alternating analogue with `gcd(b+1, m)` in place of
+`gcd(b−1, m)`. **Predicted before any computation.**
+
+### CONFIRM
+`A(n) = Σᵢ (−1)ⁱ dᵢ^d` tested against `A(n) ≡ n (mod gcd(b+1, M_d))` for
+`b ∈ [2,12]`, `d ∈ {2,3,4,5}`, `n < 20000`.
+**Zero counterexamples**, across 24 non-trivial `(b,d)` pairs.
+
+### PROVE
+```lean
+theorem altDigitPow_zmodEq (base d m : ℕ) (hm : ∀ x : ℤ, x ^ d ≡ x [ZMOD m]) (n : ℕ) :
+    (((base.digits n).map (fun x : ℕ => (x : ℤ))).map (fun z => z ^ d)).alternatingSum
+      ≡ (n : ℤ) [ZMOD (Nat.gcd (base + 1) m : ℕ)]
+```
+**Axiom audit:** `[propext, Classical.choice, Quot.sound]` — no `sorryAx`.
+
+### TECHNIQUE — what the loop cost, stage by stage
+- **Predict:** minutes, and it came from asking what the *previous proof rested
+  on* rather than from looking at data. The generalisation was visible in the
+  hypothesis `b % (b−1) = 1`.
+- **Confirm:** ~30 seconds of compute.
+- **Prove:** four compile cycles. Two were mathlib navigation
+  (`zmodeq_ofDigits_digits`, found by reading how mathlib proves the base-10
+  case and generalising its proof verbatim), and two were the statement's
+  *shape* fighting me — `l.map (fun x => ((x:ℤ))^d)` over `List ℕ` elaborates as
+  a nested map, which broke the cons-recursion. Restating the lemma over
+  `List ℤ` fixed it instantly.
+
+**The lesson that transfers: when a proof will not go through, suspect the
+statement's shape before the mathematics.** Two of four failures were type
+elaboration, zero were mathematical.
+
+**And the search technique that worked twice now: find the specialised case
+already in mathlib, read its proof, generalise that.** `modEq_eleven_digits_sum`
+is base 10 only; its two-line proof generalises to every base unchanged.
+
+### NOVELTY
+`published` almost certainly — alternating digit sums and divisibility by `b+1`
+are classical, and the combination with `x^d ≡ x` is the same elementary
+argument as T5. Not searched further; the value here is the *pipeline*, not the
+theorem.
+
+### COST
+~25 minutes for predict + confirm + prove.

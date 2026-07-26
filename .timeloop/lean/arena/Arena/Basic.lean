@@ -69,5 +69,46 @@ theorem digitPow_modEq (base d m : ℕ) (hb : 2 ≤ base)
     exact ((sum_map_pow_modEq d m hm _).of_dvd (Nat.gcd_dvd_right _ _)).trans
           ((h1.of_dvd (Nat.gcd_dvd_left _ _)).symm)
 
--- Audit: confirm the proof rests on no `sorry`.
+open Nat List in
+/-! ## The alternating analogue — mod (b+1) instead of (b-1)
+
+Found by asking what the T5 proof *rested on*: `b ≡ 1 (mod b-1)`. The same
+argument with `b ≡ -1 (mod b+1)` gives an alternating version. Predicted from
+structure, confirmed computationally, proved below.
+-/
+
+
+/-- Elementwise congruence lifts to ALTERNATING sums. Stated over `List ℤ` so the
+cons-recursion matches without coercion getting in the way. -/
+theorem alternatingSum_map_pow_zmodEq (d m : ℕ) (hm : ∀ x : ℤ, x ^ d ≡ x [ZMOD m]) :
+    ∀ l : List ℤ, (l.map (fun z => z ^ d)).alternatingSum ≡ l.alternatingSum [ZMOD m]
+  | [] => by simp
+  | (x :: xs) => by
+      simp only [List.map_cons, List.alternatingSum_cons]
+      exact Int.ModEq.sub (hm x) (alternatingSum_map_pow_zmodEq d m hm xs)
+
+/-- **The alternating analogue of T5's mechanism.**
+
+`b ≡ -1 (mod b+1)`, so `bⁱ ≡ (-1)ⁱ` and `n` is congruent to the ALTERNATING digit
+sum mod `b+1` — "casting out elevens". Combined with `x^d ≡ x (mod m)`, the
+alternating digit-power map is congruent to the identity mod `gcd(b+1, m)`,
+exactly mirroring `gcd(b-1, m)` for plain sums.
+
+Predicted from the structure of the T5 proof, confirmed computationally with zero
+counterexamples over `b ≤ 12`, `d ≤ 5`, `n < 20000`, then proved here. -/
+theorem altDigitPow_zmodEq (base d m : ℕ) (hm : ∀ x : ℤ, x ^ d ≡ x [ZMOD m]) (n : ℕ) :
+    (((base.digits n).map (fun x : ℕ => (x : ℤ))).map (fun z => z ^ d)).alternatingSum
+      ≡ (n : ℤ) [ZMOD (Nat.gcd (base + 1) m : ℕ)] := by
+  have hb1 : ((base : ℤ)) ≡ (-1 : ℤ) [ZMOD ((base + 1 : ℕ) : ℤ)] :=
+    Int.modEq_iff_dvd.mpr ⟨-1, by push_cast; ring⟩
+  have key := Nat.zmodeq_ofDigits_digits (base + 1) base (-1 : ℤ) hb1 n
+  rw [Nat.ofDigits_neg_one] at key
+  have h1 := key.of_dvd (Int.natCast_dvd_natCast.2 (Nat.gcd_dvd_left (base + 1) m))
+  have h2 := (alternatingSum_map_pow_zmodEq d m hm
+    ((base.digits n).map (fun x : ℕ => (x : ℤ)))).of_dvd
+    (Int.natCast_dvd_natCast.2 (Nat.gcd_dvd_right (base + 1) m))
+  exact h2.trans h1.symm
+
+-- Audit: neither proof rests on a `sorry`.
 #print axioms digitPow_modEq
+#print axioms altDigitPow_zmodEq
