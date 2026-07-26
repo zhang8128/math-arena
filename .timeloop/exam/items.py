@@ -204,7 +204,35 @@ def item_trap_verify_the_positive():
             "substitution guarded by real-sorry-count delta" if ok else "positives are unaudited")
 
 
+def item_tractability_scoped():
+    """The scorer must reject statements that provably need a two-sided argument,
+    and must NOT claim to rank the rest.
+
+    Pins the validated behaviour found on 2026-07-25: `W 3 15 = 218` and
+    `F 3 = 7` both unfold to `sInf`, so both must score `skip`. The first version
+    of the scorer read only the statement and scored them 0 — identical to
+    `a 1 = 1`, which falls to `rfl` — because the two are syntactically the same
+    shape. Definition resolution is what fixed it, and this item locks that in.
+    """
+    from tractability import score, verdict
+    FC = Path(__file__).resolve().parents[1] / "lean" / "formal-conjectures" / "FormalConjectures"
+    cases = [
+        ("theorem W_3_15 : W 3 15 = 218", FC / "GreensOpenProblems/14.lean", "skip"),
+        ("theorem F_three : F 3 = 7", FC / "Paper/DegreeSequencesTriangleFree.lean", "skip"),
+    ]
+    bad = []
+    for stmt, f, want in cases:
+        if not f.exists():
+            return ("scorer/rejects-two-sided", 1, True, "formal-conjectures absent, skipped")
+        got = verdict(score(stmt, f.read_text(errors="ignore"))[0])
+        if got != want:
+            bad.append((stmt.split(":")[0].strip(), got, want))
+    return ("scorer/rejects-two-sided", 1, not bad,
+            f"misgraded {bad}" if bad else "sInf statements correctly rejected")
+
+
 ITEMS = [
+    item_tractability_scoped,
     item_gcd_agrees,
     item_primality_agrees,
     item_modpow_agrees,
