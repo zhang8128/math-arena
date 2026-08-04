@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,3 +39,18 @@ def test_bound_implies_strict_decrease_for_next_two_digit_lengths() -> None:
 
 def test_base_two_cycles_are_complete() -> None:
     assert cycles(2) == ((0,), (1, 2), (3,))
+
+
+def test_discovery_script_emits_scoped_json() -> None:
+    script = Path(__file__).resolve().parents[1] / "runs" / "t18_digit_products.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--max-base", "4"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["map"] == "digit_product_plus_sum"
+    assert payload["bases"] == [2, 3, 4]
+    assert set(payload["bounds"]) == {"2", "3", "4"}
+    assert set(payload["cycles"]) == {"2", "3", "4"}
