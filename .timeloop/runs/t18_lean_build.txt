@@ -1,0 +1,13 @@
+Command: cd .timeloop/lean/arena && lake build
+Date: 2026-08-03
+Exit code: 0
+
+Built Arena.DigitProducts and Arena successfully.
+
+digitProductPlusSum_modEq depends on axioms:
+[propext, Classical.choice, Quot.sound]
+
+digitProductPlusSum_fixed_product_zero depends on axioms:
+[propext, Classical.choice, Quot.sound]
+
+No sorryAx.
