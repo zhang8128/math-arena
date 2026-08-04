@@ -1,0 +1,13 @@
+Command: lake build
+Working directory: .timeloop/lean/arena
+Date: 2026-08-03 PDT
+Exit status: 0
+Result: Build completed successfully (8659 jobs).
+
+Axiom audit:
+  erdosStraus_even: [propext, Classical.choice, Quot.sound]
+  erdosStraus_three_mod_four: [propext, Classical.choice, Quot.sound]
+  erdosStraus_120t_plus_73: [propext, Classical.choice, Quot.sound]
+
+No declaration depends on sorryAx. The only warnings were the existing
+mathlib style-header warning ("Copyright too short!") on Arena modules.
