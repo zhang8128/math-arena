@@ -30,7 +30,7 @@
 - Consumes: `AffineDigit(intercept, slope, reference_base=17)` and `AffineWord(fragments, repeats)`.
 - Produces: `evaluate_digit`, `render_affine_word`, `value_bivariate`, `reverse_affine_word`, `shift_q_parameter`, and `verify_affine_cycle`.
 
-- [ ] **Step 1: Write the failing affine-evaluation and polynomial tests**
+- [x] **Step 1: Write the failing affine-evaluation and polynomial tests**
 
 ```python
 def test_affine_digits_are_lower_or_upper_anchored() -> None:
@@ -51,21 +51,21 @@ def test_two_interface_bivariate_compiler_matches_literal_values() -> None:
             )
 ```
 
-- [ ] **Step 2: Run the tests and verify the missing-module failure**
+- [x] **Step 2: Run the tests and verify the missing-module failure**
 
 Run: `pytest -q .timeloop/tests/test_lychrel_affine.py -k 'affine_digits or bivariate_compiler'`
 
 Expected: collection fails because `lychrel_affine` does not exist.
 
-- [ ] **Step 3: Implement immutable base-polynomial and q-polynomial arithmetic**
+- [x] **Step 3: Implement immutable base-polynomial and q-polynomial arithmetic**
 
 Use tuples in ascending degree. Implement trim, add, scale, multiplication by `b^k`, multiplication by `q`, and `q -> bq`. Compile a fixed affine digit as `(intercept - 17*slope, slope)` in `b`.
 
-- [ ] **Step 4: Implement affine words, reversal, canonical validation, and cycle verification**
+- [x] **Step 4: Implement affine words, reversal, canonical validation, and cycle verification**
 
 `verify_affine_cycle` must reject empty or leading-zero renderings at `n=0,1`, compare each ordinary phase coefficient-wise, and apply `q -> bq` only on the last phase.
 
-- [ ] **Step 5: Run Task 1 tests**
+- [x] **Step 5: Run Task 1 tests**
 
 Run: `pytest -q .timeloop/tests/test_lychrel_affine.py`
 
