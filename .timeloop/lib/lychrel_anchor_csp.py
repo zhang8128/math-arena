@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import product
 
-from lychrel_affine import AffineDigit, AffineWord
+from lychrel_affine import AffineDigit, AffineWord, verify_affine_cycle
 from lychrel_wordproof import ParametricWord
 
 
@@ -47,6 +47,16 @@ class CarryEquation:
 
 
 @dataclass(frozen=True)
+class LiftClassification:
+    status: str
+    equation_count: int
+    unique_equation_count: int
+    solution_count: int
+    cycles: tuple[tuple[AffineWord, ...], ...]
+    unsat_core: tuple[CarryEquation, ...]
+
+
+@dataclass(frozen=True)
 class _SymbolicDigit:
     reference_value: int
     variable: str | None
@@ -64,7 +74,7 @@ def _equation_assignments(
         for values in product(*(sorted(domains[variable]) for variable in variables))
         if sum(
             coefficient * value
-            for coefficient, value in zip(coefficients, values, strict=True)
+            for coefficient, value in zip(coefficients, values)
         )
         == equation.rhs
     )
@@ -283,3 +293,43 @@ def materialize_affine_cycle(
         repeats = tuple(int(repeat == word.base - 1) for repeat in word.repeats)
         result.append(AffineWord(fragments, repeats))
     return tuple(result)
+
+
+def classify_affine_lift(
+    words: tuple[ParametricWord, ...],
+) -> LiftClassification:
+    equations = build_carry_equations(words)
+    unique_by_content: dict[
+        tuple[tuple[tuple[str, int], ...], int], CarryEquation
+    ] = {}
+    for equation in equations:
+        unique_by_content.setdefault(
+            (equation.terms, equation.rhs),
+            equation,
+        )
+    unique = tuple(unique_by_content.values())
+    solutions = solve_boolean_equations(unique, limit=2)
+    if not solutions:
+        return LiftClassification(
+            status="infeasible",
+            equation_count=len(equations),
+            unique_equation_count=len(unique),
+            solution_count=0,
+            cycles=(),
+            unsat_core=irreducible_unsat_core(unique),
+        )
+    cycles = tuple(
+        cycle
+        for assignment in solutions
+        if verify_affine_cycle(
+            cycle := materialize_affine_cycle(words, assignment)
+        )
+    )
+    return LiftClassification(
+        status="verified_lift" if cycles else "candidates_rejected",
+        equation_count=len(equations),
+        unique_equation_count=len(unique),
+        solution_count=len(solutions),
+        cycles=cycles,
+        unsat_core=(),
+    )

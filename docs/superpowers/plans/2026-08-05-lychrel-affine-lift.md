@@ -142,7 +142,7 @@ Expected: all tests pass.
 - Consumes: the T21 `calibrate_base17()` phase fragments and repeats.
 - Produces: deterministic JSON containing system size, solution count or minimized obstruction, exact verification, non-palindrome evidence, and direct replay checks.
 
-- [ ] **Step 1: Write the failing real-fixture classification test**
+- [x] **Step 1: Write the failing real-fixture classification test**
 
 ```python
 def test_base17_topology_has_exact_affine_classification() -> None:
@@ -159,23 +159,23 @@ def test_base17_topology_has_exact_affine_classification() -> None:
         )
 ```
 
-- [ ] **Step 2: Run the fixture test and verify the missing-classifier failure**
+- [x] **Step 2: Run the fixture test and verify the missing-classifier failure**
 
 Run: `pytest -q .timeloop/tests/test_lychrel_affine.py -k base17_topology -vv`
 
 Expected: failure naming `classify_affine_lift`.
 
-- [ ] **Step 3: Implement classification and independent acceptance**
+- [x] **Step 3: Implement classification and independent acceptance**
 
 For every CSP solution, materialize affine words and retain it only if the independent bivariate verifier succeeds. For a verified lift, require a same-slope fixed outer mismatch in every phase and replay all transitions at bases `17,18,20,26,40,100`, `n=0..5`. For no solution, compute and recheck the irreducible core.
 
-- [ ] **Step 4: Implement and run the deterministic evidence script**
+- [x] **Step 4: Implement and run the deterministic evidence script**
 
 Run: `python3 .timeloop/runs/t22_lychrel_affine_lift.py > .timeloop/runs/t22_lychrel_affine_lift.json`
 
 Expected: JSON status `verified_lift` or `infeasible`, with every claimed check explicitly true.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `pytest -q .timeloop/tests/test_lychrel_affine.py`
 

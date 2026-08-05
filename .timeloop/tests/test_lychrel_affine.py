@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runs"))
 
 from lychrel_affine import (  # noqa: E402
     AffineDigit,
@@ -19,11 +20,14 @@ from lychrel_affine import (  # noqa: E402
 from lychrel_anchor_csp import (  # noqa: E402
     CarryEquation,
     build_carry_equations,
+    classify_affine_lift,
     irreducible_unsat_core,
     solve_boolean_equations,
 )
 from lychrel_wordproof import ParametricWord  # noqa: E402
-from lychrel_wordproof import digits_value  # noqa: E402
+from lychrel_wordproof import digits_value, infer_cycle  # noqa: E402
+from t21_lychrel_multi_interface import base17_start, orbit  # noqa: E402
+from t22_lychrel_affine_lift import build_evidence  # noqa: E402
 
 
 def test_affine_digits_are_lower_or_upper_anchored() -> None:
@@ -139,3 +143,42 @@ def test_carry_extraction_matches_a_hand_derived_binary_column() -> None:
         ("p1:f2:d1", -1),
     )
     assert first.rhs == 0
+
+
+def base17_reference_cycle() -> tuple[ParametricWord, ...]:
+    full_orbit = orbit(base17_start(2), 17, 12)
+    cycle = infer_cycle(17, full_orbit[:6], full_orbit[6:12], max_blocks=2)
+    assert cycle is not None
+    return cycle
+
+
+def test_base17_topology_has_an_exact_affine_classification() -> None:
+    result = classify_affine_lift(base17_reference_cycle())
+    assert result.status == "infeasible"
+    assert not result.cycles
+    assert result.unsat_core
+    assert not solve_boolean_equations(result.unsat_core)
+    assert all(
+        solve_boolean_equations(
+            result.unsat_core[:index] + result.unsat_core[index + 1 :]
+        )
+        for index in range(len(result.unsat_core))
+    )
+
+
+def test_evidence_records_the_two_equation_obstruction() -> None:
+    evidence = build_evidence()
+    assert evidence["status"] == "infeasible"
+    assert evidence["unsat_core"] == [
+        {
+            "provenance": "phase=4,n=0,column=41",
+            "terms": [["p4:f1:d12", 2], ["p5:f1:d12", -1]],
+            "rhs": 1,
+        },
+        {
+            "provenance": "phase=5,n=0,column=41",
+            "terms": [["p0:f1:d13", -1], ["p5:f1:d12", 2]],
+            "rhs": 0,
+        },
+    ]
+    assert evidence["core_irreducible"] is True

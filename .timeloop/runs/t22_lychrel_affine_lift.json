@@ -1,0 +1,111 @@
+{
+  "core_deletion_witnesses": [
+    {
+      "removed": "phase=4,n=0,column=41",
+      "satisfying_assignment": {
+        "p0:f1:d13": 0,
+        "p5:f1:d12": 0
+      }
+    },
+    {
+      "removed": "phase=5,n=0,column=41",
+      "satisfying_assignment": {
+        "p4:f1:d12": 1,
+        "p5:f1:d12": 1
+      }
+    }
+  ],
+  "core_irreducible": true,
+  "core_variables": [
+    {
+      "base17_digit": 0,
+      "variable": "p0:f1:d13"
+    },
+    {
+      "base17_digit": 8,
+      "variable": "p4:f1:d12"
+    },
+    {
+      "base17_digit": 0,
+      "variable": "p5:f1:d12"
+    }
+  ],
+  "human_obstruction": {
+    "binary_domain": "x,y,z in {0,1}",
+    "columns": [
+      "phase 4 to 5, n=0, central column 41",
+      "phase 5 to 0(n+1), n=0, central column 41"
+    ],
+    "derivation": "The first equation forces x=y=1; the second then forces z=2, outside the binary anchor domain.",
+    "equations": [
+      "2*x-y=1",
+      "2*y-z=0"
+    ]
+  },
+  "kind": "scoped_affine_lift_classification",
+  "prism": {
+    "accepted_disposition": "local carry feasibility plus global exact verification",
+    "artifacts": [
+      "59ed170642587090413cb75598cb99423ef4ef2087dcd759acc196ce6a189f2c",
+      "66190c1eeb550a4ab43b2ab9984641277d6cf469bb91f2524b1f4abc9636f8c4"
+    ],
+    "model": "qwen3.6:27b-mlx",
+    "prompt_version": 2,
+    "seed": 20260805,
+    "unverified_claims": [
+      "the proposed modular carry-period invariant",
+      "the proposed dual Omega invariant",
+      "two perturbed-base probes as proof"
+    ]
+  },
+  "reference": {
+    "base": 17,
+    "interfaces": 2,
+    "period": 6,
+    "verified_t21_control": true
+  },
+  "scope": {
+    "base_range": "all integers b >= 17",
+    "carry_skeleton": "the base-17 carries for n=0,1,2,3",
+    "digit_lifts": "d or d+(b-17) independently at every fixed occurrence",
+    "repeat_lifts": "0 -> 0 and 16 -> b-1",
+    "topology": "the exact T21 six-phase fragment and repeat layout"
+  },
+  "status": "infeasible",
+  "system": {
+    "anchor_variables": 497,
+    "equations": 2068,
+    "solutions": 0,
+    "unique_equations": 572
+  },
+  "unsat_core": [
+    {
+      "provenance": "phase=4,n=0,column=41",
+      "rhs": 1,
+      "terms": [
+        [
+          "p4:f1:d12",
+          2
+        ],
+        [
+          "p5:f1:d12",
+          -1
+        ]
+      ]
+    },
+    {
+      "provenance": "phase=5,n=0,column=41",
+      "rhs": 0,
+      "terms": [
+        [
+          "p0:f1:d13",
+          -1
+        ],
+        [
+          "p5:f1:d12",
+          2
+        ]
+      ]
+    }
+  ]
+}
