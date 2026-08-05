@@ -16,6 +16,13 @@ from lychrel_affine import (  # noqa: E402
     value_bivariate,
     verify_affine_cycle,
 )
+from lychrel_anchor_csp import (  # noqa: E402
+    CarryEquation,
+    build_carry_equations,
+    irreducible_unsat_core,
+    solve_boolean_equations,
+)
+from lychrel_wordproof import ParametricWord  # noqa: E402
 from lychrel_wordproof import digits_value  # noqa: E402
 
 
@@ -75,3 +82,60 @@ def test_cycle_verifier_rejects_noncanonical_zero_padding() -> None:
     padded_zero = AffineWord(((zero, zero, zero),), ())
     assert verify_affine_cycle((canonical_zero,))
     assert not verify_affine_cycle((padded_zero,))
+
+
+def test_boolean_solver_finds_the_hand_solution() -> None:
+    equations = (
+        CarryEquation((("x", 1), ("y", 1)), 1, provenance="sum"),
+        CarryEquation((("x", 1), ("y", -1)), -1, provenance="difference"),
+    )
+    assert solve_boolean_equations(equations, limit=2) == ({"x": 0, "y": 1},)
+
+
+def test_unsat_core_is_irreducible() -> None:
+    equations = (
+        CarryEquation((("x", 1),), 0, provenance="x=0"),
+        CarryEquation((("x", 1),), 1, provenance="x=1"),
+        CarryEquation((("y", 1),), 0, provenance="irrelevant"),
+    )
+    core = irreducible_unsat_core(equations)
+    assert tuple(item.provenance for item in core) == ("x=0", "x=1")
+    assert not solve_boolean_equations(core)
+    assert all(
+        solve_boolean_equations(core[:index] + core[index + 1 :])
+        for index in range(len(core))
+    )
+
+
+def binary_reference_cycle() -> tuple[ParametricWord, ...]:
+    def make(fragments: tuple[str, ...], repeats: str) -> ParametricWord:
+        return ParametricWord(
+            2,
+            tuple(tuple(int(digit) for digit in fragment) for fragment in fragments),
+            tuple(int(digit) for digit in repeats),
+        )
+
+    return (
+        make(("10", "1101", "00"), "10"),
+        make(("11", "1000", "01"), "01"),
+        make(("10", "11010", "00"), "10"),
+        make(("11", "00101", "01"), "01"),
+    )
+
+
+def test_carry_extraction_matches_a_hand_derived_binary_column() -> None:
+    equations = build_carry_equations(
+        binary_reference_cycle(),
+        parameters=range(1),
+    )
+    first = next(
+        equation
+        for equation in equations
+        if equation.provenance == "phase=0,n=0,column=0"
+    )
+    assert first.terms == (
+        ("p0:f0:d0", 1),
+        ("p0:f2:d1", 1),
+        ("p1:f2:d1", -1),
+    )
+    assert first.rhs == 0

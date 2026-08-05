@@ -81,7 +81,7 @@ Expected: all Task 1 tests pass.
 - Consumes: a tuple of T21 `ParametricWord` phases and reference base 17.
 - Produces: `AnchorVariable`, `CarryEquation`, `build_carry_equations`, `solve_boolean_equations`, `irreducible_unsat_core`, and `materialize_affine_cycle`.
 
-- [ ] **Step 1: Write failing literal Boolean-system tests**
+- [x] **Step 1: Write failing literal Boolean-system tests**
 
 ```python
 def test_boolean_solver_finds_the_hand_solution() -> None:
@@ -103,29 +103,29 @@ def test_unsat_core_is_irreducible() -> None:
     assert all(solve_boolean_equations(core[:i] + core[i + 1 :]) for i in range(len(core)))
 ```
 
-- [ ] **Step 2: Run the solver tests and verify missing-symbol failures**
+- [x] **Step 2: Run the solver tests and verify missing-symbol failures**
 
 Run: `pytest -q .timeloop/tests/test_lychrel_affine.py -k 'boolean_solver or unsat_core'`
 
 Expected: failures naming the absent CSP interfaces.
 
-- [ ] **Step 3: Implement normalized equations and arc-consistent backtracking**
+- [x] **Step 3: Implement normalized equations and arc-consistent backtracking**
 
 Combine repeated coefficients, drop zeros, propagate domains by enumerating the at-most-three unknown bits in each equation, branch on the highest-frequency unresolved variable, and return lexicographically ordered solutions up to `limit`.
 
-- [ ] **Step 4: Implement deletion-minimized infeasible cores**
+- [x] **Step 4: Implement deletion-minimized infeasible cores**
 
 Starting with all equations, remove an equation whenever the remainder is still infeasible. Recheck the final core by asserting the core is infeasible and every one-equation deletion is feasible.
 
-- [ ] **Step 5: Write and run a failing carry-extraction fixture**
+- [x] **Step 5: Write and run a failing carry-extraction fixture**
 
 Use a hand-derived one-column base-17 addition whose constants satisfy the reference equation and whose affine coefficient requires `x_left+x_right-x_output=carry_out`. Assert exact coefficients, right-hand side, and `(phase,n,column)` provenance.
 
-- [ ] **Step 6: Implement symbolic column rendering and carry extraction for `n=0..3`**
+- [x] **Step 6: Implement symbolic column rendering and carry extraction for `n=0..3`**
 
 Fixed occurrences reuse their stable variable IDs under reversal. Repeat zero and `b-1` tokens contribute constant slopes zero and one. The wrap phase renders phase zero at `n+1`; all other outputs use `n`.
 
-- [ ] **Step 7: Run Task 2 tests and the existing T21 tests**
+- [x] **Step 7: Run Task 2 tests and the existing T21 tests**
 
 Run: `pytest -q .timeloop/tests/test_lychrel_affine.py .timeloop/tests/test_lychrel_wordproof.py`
 
