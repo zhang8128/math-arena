@@ -15,7 +15,7 @@
 - Treat Prism artifacts and carry-CSP solutions as hypotheses, never proof.
 - Add no solver dependency; the Boolean equations have arity at most three.
 - Accept a lift only through exact bivariate coefficient equality and exact non-palindrome witnesses.
-- State negative scope precisely: same topology, same base-17 carry skeleton, integer affine digits valid for every `b >= 17`.
+- State negative scope precisely: same topology and integer affine digits valid for every `b >= 17`; use global coefficient equations so carries may change with the base.
 - Run all work inline because the user selected isolated autonomous execution.
 
 ---
@@ -167,7 +167,7 @@ Expected: failure naming `classify_affine_lift`.
 
 - [x] **Step 3: Implement classification and independent acceptance**
 
-For every CSP solution, materialize affine words and retain it only if the independent bivariate verifier succeeds. For a verified lift, require a same-slope fixed outer mismatch in every phase and replay all transitions at bases `17,18,20,26,40,100`, `n=0..5`. For no solution, compute and recheck the irreducible core.
+First classify the base-17 carry skeleton. If it is infeasible, linearize every global `Z[b,q]` residual coefficient in the anchors and solve that system, removing the carry-skeleton assumption. For every solution, materialize affine words and retain it only if the independent bivariate verifier succeeds. For a verified lift, require a same-slope fixed outer mismatch in every phase and replay all transitions at bases `17,18,20,26,40,100`, `n=0..5`. For no solution, compute and recheck the global irreducible core.
 
 - [x] **Step 4: Implement and run the deterministic evidence script**
 
@@ -193,23 +193,23 @@ Expected: all focused tests pass.
 - Consumes: deterministic T22 JSON and primary-source searches.
 - Produces: a scope-calibrated research conclusion and the next falsifiable action.
 
-- [ ] **Step 1: Independently audit the result**
+- [x] **Step 1: Independently audit the result**
 
 If feasible, implement a direct integer replay path that does not call the bivariate compiler. If infeasible, parse the serialized core in a fresh process, verify the reference base-17 arithmetic for every core column, and independently brute-force each core deletion.
 
-- [ ] **Step 2: Perform mandatory novelty searches**
+- [x] **Step 2: Perform mandatory novelty searches**
 
 Search David Seal's page, OEIS, the Lychrel classification paper, and exact phrases for affine base-parametric reverse-add certificates. A negative lift classification is reported only as a scoped internal result unless directly matched by prior art.
 
-- [ ] **Step 3: Record only a narrow typed Prism outcome**
+- [x] **Step 3: Record only a narrow typed Prism outcome**
 
 Attach `computationally_supported` only if the local carry-feasibility prediction was independently validated. Use `falsified` if the artifact's explicit predicted all-base carry closure fails. Include scope and non-endorsement fields in verifier metadata; do not support the proposed modular invariant or two-base proof.
 
-- [ ] **Step 4: Update notebook, ledger, and target next action**
+- [x] **Step 4: Update notebook, ledger, and target next action**
 
 Record `STATUS`, `SEARCHED`, `RULED OUT`, `STRUCTURE`, `TECHNIQUE`, `NOVELTY`, `NEXT`, and `COST`. Distinguish an all-base theorem from an obstruction confined to this affine topology.
 
-- [ ] **Step 5: Run final verification**
+- [x] **Step 5: Run final verification**
 
 Run:
 

@@ -1,16 +1,57 @@
 {
+  "carry_skeleton_diagnostic": {
+    "equations": 2068,
+    "status": "infeasible",
+    "unique_equations": 572,
+    "unsat_core": [
+      {
+        "provenance": "phase=4,n=0,column=41",
+        "rhs": 1,
+        "terms": [
+          [
+            "p4:f1:d12",
+            2
+          ],
+          [
+            "p5:f1:d12",
+            -1
+          ]
+        ]
+      },
+      {
+        "provenance": "phase=5,n=0,column=41",
+        "rhs": 0,
+        "terms": [
+          [
+            "p0:f1:d13",
+            -1
+          ],
+          [
+            "p5:f1:d12",
+            2
+          ]
+        ]
+      }
+    ]
+  },
   "core_deletion_witnesses": [
     {
-      "removed": "phase=4,n=0,column=41",
+      "removed": "phase=4,q_degree=1,base_degree=42",
       "satisfying_assignment": {
+        "p0:f1:d12": 0,
         "p0:f1:d13": 0,
-        "p5:f1:d12": 0
+        "p5:f1:d11": 0,
+        "p5:f1:d12": 0,
+        "p5:f1:d13": 0
       }
     },
     {
-      "removed": "phase=5,n=0,column=41",
+      "removed": "phase=5,q_degree=1,base_degree=42",
       "satisfying_assignment": {
+        "p4:f1:d11": 0,
         "p4:f1:d12": 1,
+        "p4:f1:d13": 1,
+        "p5:f1:d11": 0,
         "p5:f1:d12": 1
       }
     }
@@ -18,29 +59,47 @@
   "core_irreducible": true,
   "core_variables": [
     {
+      "base17_digit": 5,
+      "variable": "p0:f1:d12"
+    },
+    {
       "base17_digit": 0,
       "variable": "p0:f1:d13"
+    },
+    {
+      "base17_digit": 9,
+      "variable": "p4:f1:d11"
     },
     {
       "base17_digit": 8,
       "variable": "p4:f1:d12"
     },
     {
+      "base17_digit": 10,
+      "variable": "p4:f1:d13"
+    },
+    {
+      "base17_digit": 3,
+      "variable": "p5:f1:d11"
+    },
+    {
       "base17_digit": 0,
       "variable": "p5:f1:d12"
+    },
+    {
+      "base17_digit": 2,
+      "variable": "p5:f1:d13"
     }
   ],
   "human_obstruction": {
-    "binary_domain": "x,y,z in {0,1}",
-    "columns": [
-      "phase 4 to 5, n=0, central column 41",
-      "phase 5 to 0(n+1), n=0, central column 41"
+    "coefficients": [
+      "phase 4, q degree 1, base degree 42",
+      "phase 5 wrap, q degree 1, base degree 42"
     ],
-    "derivation": "The first equation forces x=y=1; the second then forces z=2, outside the binary anchor domain.",
-    "equations": [
-      "2*x-y=1",
-      "2*y-z=0"
-    ]
+    "derivation": "Among binary assignments, the phase-4 coefficient identity forces the shared anchor to 1, while the phase-5 wrap identity forces the same anchor to 0.",
+    "first_equation_forces": 1,
+    "second_equation_forces": 0,
+    "shared_anchor": "p5:f1:d12"
   },
   "kind": "scoped_affine_lift_classification",
   "prism": {
@@ -66,7 +125,7 @@
   },
   "scope": {
     "base_range": "all integers b >= 17",
-    "carry_skeleton": "the base-17 carries for n=0,1,2,3",
+    "carry_behavior": "unrestricted; only exact identities in Z[b,q] are used",
     "digit_lifts": "d or d+(b-17) independently at every fixed occurrence",
     "repeat_lifts": "0 -> 0 and 16 -> b-1",
     "topology": "the exact T21 six-phase fragment and repeat layout"
@@ -74,18 +133,30 @@
   "status": "infeasible",
   "system": {
     "anchor_variables": 497,
-    "equations": 2068,
+    "equations": 544,
     "solutions": 0,
-    "unique_equations": 572
+    "unique_equations": 544
   },
   "unsat_core": [
     {
-      "provenance": "phase=4,n=0,column=41",
-      "rhs": 1,
+      "provenance": "phase=4,q_degree=1,base_degree=42",
+      "rhs": -16,
       "terms": [
+        [
+          "p4:f1:d11",
+          -17
+        ],
         [
           "p4:f1:d12",
           2
+        ],
+        [
+          "p4:f1:d13",
+          -17
+        ],
+        [
+          "p5:f1:d11",
+          17
         ],
         [
           "p5:f1:d12",
@@ -94,16 +165,28 @@
       ]
     },
     {
-      "provenance": "phase=5,n=0,column=41",
+      "provenance": "phase=5,q_degree=1,base_degree=42",
       "rhs": 0,
       "terms": [
+        [
+          "p0:f1:d12",
+          17
+        ],
         [
           "p0:f1:d13",
           -1
         ],
         [
+          "p5:f1:d11",
+          -17
+        ],
+        [
           "p5:f1:d12",
           2
+        ],
+        [
+          "p5:f1:d13",
+          -17
         ]
       ]
     }

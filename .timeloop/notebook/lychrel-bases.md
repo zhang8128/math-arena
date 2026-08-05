@@ -293,3 +293,129 @@ serialization timeouts), a TDD exact-algebra and inference module, nine focused
 tests, published base-17 reconstruction, 54 independent integer checks, and a
 38-base bounded scan. The complete scan took about 11 seconds once the exact
 compiler and subsequence prefilter were in place.
+
+## T22 STATUS — BASE-17 TOPOLOGY HAS NO GLOBAL AFFINE LIFT
+
+The exact T21 base-17 word topology cannot be lifted to every base `b>=17` by
+making each fixed digit an integer affine function of `b`, even when carries are
+allowed to change with the base. This is an exact negative classification of a
+natural construction class, not a new Lychrel base.
+
+### SEARCHED
+
+Math Prism ran two deep frames on the immutable problem
+`lychrel-bases:base17-symbolic-lift`, using prompt version 2, model
+`qwen3.6:27b-mlx`, seed `20260805`, and the full 32K disposition budget:
+
+- modular/local-global proposed column-wise anchor constraints;
+- duality proposed treating feasibility failure as a compact obstruction.
+
+Both useful dispositions were independently supported with narrowly scoped
+Prism outcomes. Their proposed modular carry-period invariant, `Omega`
+invariant, anchor-sign rule, threshold formula, and two-base probes remain
+unverified and received no support.
+
+For a base-17 digit `d`, every integer affine digit function valid for all
+`b>=17` and specializing to `d` has one of exactly two forms:
+
+`d` or `d+(b-17)=b-(17-d)`.
+
+Indeed, if `f(b)=ab+c` remains between `0` and `b-1` for unbounded `b`, then the
+integer slope satisfies `0<=a<=1`; specializing at 17 fixes `c`. Thus the 497
+fixed digit occurrences give 497 Boolean lower/upper anchors. The repeat tokens
+remain `0` and `b-1`.
+
+The first solver preserved the observed base-17 carries for `n=0..3`. Its 2,068
+equations reduced to 572 unique constraints and an irreducible two-equation
+contradiction. Because carry preservation was an avoidable assumption, this was
+treated only as a diagnostic.
+
+The decisive solver compiled all six identities directly in `Z[b,q]`, with
+`q=b^n`, and linearized every coefficient in the 497 anchors. Its 544 exact
+Boolean equations have no solution. Deletion minimization again produced two
+equations, now with no carry assumption. Writing their eight anchor variables
+as `a,b,c,d,e,f,u,v`, the core is
+
+`-17a + 2b - 17c + 17u - v = -16`,
+
+`17d - e - 17u + 2v - 17f = 0`.
+
+All variables are in `{0,1}`. Modulo 17, the first equation becomes
+`2b-v=1`, forcing `b=v=1`; the second becomes `-e+2v=0`, forcing `e=v=0`.
+Hence the shared anchor `v` must be both 1 and 0. This proves infeasibility.
+
+The independent audit does not import the affine compiler or CSP module. It
+rebuilds both coefficient equations from the saved T21 fragments, brute-forces
+all `2^8` core assignments, finds zero joint solutions, and finds 24 solutions
+after deleting either equation. Exact evidence is in
+`.timeloop/runs/t22_lychrel_affine_lift.json`.
+
+### RULED OUT
+
+- No assignment of lower/upper affine anchors makes the exact T21 six-phase,
+  two-repeat-block topology a reverse-add certificate for every integer base
+  `b>=17`.
+- This conclusion allows carries to change with `b`; it is stronger than the
+  initial carry-skeleton obstruction.
+- It does **not** rule out certificates valid only in selected bases, piecewise
+  digit functions, nonlinear digit functions, different repeat placement or
+  lengths, different periods, or entirely different word topologies.
+
+### STRUCTURE
+
+The natural base lift is a finite Boolean problem because digit boundedness
+forces affine slopes to zero or one. The reverse-add induction is a bivariate
+polynomial identity: `b` controls digit values and place values, while
+`q=b^n` controls the growing blocks. Each coefficient is linear in the anchor
+bits. This converts a seemingly large symbolic-number problem into exact sparse
+Boolean equations, and an unsatisfiable core can be read as elementary modular
+arithmetic.
+
+The carry and polynomial formulations serve different purposes. Carries give a
+local diagnostic; global coefficients give the complete classification. The
+second must be run whenever preserving the reference carry skeleton fails.
+
+### TECHNIQUE
+
+- Prove the allowed affine digit forms before searching them; boundedness turns
+  an infinite functional choice into one Boolean bit per occurrence.
+- Use one-at-a-time anchor flips to extract exact global coefficient equations.
+  Linearity makes this exhaustive, not numerical interpolation.
+- Minimize negative systems to an irreducible core and then look for a human
+  quotient. Here reduction modulo 17 exposes the contradiction immediately.
+- Audit the final core with a separately implemented polynomial dictionary and
+  exhaustive `2^8` enumeration.
+
+### NOVELTY
+
+`not found`, with no publication claim. David Seal's page publishes the fixed
+base-17 construction, and the Lychrel classification literature develops carry
+searches, but searches found no prior affine-in-base lift or this obstruction.
+Queries included exact searches for `base-17 Lychrel affine lift`, `variable
+base carry equations David Seal`, the two core equations, and the shared anchor
+formulation. This remains a scoped internal negative result pending expert
+review.
+
+Sources checked on 2026-08-05:
+
+- David Seal's published construction: <https://www.mathpages.com/home/dseal.htm>
+- “Search for and classification of Lychrel numbers”:
+  <https://cocalc.com/share/download/00ae14310fa0520ec7b59482b0807d8082d2c891/ReverseAndAddPDF.pdf>
+- OEIS A060382: <https://oeis.org/A060382>
+
+### NEXT
+
+Relax global validity while retaining the learned topology: for each fixed base
+`18..100`, solve lower/upper anchors with fresh carry variables and require an
+exact polynomial identity in `q=b^n`. This tests whether the base-17 topology
+transplants to isolated bases even though no single affine mask works for all
+bases. Calibrate at base 17 and include known bases 20 and 26 as controls, while
+keeping their different published topologies conceptually separate.
+
+### COST
+
+Roughly one additional hour: two deep 27B Prism frames, comparison of three
+lift methods, exact affine and bivariate arithmetic, a provenance-bearing
+Boolean solver, carry and global coefficient classifications, two independent
+two-equation cores, an independent polynomial reimplementation, exhaustive
+core audits, and current literature searches.

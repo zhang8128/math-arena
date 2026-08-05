@@ -21,6 +21,7 @@ from lychrel_anchor_csp import (  # noqa: E402
     CarryEquation,
     build_carry_equations,
     classify_affine_lift,
+    classify_global_affine_lift,
     irreducible_unsat_core,
     solve_boolean_equations,
 )
@@ -166,19 +167,46 @@ def test_base17_topology_has_an_exact_affine_classification() -> None:
     )
 
 
-def test_evidence_records_the_two_equation_obstruction() -> None:
+def test_base17_topology_has_no_global_affine_lift_even_if_carries_change() -> None:
+    result = classify_global_affine_lift(base17_reference_cycle())
+    assert result.status == "infeasible"
+    assert not result.cycles
+    assert result.unsat_core
+    assert not solve_boolean_equations(result.unsat_core)
+    assert all(
+        solve_boolean_equations(
+            result.unsat_core[:index] + result.unsat_core[index + 1 :]
+        )
+        for index in range(len(result.unsat_core))
+    )
+
+
+def test_evidence_records_the_global_two_equation_obstruction() -> None:
     evidence = build_evidence()
     assert evidence["status"] == "infeasible"
     assert evidence["unsat_core"] == [
         {
-            "provenance": "phase=4,n=0,column=41",
-            "terms": [["p4:f1:d12", 2], ["p5:f1:d12", -1]],
-            "rhs": 1,
+            "provenance": "phase=4,q_degree=1,base_degree=42",
+            "terms": [
+                ["p4:f1:d11", -17],
+                ["p4:f1:d12", 2],
+                ["p4:f1:d13", -17],
+                ["p5:f1:d11", 17],
+                ["p5:f1:d12", -1],
+            ],
+            "rhs": -16,
         },
         {
-            "provenance": "phase=5,n=0,column=41",
-            "terms": [["p0:f1:d13", -1], ["p5:f1:d12", 2]],
+            "provenance": "phase=5,q_degree=1,base_degree=42",
+            "terms": [
+                ["p0:f1:d12", 17],
+                ["p0:f1:d13", -1],
+                ["p5:f1:d11", -17],
+                ["p5:f1:d12", 2],
+                ["p5:f1:d13", -17],
+            ],
             "rhs": 0,
         },
     ]
     assert evidence["core_irreducible"] is True
+    assert evidence["human_obstruction"]["shared_anchor"] == "p5:f1:d12"

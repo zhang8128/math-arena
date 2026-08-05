@@ -14,6 +14,7 @@ from lychrel_anchor_csp import (  # noqa: E402
     AnchorVariable,
     CarryEquation,
     classify_affine_lift,
+    classify_global_affine_lift,
     solve_boolean_equations,
 )
 from lychrel_wordproof import ParametricWord, infer_cycle, verify_cycle  # noqa: E402
@@ -49,7 +50,8 @@ def reference_digit_map(
 
 def build_evidence() -> dict[str, object]:
     words = base17_reference_cycle()
-    result = classify_affine_lift(words)
+    carry_result = classify_affine_lift(words)
+    result = classify_global_affine_lift(words)
     if result.status != "infeasible":
         raise AssertionError(
             "the observed classification changed; inspect candidates before reporting"
@@ -70,6 +72,21 @@ def build_evidence() -> dict[str, object]:
     core_variables = sorted(
         {variable for equation in core for variable, _ in equation.terms}
     )
+    shared_anchor = "p5:f1:d12"
+    forced_values = []
+    for equation in core:
+        possible = []
+        for value in (0, 1):
+            fixed = CarryEquation(
+                ((shared_anchor, 1),),
+                value,
+                provenance=f"fix {shared_anchor}={value}",
+            )
+            if solve_boolean_equations((equation, fixed)):
+                possible.append(value)
+        forced_values.append(possible)
+    if forced_values != [[1], [0]]:
+        raise AssertionError("the human obstruction no longer matches the core")
     return {
         "kind": "scoped_affine_lift_classification",
         "status": result.status,
@@ -84,7 +101,7 @@ def build_evidence() -> dict[str, object]:
             "digit_lifts": "d or d+(b-17) independently at every fixed occurrence",
             "repeat_lifts": "0 -> 0 and 16 -> b-1",
             "topology": "the exact T21 six-phase fragment and repeat layout",
-            "carry_skeleton": "the base-17 carries for n=0,1,2,3",
+            "carry_behavior": "unrestricted; only exact identities in Z[b,q] are used",
         },
         "system": {
             "equations": result.equation_count,
@@ -106,15 +123,26 @@ def build_evidence() -> dict[str, object]:
         ),
         "core_deletion_witnesses": deletion_witnesses,
         "human_obstruction": {
-            "equations": ["2*x-y=1", "2*y-z=0"],
-            "binary_domain": "x,y,z in {0,1}",
+            "shared_anchor": shared_anchor,
+            "first_equation_forces": 1,
+            "second_equation_forces": 0,
             "derivation": (
-                "The first equation forces x=y=1; the second then forces z=2, "
-                "outside the binary anchor domain."
+                "Among binary assignments, the phase-4 coefficient identity forces "
+                "the shared anchor to 1, while the phase-5 wrap identity forces the "
+                "same anchor to 0."
             ),
-            "columns": [
-                "phase 4 to 5, n=0, central column 41",
-                "phase 5 to 0(n+1), n=0, central column 41",
+            "coefficients": [
+                "phase 4, q degree 1, base degree 42",
+                "phase 5 wrap, q degree 1, base degree 42",
+            ],
+        },
+        "carry_skeleton_diagnostic": {
+            "status": carry_result.status,
+            "equations": carry_result.equation_count,
+            "unique_equations": carry_result.unique_equation_count,
+            "unsat_core": [
+                serialize_equation(equation)
+                for equation in carry_result.unsat_core
             ],
         },
         "prism": {

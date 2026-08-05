@@ -46,6 +46,10 @@ checks the resulting cycle identically in `b` and `q=b^n`.
 This is the selected approach. It keeps discovery and acceptance independent,
 and an infeasible system can return a concrete contradictory subset.
 
+If this carry-preserving system is infeasible, run Approach 2 as a required
+fallback. That removes the carry-skeleton assumption and decides whether the
+word identities themselves can hold with carries that change above base 17.
+
 ### 2. Solve global polynomial coefficients directly
 
 Compile unknown anchors into the full `b,q` coefficient identities and solve
@@ -98,6 +102,12 @@ Reversal is token reversal. Ordinary phase identities compare bivariate
 coefficients exactly. The wrap identity substitutes `q -> bq`. This verifier
 does not consume the carry equations or their carry assignments.
 
+For the global fallback, linearize every bivariate residual coefficient in the
+Boolean anchors: evaluate the all-lower assignment, then flip one anchor at a
+time to obtain its exact coefficient. Solve these equations with the same
+Boolean engine and deletion-minimize any infeasible core. This classifies the
+entire affine lift class without assuming that carries agree with base 17.
+
 ### Non-palindrome certificate
 
 For each phase, compare fixed outer digit functions. Record a same-slope,
@@ -146,7 +156,8 @@ The round succeeds with either outcome:
 1. a globally valid affine lift, independently verified as an identity in
    `Z[b,q]` and accompanied by all-base non-palindrome witnesses; or
 2. an independently checked irreducible infeasible core proving that no lift in
-   the stated affine class preserves the base-17 topology and carry skeleton.
+   the stated affine class preserves the base-17 word topology, even if carries
+   change with the base.
 
 Any stronger claim requires a mandatory primary-source and exact-phrase novelty
 search before it enters the ledger.

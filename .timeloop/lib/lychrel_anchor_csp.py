@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import product
 
-from lychrel_affine import AffineDigit, AffineWord, verify_affine_cycle
+from lychrel_affine import (
+    AffineDigit,
+    AffineWord,
+    reverse_affine_word,
+    shift_q_parameter,
+    value_bivariate,
+    verify_affine_cycle,
+)
 from lychrel_wordproof import ParametricWord
 
 
@@ -329,6 +336,126 @@ def classify_affine_lift(
         status="verified_lift" if cycles else "candidates_rejected",
         equation_count=len(equations),
         unique_equation_count=len(unique),
+        solution_count=len(solutions),
+        cycles=cycles,
+        unsat_core=(),
+    )
+
+
+def _residual_coefficients(
+    cycle: tuple[AffineWord, ...],
+) -> dict[tuple[int, int, int], int]:
+    residual = {}
+    for phase, word in enumerate(cycle):
+        left = value_bivariate(word)
+        right = value_bivariate(reverse_affine_word(word))
+        expected = value_bivariate(cycle[(phase + 1) % len(cycle)])
+        if phase == len(cycle) - 1:
+            expected = shift_q_parameter(expected)
+        for q_degree in range(max(len(left), len(right), len(expected))):
+            left_base = left[q_degree] if q_degree < len(left) else (0,)
+            right_base = right[q_degree] if q_degree < len(right) else (0,)
+            expected_base = expected[q_degree] if q_degree < len(expected) else (0,)
+            for base_degree in range(
+                max(len(left_base), len(right_base), len(expected_base))
+            ):
+                value = (
+                    (left_base[base_degree] if base_degree < len(left_base) else 0)
+                    + (
+                        right_base[base_degree]
+                        if base_degree < len(right_base)
+                        else 0
+                    )
+                    - (
+                        expected_base[base_degree]
+                        if base_degree < len(expected_base)
+                        else 0
+                    )
+                )
+                if value:
+                    residual[(phase, q_degree, base_degree)] = value
+    return residual
+
+
+def _anchor_keys(words: tuple[ParametricWord, ...]) -> tuple[str, ...]:
+    return tuple(
+        AnchorVariable(phase, fragment_index, offset).key
+        for phase, word in enumerate(words)
+        for fragment_index, fragment in enumerate(word.fragments)
+        for offset, _ in enumerate(fragment)
+    )
+
+
+def build_global_affine_equations(
+    words: tuple[ParametricWord, ...],
+) -> tuple[CarryEquation, ...]:
+    """Linearize every exact ``Z[b,q]`` cycle coefficient in the anchors."""
+    variables = _anchor_keys(words)
+    zero = {variable: 0 for variable in variables}
+    baseline = _residual_coefficients(materialize_affine_cycle(words, zero))
+    deltas = {}
+    coordinates = set(baseline)
+    for variable in variables:
+        assignment = dict(zero)
+        assignment[variable] = 1
+        changed = _residual_coefficients(
+            materialize_affine_cycle(words, assignment)
+        )
+        delta = {
+            coordinate: changed.get(coordinate, 0) - baseline.get(coordinate, 0)
+            for coordinate in set(changed) | set(baseline)
+        }
+        deltas[variable] = {
+            coordinate: value for coordinate, value in delta.items() if value
+        }
+        coordinates.update(deltas[variable])
+    equations = []
+    for phase, q_degree, base_degree in sorted(coordinates):
+        terms = tuple(
+            (variable, deltas[variable].get((phase, q_degree, base_degree), 0))
+            for variable in variables
+            if deltas[variable].get((phase, q_degree, base_degree), 0)
+        )
+        rhs = -baseline.get((phase, q_degree, base_degree), 0)
+        if terms or rhs:
+            equations.append(
+                CarryEquation(
+                    terms,
+                    rhs,
+                    provenance=(
+                        f"phase={phase},q_degree={q_degree},"
+                        f"base_degree={base_degree}"
+                    ),
+                )
+            )
+    return tuple(equations)
+
+
+def classify_global_affine_lift(
+    words: tuple[ParametricWord, ...],
+) -> LiftClassification:
+    equations = build_global_affine_equations(words)
+    solutions = solve_boolean_equations(equations, limit=2)
+    if not solutions:
+        return LiftClassification(
+            status="infeasible",
+            equation_count=len(equations),
+            unique_equation_count=len(equations),
+            solution_count=0,
+            cycles=(),
+            unsat_core=irreducible_unsat_core(equations),
+        )
+    cycles = tuple(
+        cycle
+        for assignment in solutions
+        if verify_affine_cycle(
+            cycle := materialize_affine_cycle(words, assignment)
+        )
+    )
+    return LiftClassification(
+        status="verified_lift" if cycles else "candidates_rejected",
+        equation_count=len(equations),
+        unique_equation_count=len(equations),
         solution_count=len(solutions),
         cycles=cycles,
         unsat_core=(),
