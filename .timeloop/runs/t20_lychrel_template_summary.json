@@ -1,0 +1,39 @@
+{
+  "target": "lychrel-bases",
+  "date": "2026-08-04",
+  "engine": ".timeloop/lib/lychrel_templates.py",
+  "reference": "public-domain search.hs from https://p196.org/files/lychrel842.zip",
+  "calibration": {
+    "base26_published_output_exact": true,
+    "base11_matching_connector_recovered": true,
+    "pytest": "4 passed in 3.16s"
+  },
+  "symmetric_2_plus_2": {
+    "bases": [3, 40],
+    "all_exterior_graphs_exhausted": true,
+    "all_interior_graphs_exhausted": true,
+    "matching_bases": [26],
+    "base26_connector": [true, [1, 0], [1, 0]],
+    "largest_near_miss": {
+      "base": 38,
+      "exterior_states": 7939,
+      "interior_states": 10762,
+      "matching_connectors": 0
+    }
+  },
+  "symmetric_3_plus_3_audited": {
+    "7": {"exterior_exhausted": true, "exterior_states": 1859, "interior_exhausted": true, "interior_states": 3180, "matches": 0},
+    "11": {"exterior_exhausted": true, "exterior_states": 411, "interior_exhausted": true, "interior_states": 17096, "matches": 1},
+    "20": {"exterior_exhausted": true, "exterior_states": 17918, "interior_exhausted": true, "interior_states": 45402, "matches": 0},
+    "24": {"exterior_exhausted": true, "exterior_states": 86, "interior_exhausted": true, "interior_states": 54172, "matches": 0},
+    "30": {"exterior_exhausted": true, "exterior_states": 3059, "interior_exhausted": true, "interior_states": 68398, "matches": 0},
+    "35": {"exterior_exhausted": true, "exterior_states": 26, "interior_exhausted": true, "interior_states": 82278, "matches": 0},
+    "39": {"exterior_exhausted": true, "exterior_states": 1911, "interior_exhausted": false, "interior_depth": 80, "interior_states": 111734, "matches_through_depth": 0}
+  },
+  "bounded_extensions": {
+    "asymmetric_total_at_most_6": "bases 3..40, exterior depth 50; all four non-power-of-two exterior candidates had no interior match through depth 100",
+    "asymmetric_total_7": "bases 3..30, exterior depth 60; no accepting exterior connector",
+    "asymmetric_total_8": "bases 3..30, exterior depth 70; no accepting exterior connector",
+    "base20_4_plus_4": "exterior and interior searched through depth 120; no matching connector"
+  }
+}
