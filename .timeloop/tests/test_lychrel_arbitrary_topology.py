@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -166,3 +168,54 @@ def test_assignment_checker_rejects_missing_and_false_models() -> None:
     assert not assignment_satisfies(formula, {})
     assert not assignment_satisfies(formula, {"x": False})
     assert assignment_satisfies(formula, {"x": True})
+
+
+def test_primary_evidence_scans_every_base() -> None:
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "runs"
+        / "t24_lychrel_arbitrary_topology.py"
+    )
+
+    completed = subprocess.run(
+        ["/usr/local/bin/sage", "-python", str(script)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    evidence = json.loads(completed.stdout)
+
+    assert evidence["kind"] == "arbitrary_digit_topology_classification"
+    assert evidence["status"] == "no_n_zero_realizations"
+    assert evidence["reference"] == {
+        "base": 17,
+        "fixed_occurrences": 497,
+        "integer_replays": 54,
+        "n_zero_columns": 499,
+        "one_hot_assignment_verified": True,
+        "polynomial_verified": True,
+    }
+    assert evidence["scan"]["base_start"] == 18
+    assert evidence["scan"]["base_stop"] == 40
+    assert evidence["scan"]["tested"] == 23
+    assert evidence["scan"]["hits"] == []
+    assert [item["base"] for item in evidence["scan"]["results"]] == list(
+        range(18, 41)
+    )
+    assert {item["status"] for item in evidence["scan"]["results"]} == {
+        "infeasible_at_n_zero"
+    }
+    assert {tuple(item["parameters_checked"]) for item in evidence["scan"]["results"]} == {
+        (0,)
+    }
+    base18 = evidence["scan"]["results"][0]
+    assert base18["variable_count"] == 9439
+    assert base18["clause_count"] == 715404
+    assert len(base18["dimacs_digest"]) == 64
+    assert evidence["solver"]["engine"] == "PicoSAT via pycosat"
+    assert evidence["prism"]["model"] == "qwen3.6:27b-mlx"
+    assert evidence["prism"]["artifacts"] == [
+        "99415b8fc2a52e62f541c03b93712c1bae61f39ac0d3a61fdf898409c92687ce",
+        "8a9c0b6e3bb8539cf2aa022edaeba1508a09281bc562c382f57d4b738758e90c",
+    ]

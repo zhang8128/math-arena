@@ -1,0 +1,314 @@
+{
+  "calibration": {
+    "clause_count": 637939,
+    "dimacs_digest": "ed3f866d0cd1d6ca293fd641c577816d9fdb2c2aff40517d8242af7981c41adc",
+    "parameters": [
+      0
+    ],
+    "variable_count": 8942
+  },
+  "kind": "arbitrary_digit_topology_classification",
+  "limitations": [
+    "The negative scope fixes the T21 topology and bases 18..40.",
+    "PicoSAT UNSAT results require the independent binary/CaDiCaL audit before final reporting.",
+    "No minimal unsatisfiable column core is claimed."
+  ],
+  "prism": {
+    "accepted_disposition": "layered finite carry states with exact local search and independent audit",
+    "artifacts": [
+      "99415b8fc2a52e62f541c03b93712c1bae61f39ac0d3a61fdf898409c92687ce",
+      "8a9c0b6e3bb8539cf2aa022edaeba1508a09281bc562c382f57d4b738758e90c"
+    ],
+    "false_limitation": "outgoing carries remain Boolean for every base in this two-addend problem",
+    "model": "qwen3.6:27b-mlx",
+    "prompt_version": 2,
+    "seed": 20260806,
+    "unsupported_claims": [
+      "carry-flux cut invariant",
+      "determinant/resultant Omega invariant",
+      "bounded treewidth at most three",
+      "higher-base feasible algebraic components"
+    ]
+  },
+  "reference": {
+    "base": 17,
+    "fixed_occurrences": 497,
+    "integer_replays": 54,
+    "n_zero_columns": 499,
+    "one_hot_assignment_verified": true,
+    "polynomial_verified": true
+  },
+  "scan": {
+    "base_start": 18,
+    "base_stop": 40,
+    "hits": [],
+    "results": [
+      {
+        "base": 18,
+        "clause_count": 715404,
+        "dimacs_digest": "975f6e5adcc9218af5ca42dc3dfc6a10988922038e701eb1df46c809eeaed490",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 9439
+      },
+      {
+        "base": 19,
+        "clause_count": 797310,
+        "dimacs_digest": "f194eb2f6f51f3fcefc711e5380ef3eee0676f0b3afd61ac913709c821fe9440",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 9936
+      },
+      {
+        "base": 20,
+        "clause_count": 883657,
+        "dimacs_digest": "f79a0727f282bb25f917ba71d79010fb3c3c37f646e73d35d2feb950ca5304a0",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 10433
+      },
+      {
+        "base": 21,
+        "clause_count": 974445,
+        "dimacs_digest": "f6eedf11461a67aa4e7268c7db37918702f7ff6a53ebf4b49dd0c41529475c64",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 10930
+      },
+      {
+        "base": 22,
+        "clause_count": 1069674,
+        "dimacs_digest": "e8ae11026789548e06f76f80f8c2059fd9cde4fc62a07c21a77afd4f5dadcef9",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 11427
+      },
+      {
+        "base": 23,
+        "clause_count": 1169344,
+        "dimacs_digest": "3e67ee3a548453b3f0271d17c0625f9161e7704fd34b9f53d7be09582baf99c3",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 11924
+      },
+      {
+        "base": 24,
+        "clause_count": 1273455,
+        "dimacs_digest": "57a7424a0ee5fd582176ae1a690a6e9c6adec959bef55ba3135799e0eee5501b",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 12421
+      },
+      {
+        "base": 25,
+        "clause_count": 1382007,
+        "dimacs_digest": "c8acefa51345a189fd1e4aa33005e2360b27dc193720de7a951c40c85cbe2a0c",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 12918
+      },
+      {
+        "base": 26,
+        "clause_count": 1495000,
+        "dimacs_digest": "9d5c49d64793a5f8b3ebe32f78ff43459d787fec364ffb6680e5e88327645b14",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 13415
+      },
+      {
+        "base": 27,
+        "clause_count": 1612434,
+        "dimacs_digest": "49dd976c5f990c5335b82b03bec48a59be4aff00fd39915ae798cb7caf5ad19a",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 13912
+      },
+      {
+        "base": 28,
+        "clause_count": 1734309,
+        "dimacs_digest": "e3801128f0b8570b6ee85051c8a32504f67d18cefa7a634602be77544608946a",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 14409
+      },
+      {
+        "base": 29,
+        "clause_count": 1860625,
+        "dimacs_digest": "9699ed7f4af45ee798cb0614733720911fd1d9fc13011978d0583d725959c422",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 14906
+      },
+      {
+        "base": 30,
+        "clause_count": 1991382,
+        "dimacs_digest": "59c0e033e04135757855345b791ab56ca761416c134d549c26db24a30a379ef0",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 15403
+      },
+      {
+        "base": 31,
+        "clause_count": 2126580,
+        "dimacs_digest": "f3778966bc7a7534cca33431dbc57d15ed71ec6eed69efb1a3ad152c12231fa0",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 15900
+      },
+      {
+        "base": 32,
+        "clause_count": 2266219,
+        "dimacs_digest": "81262359828b3da06e5f0606f8d967967cc961f61728c762ae61554dc82e3194",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 16397
+      },
+      {
+        "base": 33,
+        "clause_count": 2410299,
+        "dimacs_digest": "8a6e405d42a60b93799de7692a9bfd94536567bf1f5173d3e78012a0c007b157",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 16894
+      },
+      {
+        "base": 34,
+        "clause_count": 2558820,
+        "dimacs_digest": "306a8e186dd123f007f3e7ee6eb54cc088534014e51eedfa072eb1d4f4188038",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 17391
+      },
+      {
+        "base": 35,
+        "clause_count": 2711782,
+        "dimacs_digest": "c63318bd3886237483c664d087b8da410011dde86ee8e369bdbdbb0bfbbb1512",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 17888
+      },
+      {
+        "base": 36,
+        "clause_count": 2869185,
+        "dimacs_digest": "e93e95337ecc552de0238f09675b5dc5dd20d02db94202ed1d65abc7f6704d20",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 18385
+      },
+      {
+        "base": 37,
+        "clause_count": 3031029,
+        "dimacs_digest": "d8d3dd889c4ab20f7e5a2b2770ca560794a653123c658be0bbffb09c6d2cad27",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 18882
+      },
+      {
+        "base": 38,
+        "clause_count": 3197314,
+        "dimacs_digest": "592e8867855de11db22c00639d23bd3d0af15f32507764a662b7c97cbb9f92f3",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 19379
+      },
+      {
+        "base": 39,
+        "clause_count": 3368040,
+        "dimacs_digest": "49ce0ab25b292f4bd107cde1847eebb049fd486fb5bbcff0b9b2180f2d8fb4c2",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 19876
+      },
+      {
+        "base": 40,
+        "clause_count": 3543207,
+        "dimacs_digest": "9344698f42d7730bee39c2fb7e5618bf79365a7e632eff443b2fa7d5adeaf199",
+        "encoding": "one-hot digits with exact carry transitions",
+        "parameters_checked": [
+          0
+        ],
+        "status": "infeasible_at_n_zero",
+        "variable_count": 20373
+      }
+    ],
+    "tested": 23
+  },
+  "scope": {
+    "carry_behavior": "fresh Boolean carry per phase, parameter, and column",
+    "fixed_digits": "497 independent values in 0..B-1",
+    "negative_logic": "UNSAT at n=0 is a necessary-condition obstruction",
+    "repeat_mapping": "0 -> 0 and 16 -> B-1",
+    "topology": "exact T21 six-phase fragment lengths and repeat locations"
+  },
+  "solver": {
+    "engine": "PicoSAT via pycosat",
+    "pycosat_version": "0.6.3"
+  },
+  "status": "no_n_zero_realizations"
+}

@@ -63,7 +63,19 @@ class CNFFormula:
 
     @property
     def digest(self) -> str:
-        return sha256(self.dimacs_bytes()).hexdigest()
+        digest = sha256()
+        digest.update(
+            f"p cnf {self.variable_count} {self.clause_count}\n".encode("ascii")
+        )
+        for clause in self.clauses:
+            digest.update(
+                (
+                    " ".join(str(literal) for literal in clause) + " 0\n"
+                    if clause
+                    else "0\n"
+                ).encode("ascii")
+            )
+        return digest.hexdigest()
 
 
 def _reference_base(words: tuple[ParametricWord, ...]) -> int:
