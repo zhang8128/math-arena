@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runs"))
 
 from lychrel_arbitrary_topology import (  # noqa: E402
+    CNFFormula,
     ColumnConstraint,
     DigitAtom,
+    assignment_satisfies,
     build_column_constraints,
+    compile_one_hot_cnf,
+    decode_digit_assignment,
+    materialize_cycle,
+    reference_assignment,
     render_arbitrary,
 )
-from lychrel_wordproof import ParametricWord  # noqa: E402
+from lychrel_wordproof import ParametricWord, verify_cycle  # noqa: E402
+from t22_lychrel_affine_lift import base17_reference_cycle  # noqa: E402
 
 
 def test_renderer_maps_repeats_but_not_fixed_occurrences() -> None:
@@ -82,3 +91,78 @@ def test_compiler_rejects_invalid_base_phase_and_parameter() -> None:
             pass
         else:
             raise AssertionError(f"expected ValueError for {kwargs}")
+
+
+def test_one_hot_cnf_has_literal_domains_and_transition_implication() -> None:
+    words = (
+        ParametricWord(2, ((1, 1),), ()),
+        ParametricWord(2, ((1, 1),), ()),
+    )
+
+    formula = compile_one_hot_cnf(words, 2, parameters=(0,))
+
+    p0_zero = formula.variable_ids["digit:p0:f0:d0:value0"]
+    p0_one = formula.variable_ids["digit:p0:f0:d0:value1"]
+    p0_right_one = formula.variable_ids["digit:p0:f0:d1:value1"]
+    p1_zero = formula.variable_ids["digit:p1:f0:d1:value0"]
+    carry = formula.variable_ids["c:p0:n0:col0"]
+    assert formula.clauses[:2] == (
+        (p0_zero, p0_one),
+        (-p0_zero, -p0_one),
+    )
+    assert (-p0_one, -p0_right_one, p1_zero) in formula.clauses
+    assert (-p0_one, -p0_right_one, carry) in formula.clauses
+    assert formula.dimacs_bytes().startswith(
+        f"p cnf {formula.variable_count} {formula.clause_count}\n".encode()
+    )
+    assert len(formula.digest) == 64
+    assert formula.digest == compile_one_hot_cnf(
+        words, 2, parameters=(0,)
+    ).digest
+
+
+@lru_cache(maxsize=1)
+def reference_cycle() -> tuple[ParametricWord, ...]:
+    return base17_reference_cycle()
+
+
+def test_t21_n_zero_system_has_expected_size_and_reference_model() -> None:
+    words = reference_cycle()
+
+    constraints = build_column_constraints(words, 17, parameters=(0,))
+    formula = compile_one_hot_cnf(words, 17, parameters=(0,))
+    assignment = reference_assignment(words, formula)
+
+    assert sum(len(fragment) for word in words for fragment in word.fragments) == 497
+    assert len(constraints) == 499
+    assert assignment_satisfies(formula, assignment)
+
+
+def test_reference_model_decodes_and_materializes_the_control_cycle() -> None:
+    words = reference_cycle()
+    formula = compile_one_hot_cnf(words, 17, parameters=(0,))
+    assignment = reference_assignment(words, formula)
+    model = tuple(
+        None if index == 0 else assignment[formula.semantic_keys[index - 1]]
+        for index in range(formula.variable_count + 1)
+    )
+
+    digits = decode_digit_assignment(formula, model)
+    cycle = materialize_cycle(words, 17, digits)
+
+    assert cycle == words
+    assert verify_cycle(cycle)
+
+
+def test_assignment_checker_rejects_missing_and_false_models() -> None:
+    formula = CNFFormula(
+        base=2,
+        parameters=(0,),
+        clauses=((1,),),
+        semantic_keys=("x",),
+        digit_keys=(),
+    )
+
+    assert not assignment_satisfies(formula, {})
+    assert not assignment_satisfies(formula, {"x": False})
+    assert assignment_satisfies(formula, {"x": True})
