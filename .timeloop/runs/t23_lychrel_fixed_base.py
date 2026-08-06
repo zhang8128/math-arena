@@ -228,6 +228,7 @@ def build_evidence() -> dict[str, object]:
                 "the proposed asymptotic elevation parity invariant",
                 "the assumption that carries vanish in the large-base limit",
             ],
+            "independently_falsified_outcomes_recorded": 2,
         },
         "prior_art_scope": {
             "base17": "Seal's published topology; positive calibration only",

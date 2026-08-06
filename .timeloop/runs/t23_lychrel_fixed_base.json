@@ -1278,6 +1278,7 @@
       "8e231924598beca796e4c0e7f5b6a26a7fa1f5e7e4ca65dee41760f872cdb4fa",
       "db50930d3cbc125b9efcbec9716995e9fdba11902a28b5276f1f27b9b3074331"
     ],
+    "independently_falsified_outcomes_recorded": 2,
     "model": "qwen3.6:27b-mlx",
     "prompt_version": 2,
     "seed": 20260806,

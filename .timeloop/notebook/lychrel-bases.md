@@ -419,3 +419,135 @@ lift methods, exact affine and bivariate arithmetic, a provenance-bearing
 Boolean solver, carry and global coefficient classifications, two independent
 two-equation cores, an independent polynomial reimplementation, exhaustive
 core audits, and current literature searches.
+
+## T23 STATUS — NO FIXED-BASE LOWER/UPPER TRANSPLANTS IN BASES 18..100
+
+The exact T21 base-17 topology has no lower/upper occurrence transplant in any
+fixed base `18..100`, even when every base receives an independent mask and
+completely fresh carries.  The failure is stronger than expected: every base is
+already impossible in the finite `n=0` member, before either growing interface
+appears.
+
+### SEARCHED
+
+For a fixed base `B`, every one of the 497 fixed base-17 digit occurrences `d`
+was independently allowed to be
+
+`d` or `d+(B-17)`.
+
+Repeat tokens were mapped rigidly as `0 -> 0` and `16 -> B-1`.  Carries were
+fresh Boolean variables for every base, phase, parameter, and column; no
+base-17 carry skeleton was preserved.
+
+The exact decision method used the column identity
+
+`left + right + carry_in = output + B*carry_out`.
+
+Because the topology has two repeat interfaces, every transition residual has
+degree at most two in `q=B^n`.  Satisfaction at `n=0,1,2`, hence at the three
+distinct values `q=1,B,B^2`, forces the residual polynomial to vanish
+identically.  The local carry system is therefore a complete infinite-family
+decision, not a sampled heuristic.  Every positive would additionally have
+passed the pre-existing exact `Z[q]` verifier and six fixed non-palindrome
+witnesses.
+
+The base-17 calibration passes all three interpolation parameters and the exact
+polynomial verifier.  Each target base `18..100` is infeasible already in its
+499-equation, 990-variable `n=0` system.  There are zero hits.  Deterministic
+evidence is in `.timeloop/runs/t23_lychrel_fixed_base.json`.
+
+### RULED OUT
+
+- No per-occurrence lower/upper mask transplants the exact T21 six-phase,
+  two-interface base-17 topology to any base `18..100`.
+- This conclusion permits the mask and all carries to change independently in
+  every base.
+- The known base-20 and base-26 Lychrel constructions are not counterexamples:
+  they use different published topologies.
+- This does **not** rule out arbitrary fixed digits, different phase lengths or
+  interface locations, other periods, other proof grammars, or Lychrel numbers
+  in the tested bases.
+
+### STRUCTURE
+
+The 83 large CSP failures collapse to three tiny obstruction families.  The
+same three columns
+
+`(phase 1, column 40), (phase 1, column 41), (phase 2, column 41)`
+
+are jointly infeasible in 81 bases.  That core becomes feasible only at bases
+33 and 34.  Base 33 is blocked by columns `(1,41), (2,40), (2,41)`; base 34 by
+`(1,41), (2,41), (2,42)`.  All are `n=0` columns.  The generic three-row family
+is deletion-irreducible at base 18; at other bases some two-row subset already
+suffices.  The exceptional cores are deletion-irreducible in their respective
+bases.
+
+The standalone audit imports neither the fixed-base compiler nor the Boolean
+solver.  It reads the saved T21 fragments, independently reconstructs these
+columns, and exhausts every Boolean assignment for every covered base.  All 83
+joint solution counts are zero.  Its canonical equation digest is
+`8cddc4593291c135f01ac009a29ee5d080b6a4119d9afad45305aa50652d476a`.
+
+### TECHNIQUE
+
+- Turn fixed-base digit choices and fresh carries into sparse local equations;
+  avoid the high-arity rows produced when place-value coefficients are
+  collapsed too early.
+- Use interpolation at three `q` values to prove an all-parameter identity for
+  a two-interface grammar, then retain a separate exact polynomial verifier as
+  the acceptance oracle.
+- Short-circuit a universal family at `n=0` when possible: one impossible
+  member disproves the whole certificate.
+- Minimize the explanation, not merely runtime.  A uniform three-column core
+  plus two exceptional cores is independently auditable in a way 83 solver
+  exits are not.
+
+### PRISM
+
+Math Prism applied symmetry/group-action and extremal-principle frames to the
+immutable problem `lychrel-bases:base17-fixed-base-transplants`, version 1,
+using prompt version 2, model `qwen3.6:27b-mlx`, seed `20260806`, and the 32K
+disposition budget.
+
+The useful disposition was to seek quotient-sized explanations and a boundary
+obstruction.  The proposed reversal-carry signature, group action, asymptotic
+elevation parity, zero-carry limit, and predicted positive representatives were
+not accepted.  After the standalone audit, both concrete artifacts were
+recorded as independently falsified Prism outcomes; the exact negative result,
+not the model narrative, controls the frame feedback.
+
+### NOVELTY
+
+`not found`, with no publication claim.  Current searches found the published
+base-17 construction, the public-domain carry search/classification work, the
+known base list, and recent numerical-thread experiments, but no prior
+base-by-base lower/upper transplant of Seal's topology or these obstruction
+cores.  Queries included exact searches for `base-17 Lychrel affine digits`,
+`reverse and add variable base carry equations`, `Lychrel topology transplant
+base 17`, and the distinguishing core coordinates.
+
+Sources rechecked on 2026-08-06:
+
+- David Seal's construction: <https://www.mathpages.com/home/dseal.htm>
+- Public-domain “Search for and classification of Lychrel numbers” archive:
+  <https://p196.org/files/lychrel842.zip>
+- OEIS A060382: <https://oeis.org/A060382>
+- 2024 numerical-experiments abstract:
+  <https://canum2024.math.cnrs.fr/programme/soumission/3a00c64b-9099-4c01-a7fc-367cfc8e04b4/abstract.pdf>
+
+### NEXT
+
+Decide whether the topology itself, rather than the two-anchor digit alphabet,
+is the obstruction.  Retain the six phases and repeat layout but allow every
+fixed occurrence to be an arbitrary digit `0..B-1`; solve the exact
+`n=0,1,2` carry CSP first in bases `18..40`.  If feasible, minimize how many
+occurrences must leave the lower/upper alphabet and verify the resulting cycle
+exactly.  If infeasible, extract a topology-only core before changing interface
+placement.
+
+### COST
+
+Roughly two additional hours: two deep 27B Prism frames, three method designs,
+six TDD acceptance tests, a complete 83-base exact scan, three compact core
+families, a standalone exhaustive reimplementation, deterministic replay,
+current literature searches, and two independently falsified Prism outcomes.
