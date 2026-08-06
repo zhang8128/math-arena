@@ -76,8 +76,8 @@ certificate libraries.
 1. Write a failing subprocess-level audit test.
 2. Independently parse T21 fragments, rebuild selected columns, and brute-force
    each core without production fixed-base/CSP imports.
-3. Verify every base `18..100` is covered by an unsatisfiable core and every
-   one-equation deletion has a witness.
+3. Verify every base `18..100` is covered by an unsatisfiable core; audit and
+   report deletion-minimality per base without assuming it is uniform.
 4. Run the audit green and capture its deterministic summary in the main JSON.
 
 ### Task 6: Research record and integration
@@ -92,4 +92,3 @@ certificate libraries.
 3. Run focused and complete `.timeloop` tests plus both run scripts.
 4. Review the diff, commit coherent checkpoints, and integrate only verified
    changes into `main` while preserving the pre-existing exam result.
-

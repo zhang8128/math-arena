@@ -77,8 +77,11 @@ assignment without importing the production fixed-base module or Boolean
 solver.
 
 Exploration predicts one three-equation core covers every target base except
-33 and 34, each of which has a separate three-equation core.  This prediction
-is not a result until the production scan and independent audit reproduce it.
+33 and 34, each of which has a separate three-equation core.  The uniform core
+need not be deletion-minimal in every covered base; its purpose is a stable,
+tiny certificate family, with minimality recorded rather than assumed.  This
+prediction is not a result until the production scan and independent audit
+reproduce it.
 
 ## Prism disposition and safeguards
 
@@ -112,4 +115,3 @@ If no base survives, the claim is only: no lower/upper occurrence mask
 transplants this exact T21 topology to a base in `18..100`.  It says nothing
 about arbitrary digits, other periods, other repeat layouts, or Lychrel
 existence in those bases.
-
