@@ -1,0 +1,4831 @@
+{
+  "independent_audit": {
+    "encodings_distinct": true,
+    "implementation": "JSON-only interface movement plus standalone binary full adders",
+    "instances_tested": 184,
+    "kind": "independent_binary_interface_audit",
+    "satisfiable_instances": [],
+    "solver": {
+      "engine": "CaDiCaL",
+      "version": "3.0.1"
+    },
+    "source": {
+      "file": "t21_lychrel_multi_interface.json",
+      "sha256": "57adc142253bc84cf96a2ad2d28415a906cd5782ac830c499011fc230b243ee0"
+    },
+    "status_agreement": true,
+    "unsatisfiable_instances": [
+      {
+        "base": 18,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "base": 18,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "base": 18,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "base": 18,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "base": 18,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "base": 18,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "base": 18,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "base": 18,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 19,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 20,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 21,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 22,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 23,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 24,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 25,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 26,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 27,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 28,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 29,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 30,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 31,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 32,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 33,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 34,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 35,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 36,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 37,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 38,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 39,
+        "variant_id": "phase0-interface1-plus2"
+      },
+      {
+        "base": 40,
+        "variant_id": "phase0-interface1-plus2"
+      }
+    ],
+    "variants": [
+      {
+        "fragment_lengths": [
+          26,
+          25,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "8e720f877b10aa0496422b789978b110bda52f2f54de2e0d9be4f71dc0378f8a",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "fcaacece67c374359b75af2c02aa9db65613eb2ce367a15c6d8b70d0682c6cb3",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "bda033f64965d0166612378ba59240c046b3c53013bc01a3e7a6ebe798971dbf",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "22df69b851463f69e14e4d53659d4adac2ff469e4e49ce6d3905c2db2f80852c",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "cd30bfcc9948b6dd58edd0e7cb785bbb8a5145f2af564c45c1c3c70212bbdfc4",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "7648ab7aea3914c4af9813b45800cf962b277c9d87c3214d94443724eaa32a48",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "60d4a9102791e20e832896a76ccb95ac49702cac88de31131411cc9def59b966",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "7cd2b1f01b2d92b33d6faa7a1e620671e2b2e1e1838b50424edc2175cbfc7737",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "87dca4ce5b077d037cf1744e10b3844dd6514a63ca06b4c841cf91413b5ee32e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "91c18acd619d36e1693968c0a302d2abee4242e1599d7d600b2f1fb747f24fcb",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "d18add24b7b281c471ee718f6847b55b9c05810856af2e9c8b69ca5fafa04633",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "bfd7e6376e2297e5ce3a2d8b01d1a24e3d9939d8f18e99529121457c53fdb87b",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "070493aaac3af138b6267c7e20718b5bd6a397f18fd346b57bcf8cb00097f584",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "6550739c33e85a4ac2cf0ef3339a32541ea533f18753f354a06020a39c9a9f3b",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "5c88ac4893ac3374a2b7e2f6f9131547046a71b1062c971da3d3a8c2e5a420b7",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "fee248733b8d456dc98f8702720cc48142235afcecd84d374344b4f51692038e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "e332c583f6b5a08cad84b75f065319b5a5032ddbd6f5a534bedde61b5dc9a12f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "94594a0c0e644ea93ed3b300852654ec3ef2d941c5558eacd5cca839951c8245",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "bb3470cf666ff11abf47f858f50d7b4a405be694e4693fc367fafda4d6790544",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "f74bf6506e319018effb93b58f57e865c659ecd7bed02604ab2035659d5742d5",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "e93942c2e74c22bd2a1879335f827219e8e7df217f2247ef37ed4a8708e469eb",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "7de4d00d6cfae064bd5f8670b0720a0d2061e308c919baa63a8dfbc13e8f4503",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "5fafb11f2ee232903b70fe19e5960cb280044e110f18d1f26800ebd38d6051b7",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": -2,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "fragment_lengths": [
+          27,
+          24,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "122c0c3b69b78622f7be38d5f156874a7843a76ff751fd694531b5515135618c",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "48b8fda75f789be6cad2cba9e0c7bed184e4f8b09464ff88193739e1f41ef33d",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "18df7112af4280659381c48c7adda511febffde0eba38d263a52508593e5e41e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "a04ac4be34b2d57da96ad6262cc64e174b3c31b6f6ddfe63d73726574f8e2259",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "7d3edfa064a1ca34e3ad7885a4590e99154aad57a333009690dc1b6b4012a232",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "4286fa2dd387c18b703407882cef33887b0575744395169d88b0955389ca5e9c",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "6738d636a9eab84ca0cb73ad6e703910e2b5f92c3ca3a06510661cf368ffef25",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "ce0a5f52bcdb086b04e737a21d3ad228f0550066996b9a6e5c890ac8662e0c84",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "4938ff777d00576438a6575ca8b93c9470a66ffc255ef0b0fa306e33a1a79edc",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "e41126ca1c0cc327385a76ea45462c2f80a63052a5f41979d029b1d8ce920f69",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "ee1a2aa50562d8cf001fdbeb843a46001dfdd691b60ea50057a1723792c3386f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "8daf8255a789c687a2645d2f752bd1a144108f8633f77b2c138459d5262ecaae",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "0daeb10ad1a709db2f1439c07025154855edb844ec0a343d53ab77685b2fbc60",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "28e828316b556e0dac48706c22a3bdd67e0c9619cc445c52d00b003227203c4e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "3920cb65f04b259498086ec6be8d529ea6f6bc8501d1df6a61160e6286c6d166",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "1dd3f5a643a639ae49fbd08983303e5bb734be0b0bfc104f27e82500bce0fc70",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "866544abc1b336793da46770a53310b4c4f293e49637d9124f20fd55735293b0",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "9221e0a1ab66e60f546b8c5d6feec255f6412405fdee1db6e8e83c0c8d4b97b7",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "636178099cd5c8417be091af5e666e0457de93694b25e3546edbe6e1322b4ed8",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "c7a3c9265bd9e3b0d6a8f062271149409d5f667fae607599020404356ffa52c6",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "32f910bf128b971072dfdb7f6d4e3dfd756b7994bab85d1d8e5d2613aa000f60",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "7d5b89c8b4a0ab2a18e2962c041cb7ab6f9f8a29d1a02006a364697255c05559",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "b1253874ef8ed739c63d4d01302afeefaa80db8b544c8d2c28684dc3c760f887",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": -1,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "fragment_lengths": [
+          29,
+          22,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "f764f01754b9e02b217f1898857a95f87f7d060c56c69030bf98316b6ddcd7a8",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "f48f4514c373a317c5fd49de5573dc98e5a0fbd7963a877945bf272ac4ad2bdc",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "2583406a274948d36ef7b8c65ef15347f4fc71fd723cd03599e21d86458aad62",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "58afa30c1ee689671a27efda15e0c70905ab83897b0ba56188e6fd2920870684",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "67c3a9a9af9f85a877d46717d21da15b4cdfeb825ba4fccddd3753b4c7ee0138",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "60bed486081a16a7a8fb08dc71f17225ffbebabfc627a80c2d405538e07ab8dc",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "e508e4c0b7ca8b63da933979ad77d37e9fbbe7a324e4d1eac10a042ed04676ec",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "b36063ef4988fab6bb40938a3a506ef28c34e2fb55c50118ccc3c0d760baeaff",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "3694a2cb090808f2ef970549c670ed302aebe4180b3fb96b20100b055bfe667e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "6c0015e1cc44c8b6221e7be2a2f1f1ad9934013f4fd801183f98173a8468d826",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "26f2fe64e0957b81dd68a8f606c31070469d434f7b556a1de2ac9aa945f271f4",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "f697709fcbff50ad48a4d7d6575d6be767a56b161044b219768e035de668d309",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "9f011540bbe7e1862090b58889343563d0feb52b17d29a82698490119f016526",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "ba293e0cb30726e871763f05646d17f8958dae2c6f559509ce53c9e84ad7393d",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "66662b9c1e30a10094a4319761a6254ef692de439ed8ce86a04f1d97f69177e2",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "edb533e704496ef6660eb720c8474fb122bdc00533c91f0c87a6bcd33960cb87",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "ee1cb97f32eb42549ce13e51c527ae97cf1096883b88ddc3a3a842e57437ae90",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "d1bd8c5be0450be62a05d927c316d6c488f6bf05c5e0cffdbb6bbc67fbfb9f99",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "e35e8fbffd8f8a930f8695dc13f3517a4f0dfc5d2cc5ecf3c32c8d03bd784d33",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "8de913ebe5f70d0b852cc0dcab0661dcec0d44f75b68b67940d33cea72a391cb",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "278fa9ee2b62b0538a81319ddf7eef366ebdfffe5add0ebcc89a8ec89272405d",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "1dd076b43714b0e87bb4c6d40f7946aa285cae84227ec24f177aaa801c5f7b3c",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "a064d808403126385b39301d298690568130a6c62ccbdfac213b8a8d1f43bebb",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": 1,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "fragment_lengths": [
+          30,
+          21,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "4c801a7bce1b5e161f84736d31595dae5c7a53deb1ffa0ee16b6a9c19b77b73f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "5e4226c2e48464192a1a7c0bf83c9cf503f1b7af2de811997061aaf0e3be768d",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "ff98d648b4892ef8b44877aa4c5afea1ad7fe76de447517b9faa14e3b93c4a55",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "a0e803cb473eb9ff4cb0c145b1392172cbe42632a862dea53dc4f362a22d6898",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "91b5643bd8058c29302599ba609ed7bad4e70ed648c793d2e55f38f564913835",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "08118a3fb8179086b56077763389f185f84307145ec9a100addaf7439046b623",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "b84f4bacd714ef950dccd3efc58b1ef6adc8b4f03f0c0070d761d499e07ed976",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "09f2edb824e2b43a2c40dd4312c0bc8bad3c6245f400db0f011908ea27febac5",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "4481ca20ada8c395c5a9e3d02d93b0a7c68edd9e488d7ff339adbdc54cc6bc73",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "b38d8c38db1860ae76199130427ac6fab65a5592df7246ff363ecd14881b3a0b",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "58845729b9e8ad4b4f968fe6769ecd373eaed2c54c65fc37b0c1df7904ee9fa1",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "b4b1f591688909e2fcdc35f2dd4de3ccd2d1be2c6d91b304c75da05e309e2f11",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "da6bbe882592fcabc9a6cd47837860ddbc4d0b4f3ea5cf3fe89f74b566e1f85f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "354db3175b19d3a3d7c1f0edad66b09cdbef15f8a3b0f4fd736cd0961bade687",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "862265eefc263af2c41d1e78a96365f81d254527d40e7ddd85ca52f684a44b3e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "3e44ae56954fa598d37f9cf0afce7c6938bcc2a5b1b9df1a2c0a8c09b81efc42",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "41a3c72e7d61936dba86be2a2521e1a8e2bf5ecb489c21bf84dac995675ca262",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "3e1da35145d832edbf19fc1d2d8d9b50a43e5f65bbeec23e369121966800d5e1",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "828914b97595fce5c9eb4369ea04548fa8ed4c026000c530d36981392f5ea566",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "f7e6ff2dbe145bff22789c33b75e15c1fc3870b14bcc475ea864f311984d8e3d",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "e51afcf8ffc6209fd59e073fef213d1c316b209615c6284aad5faf406076a6f8",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "d4b3b55573737192d0ee24acccc6ed77320483b89a1c50ab9db55b37a8520f8d",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "dd5ab4d1b68a94fb863433f62759bcf2f8f68d7e89f73d65770249daab40416a",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": 2,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          21,
+          33
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "55a20ad546aa33f5bb0d6b8dd86f6f2e7241d47d7e832ba7b9ff15c1e0978d50",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "1c6400bb5fbb9a673ded4e14b87b17b775af8e411d50ef96a02c3398fbeb898e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "3dd72d7d59d16c1d6c15aba025c2f78bd8bef9ef44781f5e1d465f95ed63da44",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "ae73cfbe9d9cf5cdf9e217f013bbd747d637e591787f35e9d74340853ddfea77",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "101386646cbe3db64bdc9810e8221bebe66240b281b046f44cad3c298bd2ea7f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "b1a120bbe624bfeca6e7904eb06b87f2dd7ba24911ad65e7afd0f420437dbb60",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "e098e8709bc54af0b557ddf2fb93f156a2dea2635bd2205633e43d13ea2de45e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "a88359ba03f55f5ee2c9bcf80688cdf96c34e2ae470529959538261fff6f4e04",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "f10920dfbce62323cb34b5af72e3d4c3373b5935e779ed41a1aa4c37e472a937",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "b18ba06536f6c94312bd000d75c5718f34a975af0b9e324147a4443d7874741a",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "2dd79c2e7f86b3a7cbbc307630d0a206e880e52bab5b25262d92b1c0fbbf72ea",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "9e057ed93d01f43c1423fbb4ab19a38fcd373fc2fd0027c4849e1a0ccf5cf60a",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "c29ea04068f87629c9fb34998cfc339e09fdf50039f1d6c216842086bf6c2184",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "334ad4159035deee831d8ef0ed924ca067def034d8392e229db3af2f3067dc37",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "67601f65d53766ed092e09fe9f42e87b7e046da6060e9f6cd37bb13244ec13cd",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "b544167b74d5a64106721954dc1d6fbf6a80f1e926091800d85612eac52c30f3",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "8ee42df0a3fdc43c69319cf89a1c731bd7b6dfb5a523e1482d28a78ed55c9771",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "51696aa7c6dd9300c865c91c4c879355912d4e9969cbddb575e728b3d9098032",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "9c7d75b7b4f73e05c4c0de13c09db5d5df9bf6cc2ed3d2e2bac506fed7fbfcae",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "527d75fe484663365ba8d6ef0fd9880adaf5c17e455d45193298e9e4ed6a6a8c",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "a3f452dbdb2b195580b3bde31368ae7ed705d11ec1f72c892c82974a298aaf75",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "fda2cf5e8322369925fbf1d41194b7c662dfb9a911282c362e2e9ecb88819104",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "39b26947c35466447e5d3e63b6aa4654c811e971dee1a52ac71983ca00efde8f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": -2,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          22,
+          32
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "3c4de1588290d71dcd611df0ccc6fa566f518b6d46172ecc47470d6039dd0a79",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "2a0d696d802fbf7e86c5ca6f79105c88d6e8b15d0f9219cd383f571354dece4b",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "f5135cfc44112c8afb36a40b0e155daba3bba9319b7e03c8c62d218afedf7a02",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "2ec2b76a32efb416d80da2b1930a5f5ceace9ceb259d5d1511fc644acc561749",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "d7829ae07497f1144fb544ef6d68cf626bc6a3c82d25c12c2b4f0f113f9d84b2",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "82bd4f2a12adae233bedd1b82a846f6f4f12ffcf8c5c652aee13dc44e6663647",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "84b256f12b7a8a06c070f22163d5c1d7b9ba1d704252741aef61e79a8060a5a0",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "c36ed927f9f2af02e2217cffaa5495ae5fb52d7558d7e47691b9f4a11afdb3e3",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "18ed2aec87805f4720a6e068d89b70e4947d4e388628ad3c0f8bc3bb22c4140d",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "9e44b4ef8915c5eb21ee82a36d658890237a63ed0f89832fb2094eb53f12ef81",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "66af369d5a9b8df0ab8b89522d459e29a470a8778dadceb217868baf06a2a4e7",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "d88970389b7c644c77a871f572a7dc25c87a03e21bcff56d875f8a355afbfde9",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "02d9954e5c80e7c76fb29a28fa57a20095f3208b5dcd687808954b5fae4ee732",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "b17dd3e13b7b2ade2afa5e3c7c416709d3f6f948326c9415f9cfb9de8df541c9",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "81a3be91e9de20ec1965f24fc61f08226cf48a954cb8f7ec0dec5e213d109c3c",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "e78a34db65489cd93bca86f3a833a31b8103a14f9e01d9149008695a5fa94466",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "fc5c50c01a398a8e6d04d1f02c702a240b02187e7dc22802c94248a69930c2d4",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "4196e8ea12722aa48532b9388ffcf814fb2ecd61b5dc1a9668643c0033993eab",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "eb525826aefa59c8fbdbc891ca90f12adbaf9d2af8f0e28d8ac29a6ae9005a0b",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "bf83e529e30b8d25e57947e6f719fd30f60e9426f7b8a39cb33a22e1f7d15adb",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "85167117027933d26df9b32d7bebb11ff391209608442ae7f11ea83db9b87cc7",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "3286e295108f09df29e0d98cb2dadc1e145cf6f39530b90ba876effe094e9ca8",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "369cb7a2b5ff338c38ceb76c5cfea4730bbcd41e9dcea57de8f7f2e8d9179755",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": -1,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          24,
+          30
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "797f14e6ee9882822b380c5b058094de932cbfc6c8f82f7442a280af1d8c29fd",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "4898ce698ffbf0f26642b484cd4c84f6313289064a4b44edb96547c9bcb41ba8",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "8564ffb87780d8cb498fddeaf9f60c1bf4133c60285cac5c258b830fa8dfa6c4",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "c95a6ac52c974943353293866e0e13e443cbadb73ea1c2fb330a5f34f742e51e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "618001a6b5bd484beb016674f94f65702257ac2d710b2428ecb8e7ba3a8f3eff",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "df06fbc29e2a7dab17e374008a07f67fc15e78bb6c000aee30d3466e7e325148",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "c47090d9beda6cd99e915f1d51324714ebf02e6731946cbe62298be8de737acb",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "2fc3eaac4a0ebe4c3d683f2b89e6318b8948a4e5defe246f2bc8126fa04f281e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "730ebf5f49de07d05891e514aa14fbc93fa5259b972ac133934651a7a2627131",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "a58eb2574f6c710b89bc6866d146dea6c329f78b7354009d8e9b92621f61bd93",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "1e4a40f2eaef3efc40cb12f96d26a1a487dc378741f4c625672a3c04ba76dcef",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "1f557ab9bbb09a20c4b1d4a5d8259f9676d17d9248aba5bc0a5db2883d170208",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "42239955779249a52edcf468d752cedb100ac63d464632d13d315acb63fb93b7",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "25e7740517a08ef506fcc3327cd95a4dcb9ed00ae5421979d0508189804f3d40",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "0295f03b8d526778f37d714eeffa88acc884e48fe5fac2ef1eb796ea478c8605",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "d5d8205230b9fb8335d55c616cf9e6c39b59726acf9fe30d4ac2b4bef6e37d11",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "79ae6e3d095b13935a8e5a0c1ff1a4299d681ab8b92e8ab6bacfbdcde97636b2",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "9e7ea0701792ed883c901d7e36ebc1b9d52fb8f0aca0f00fe2af9de0a215898a",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "f6e2729b9e0f6999872d266c19055c1936cf5e474dce26d4e41a21ed7fb9e330",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "cd172f339fbd0e851d9e95f9895c0c132bc3bb0fd9a331221c96f03232f5093f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "eac303a9e4b170e3b694e86497f6a8b17631ccea308f758d94af34119ff1d3b5",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "50fc096a871c271ecbd56e57116744175747611456209bce4a7a2b99e47b549e",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "d22883738b126643d4a2f585f3d54ea71736de352a3e0c2337fc6ed6f6fb601f",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": 1,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          25,
+          29
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 78504,
+            "dimacs_digest": "9b6fd4f53e132568bf4f4491b4d02f47cf642de2586dd19599829b63a91d8333",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 19,
+            "clause_count": 79975,
+            "dimacs_digest": "3734bb98e4d15956ac376b86c17efb5b98ee2428ce81e61df1140f438c0bb501",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 20,
+            "clause_count": 77510,
+            "dimacs_digest": "7a073d7bb61f486fb20da6ecc879490cef40bb158e521083d00ad777bf6ff3a9",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 21,
+            "clause_count": 78981,
+            "dimacs_digest": "ca7a40a769d07397f70758891d7765b2b73da75a20b0796a19cae6b243b817f4",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 22,
+            "clause_count": 80452,
+            "dimacs_digest": "722508dec9aaa3eeeead563b0cd7f7f33f1281ae4b3ad5208e447e4e63da05ac",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 23,
+            "clause_count": 81923,
+            "dimacs_digest": "145aabccc40d574f4d01b56374f87c5dbfd8f0f3082392726e96ed826a23f0c4",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 24,
+            "clause_count": 75522,
+            "dimacs_digest": "2f9c5cbc8ccf3bc350b6023411a03940abd1054db53c82155ca50b9f4d8f09f3",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 25,
+            "clause_count": 76993,
+            "dimacs_digest": "102353f8345eb0793ecddf6988d24374e972113df212a5e307b1e9b4abc700b7",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 26,
+            "clause_count": 78464,
+            "dimacs_digest": "eb7f801079dbbc7c3d589dcc695ce1d4b171c264bddcb611ed8909bbc12dc6ae",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 27,
+            "clause_count": 79935,
+            "dimacs_digest": "4fa406cc7f77a3325782c6b5ab8b43fe5413b1efd289334ff1138d1b19771fd9",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 28,
+            "clause_count": 77470,
+            "dimacs_digest": "f854a2641874de06ca561bb3c394788e5233df5d1cec50ae6e04b690425d08c3",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 29,
+            "clause_count": 78941,
+            "dimacs_digest": "26226a7cefcfd5aa4e4a38f66435cf13a631b3c2c3c583d5608d335142262db9",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 30,
+            "clause_count": 80412,
+            "dimacs_digest": "2f01878653658585ee13a231398e75b4d1ae9301cb2d25cb19bbaecc771fad1b",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 31,
+            "clause_count": 81883,
+            "dimacs_digest": "eda2b873ab801bbeb1beba227949889d31d3c58824f5ae731a7f4bb4b72849a1",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 32,
+            "clause_count": 63674,
+            "dimacs_digest": "85409e0aef55bf5cc4adef36041c59cfb10e04c04c90a53e69e12ed5f78c55a6",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 12958
+          },
+          {
+            "base": 33,
+            "clause_count": 97927,
+            "dimacs_digest": "da4880fd03b1a8c3a5b8df2cd09b0f209f6a5218dc6ad9565afcd759794c2d2b",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 34,
+            "clause_count": 99398,
+            "dimacs_digest": "654f8e9a5aa9cb650cceb285193f2c3be71009ae923c7a76da707ba9743acf14",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 35,
+            "clause_count": 100869,
+            "dimacs_digest": "773d5eacb55c375f220336951b15ac92b006332bedbcab20927ead93db716d18",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 36,
+            "clause_count": 98404,
+            "dimacs_digest": "65cb04e3a7504b71532980e14adcf347ddc130d119fba2e8d3ea4df3b43d7429",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 37,
+            "clause_count": 99875,
+            "dimacs_digest": "efdd98b014906e4175b97813935384cf1db8bb091d64c1b946855c98257340d0",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 38,
+            "clause_count": 101346,
+            "dimacs_digest": "ead024531c0629e09e7ef3a92a93c55f0753240d5f8cd979e33c82ba16b282c3",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 39,
+            "clause_count": 102817,
+            "dimacs_digest": "313b170a836466eea86dd09f197547e985e2bd41bc51c77f197bc7a0a3221018",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          },
+          {
+            "base": 40,
+            "clause_count": 96416,
+            "dimacs_digest": "b876757db47c1b89be24758fbc3fc74baa11c5fd40dee393283d95ee048a0da4",
+            "parameters_checked": 0,
+            "status": "unsatisfiable",
+            "variable_count": 15451
+          }
+        ],
+        "shift": 2,
+        "variant_id": "phase0-interface1-plus2"
+      }
+    ],
+    "variants_tested": 8
+  },
+  "inherited_evidence": {
+    "file": "t24_lychrel_arbitrary_topology.json",
+    "sha256": "b37f54b45fab2d67b3b7bd8e6b7d5fb2227b159bb0f1d030f3436142cc55654e"
+  },
+  "inherited_variants": [
+    {
+      "interface": 0,
+      "phase": 1,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface0-minus2"
+    },
+    {
+      "interface": 0,
+      "phase": 1,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface0-minus1"
+    },
+    {
+      "interface": 0,
+      "phase": 1,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface0-plus1"
+    },
+    {
+      "interface": 0,
+      "phase": 1,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface0-plus2"
+    },
+    {
+      "interface": 1,
+      "phase": 1,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface1-minus2"
+    },
+    {
+      "interface": 1,
+      "phase": 1,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface1-minus1"
+    },
+    {
+      "interface": 1,
+      "phase": 1,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface1-plus1"
+    },
+    {
+      "interface": 1,
+      "phase": 1,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase1-interface1-plus2"
+    },
+    {
+      "interface": 0,
+      "phase": 2,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface0-minus2"
+    },
+    {
+      "interface": 0,
+      "phase": 2,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface0-minus1"
+    },
+    {
+      "interface": 0,
+      "phase": 2,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface0-plus1"
+    },
+    {
+      "interface": 0,
+      "phase": 2,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface0-plus2"
+    },
+    {
+      "interface": 1,
+      "phase": 2,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface1-minus2"
+    },
+    {
+      "interface": 1,
+      "phase": 2,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface1-minus1"
+    },
+    {
+      "interface": 1,
+      "phase": 2,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface1-plus1"
+    },
+    {
+      "interface": 1,
+      "phase": 2,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase2-interface1-plus2"
+    },
+    {
+      "interface": 0,
+      "phase": 3,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface0-minus2"
+    },
+    {
+      "interface": 0,
+      "phase": 3,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface0-minus1"
+    },
+    {
+      "interface": 0,
+      "phase": 3,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface0-plus1"
+    },
+    {
+      "interface": 0,
+      "phase": 3,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface0-plus2"
+    },
+    {
+      "interface": 1,
+      "phase": 3,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface1-minus2"
+    },
+    {
+      "interface": 1,
+      "phase": 3,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface1-minus1"
+    },
+    {
+      "interface": 1,
+      "phase": 3,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface1-plus1"
+    },
+    {
+      "interface": 1,
+      "phase": 3,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase3-interface1-plus2"
+    },
+    {
+      "interface": 0,
+      "phase": 4,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface0-minus2"
+    },
+    {
+      "interface": 0,
+      "phase": 4,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface0-minus1"
+    },
+    {
+      "interface": 0,
+      "phase": 4,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface0-plus1"
+    },
+    {
+      "interface": 0,
+      "phase": 4,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface0-plus2"
+    },
+    {
+      "interface": 1,
+      "phase": 4,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface1-minus2"
+    },
+    {
+      "interface": 1,
+      "phase": 4,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface1-minus1"
+    },
+    {
+      "interface": 1,
+      "phase": 4,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface1-plus1"
+    },
+    {
+      "interface": 1,
+      "phase": 4,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase4-interface1-plus2"
+    },
+    {
+      "interface": 0,
+      "phase": 5,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface0-minus2"
+    },
+    {
+      "interface": 0,
+      "phase": 5,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface0-minus1"
+    },
+    {
+      "interface": 0,
+      "phase": 5,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface0-plus1"
+    },
+    {
+      "interface": 0,
+      "phase": 5,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface0-plus2"
+    },
+    {
+      "interface": 1,
+      "phase": 5,
+      "shift": -2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface1-minus2"
+    },
+    {
+      "interface": 1,
+      "phase": 5,
+      "shift": -1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface1-minus1"
+    },
+    {
+      "interface": 1,
+      "phase": 5,
+      "shift": 1,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface1-plus1"
+    },
+    {
+      "interface": 1,
+      "phase": 5,
+      "shift": 2,
+      "status": "infeasible_at_n_zero_by_t24_reduction",
+      "variant_id": "phase5-interface1-plus2"
+    }
+  ],
+  "kind": "single_interface_topology_classification",
+  "limitations": [
+    "The search covers one moved interface by at most two columns and bases 18..40.",
+    "Inherited negatives depend on the exact T24 n=0 obstruction.",
+    "Solver agreement is not a checked DRAT or LRAT proof trace."
+  ],
+  "prism": {
+    "applications": [
+      {
+        "id": "application:0fe7f4314d3eb2e146848f308b389f631b506529af1e23cefa3f12d6f8e6934d",
+        "status": "invalid"
+      },
+      {
+        "id": "application:a18fe26dad217803b98d9302f2ee61ea287f099c4b65ab1716cf92c00396bc21",
+        "status": "invalid"
+      },
+      {
+        "id": "application:ea5b80592f8dea1b92191ee186cdab0be1a7eced1b3081fac976ab1e2bdbc9d4",
+        "status": "invalid"
+      }
+    ],
+    "artifacts": [],
+    "model": "qwen3.6:27b-mlx"
+  },
+  "scan": {
+    "base_start": 18,
+    "base_stop": 40,
+    "instances": 184,
+    "n_zero_survivors": [],
+    "variants": [
+      {
+        "fragment_lengths": [
+          26,
+          25,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "114c55b40fcfcef70b19250c4c0a279c91b4eafe419066b71113ab07a93845ec",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "79d6376e579afda58555cdce972de774ffc70f1ac381782ab372f739cc3730ed",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "ed34e39114e32413c65d7d45158b95d6b0e0b7cef6956d8a94bdda6076b2dae1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "3629eb5adf5efe1f1524735ca043b9e9d1429cc5f4238c72f1bc8edc9193ddab",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "b33a3759d8ca0b83f4df611d5695e1d4b3e32f9db8d12e15ef75b9fa366e0c68",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "2a33a897a646c389aead2e5f7e45171a49a740edcebaf4153d6cb517595544fe",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "1df503ab3d0613414153e64c80ec42d7ef3402b4fb6001437ddd119233e8aca0",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "4d63ba75a2f60968ea21f89fc9f8a3a5cd17cd6d0b4c8268043f4c80174ede7d",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "3e9f4dd038e5b85b8db33dad76332b5490461f527ec0b5f268798753327c34f1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "620d27de1a6196df662f8a884cd26600310c19d6fd01f880bc2524cad4851982",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "f52337d55124f8b3750400167916902219b9d1f9973dccb70669e92522d5df82",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "8b0744fa38348c5b6aae2a4f54f0d30769cc2aa6f84bf612005b1c5ee2592080",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "cb38a7dad51f673891f6b8fb79279ed51a89430a02dc5527ebf6fadc467cde91",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "04ab38128295c4bf5091f993962c0fccb577c18730926bc16bdc2029c4d7a562",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "a341a354c4c25f23de0968266d6802889068846736b7b2f672bd2e9d964a6b41",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "484f7280ae20f8bd58421e5320c7a01a48cd543298a60ae1148dc15efa4b19f5",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "96aa429c8bde8e2d7b1263ee7cccee61269b202aa646f84f4037532f43c35e1d",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "5cd20dfcaa305208472a7f0bcb8fe60eaa88b614d2ea15f9195ba8b2e1c28a90",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "9d3ef8e2e6d74a20c02f7f91ff403833b96e23d84b1babc40bbb32a15127d490",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "1d922abeac4020b5325e723842d6d9a0ae982168eb2c944f4d119decdfcc08ee",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "691004e1428fe2fc5d5c24cc752cb7e1a283f1b4e5f9efdb65683ce414653e10",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "28d5a9df1d15a5e7f34b6b4ebab29f826b37e88d2dc9aea3a6537f3b11656b22",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "9524ca294a625fae3daa6e79a40c661d61305391737a277296bd5286dc9ef509",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": -2,
+        "variant_id": "phase0-interface0-minus2"
+      },
+      {
+        "fragment_lengths": [
+          27,
+          24,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "6e9fc9b1b2f5fc96b21f087ca20d7735da7255d642612c6718ebc461749309f1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "48f05e6180027dfbd44a9d153dbb061347b98f6515becd258639c46cc3d830af",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "deb07eeb6fd9c8393200b4797e1b689114c78dd24b65f313e6ae6e5c52d72a26",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "f39ef1337f651c6dcb318b096bfea5dd23a216eb0e24411482c58eacef3a6d7b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "41634735bb9fd4e0f4fa17f76a0a564fc1962c2f2b1af270a2d55ed04e97ec4e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "a17ea9f2f6e4c01ff6206c8dd3632dfd82f050b8166a5cdbdc6b5712c66f3af8",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "539e4bb3dd3114f284280404160792c54fe58920a4fa01f4968032bba899b31b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "ef012a14bb317d3d38e1d3dd6c7bba1e88d2224e81865c79ef78c3b972320b1b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "f5de18035a3214597fad6774a08573e75737fe026f9d9806fb1d9bddcc3df1b0",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "f4965daca76f2f0882546d2845667ab7dcb4dbd0a23d6167477bc729eb742d99",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "5174ab589db08eaef3d844f5346e48c25947e085cea04d52f07566142d89f71b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "4ac65c8e932d78b832d3277fc59bd1cdc46a36ac9840ed0414a647421e80d4b0",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "49e058d4749b73169c3dd0c04afa7d5a1f60d725f55c9acd3777c17790e368f7",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "3aea7612740accc145c9f859c1d5dc11a5209821fee987789b04705fab4e3b03",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "b6e3f89d735b218864cfe7cc829120aa04f034ac38b3d0ef2a148171369f0187",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "b17ed9353be6cb6a8cb1de2cb9bb6a63780281424e50011ff082c72d0280353f",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "8f7bf969a4ea87f6241790350f9f0863a761f155dd61ad60c04a7ca5cf41bb38",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "00af915f39a17a0c92d57c10dc7a0eae7dc9a13ec159b7a4653be423d3c6e0d4",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "d02c13724c04790ab0a612ed5ae179a388d5186d122d7d4b046b49ae6200ef9d",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "c2608071c4643985b84c958d2f72f6ddc6078c0a004aaf317e95c7a057ad826c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "6d8911ce13d43652f8429599f48600818f4fdb586b3cef4e15d885c571771bc8",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "fc7db1c128bb6361d364934b6c1ff99f611b280af3e9db317e854d0cab33847d",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "4eba07a37f811d7aeb7ddc2c7916e8166b220406956a683528c2b88cad69c7b3",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": -1,
+        "variant_id": "phase0-interface0-minus1"
+      },
+      {
+        "fragment_lengths": [
+          29,
+          22,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "0d5148b585e172ba086fc0e79e2daea225c42516b991cad3578b475e11477e88",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "ece92db72672a3c76125575c4a8f0b27d651fd94cf1441b8f574c07351eeb83e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "001effe0b60849cb96a27b898b1b5cb5cc3ffe0e1cbcc3b19442ab03d5c6ee49",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "6987fc51bf23a0202a712c8b69c21df017d788c70af85e65e0ab47ff44d0ce74",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "b696c939ae68b442f7c0d3bd844969d85e144ea666aad4f5abeb63fb388074b6",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "e63b479f21f061277814b7f32df5aa1fdc8ad6be38d871715ac126bc674de961",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "43ff434ad07ffe2036bade47f484374029b56d93c8dad82fc5a4d87d2c020a8e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "1867735018cabbcd2e92bbee0d1474585cc718114feea4bb1b52415e34b79075",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "3f590a14a8b3df5747fd14f4416d8a1b8239eafbab478e3ab0bcdd138da107e5",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "b79231b960b0310570e62ddf882cd4263aca27a545d26a40db3ab312784f4c23",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "ae40de720c40c736d7106595b81be1840db752ef71283be6e92ef454df4b463f",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "9b69d204aeaa5215f6910398d26b702efebf6f8688a0790bd65196da3af08e3b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "57208b2f7d9d3074fda6cfb51ba181eb72a32409294160fcdc1135712ae937a6",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "c589e5061fb7540de6498d87255247cb639c0568ff28bb30d59e2e1b7891f500",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "680d8b03231c381174afd9c187df8de3e6c3e390a0e797fbedfd35cdaa80a7aa",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "91d27e6804d54fb0d6897faa3846620bf2d768a886814f68d0c6d049bf734158",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "3f020053b37b6942f151801261238c7e64e971cdaedcd6afa0585567507371e2",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "ce7f4f7c59d1403fc2723fabe6b3cd5533d4d7e36b466f43d777b03fc6fb3065",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "046316982788d0a2ec53dd135b13449577b73ffdcfd6c0b7d34b006973f0d5ae",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "c198c592cc1f909274b8f459ac2caf37f72530ece117d7d91c92186b665290d0",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "d7058f78714ce233fb748bde8d612380da05fe9adaedc1adcc7c8f1a8f9a3273",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "cf3c5fcf7d03c2ff003a969b5011f9e13797125a57d52eddd1714c523c4b50bc",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "7af7ec2ce997334289f18270be2d09589f3a8fc6b5c24b16b936d28374be7bb1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": 1,
+        "variant_id": "phase0-interface0-plus1"
+      },
+      {
+        "fragment_lengths": [
+          30,
+          21,
+          31
+        ],
+        "interface": 0,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "2944bb1a83b598beeaeae046fd97f486c313409f472731302d2966a86f271265",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "fc77d6d30831cff6e99f310bdd78bae4877fa35831aae28312097c67023c37b2",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "d6a8aed44d242fd755d9ede7c41411cfe7bfcd66a224dd205d62385b17ecb821",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "579b5a062f2cb3418f12016edf08201e346b8b8dca4fe04fac62e7c073ad8355",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "564f32d8563fb620ce2b95b1e330a3c3b243212e1e9516d2a4dee2f22f2b8711",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "3d926ff1007a68dad7f39af9a258586a94946790ec51df3457e2ae545fb27975",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "065fe29076292c8ed0921cd9f49637a4bc5599c5edf2fcded8c7a7740a55b056",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "7e64b5ecc812f507955058a22b6280bcd9f5d3445c5fbdecf4ad15d40eb5f375",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "8dfbca7a9f7ebc0d0350fe2b21b0e8e0b905b06bf58393e9c33df346d9ee3c7b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "aea04c0335901b285a16d3e3a9cbc883c868884680beb32dafec7d45d66fa132",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "ea67ccdeddb81bb115993636a8ba1dcdec3c88b1738108ca51635d0778edc8a1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "a929b94466803c466514654d815ab09dbf6668b732e87532d6f4191a58ad15d2",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "de34dd03afd87f1ff614a0fbced4bf7d9c6b6ef4513ac612acf604220a380f1e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "4aa9ce315e4e1929681b4b0ca1902a7816d74756380bec753cbdbcba0f4921e7",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "cdd4642806a3f7f460307d9aa4c8247cfcf26bedcda73a6db441d4d7c149d9da",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "6601a8fadda032ee49377cc0d8fbf637355d106ad8180d661833f607ff4ed4a3",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "06e1c9fe96d98fe388d778de257c497c1644b05349163e8a69ef27fd561c0b06",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "c3a9176fcf58ba25b8bd059e6661aa5bd63c139b958df80918ebdb6c7a80fca7",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "3d374107e8823bab61e4317a6f36d248d99434cfc7612cd97e5bb123d4c6828b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "dba3fc3c0023e94b83a3293d8b18cdc39d336716807e79f6ced33250c0c02a33",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "ba5a3041abce76bb581c221a3e443073e24c4710df38adfceb492721e42fe935",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "2bea83537a8d3d018060611177485bb184822c262b12e5712d269c60678ea910",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "15ecc6cff5a11aace2553751a22abbc8312078da77e715f438f5b12deb62ca88",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": 2,
+        "variant_id": "phase0-interface0-plus2"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          21,
+          33
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "bb19ec526234f438b7950e3aa5163f16a144460e1fa72cdec10ed439dcc0fa88",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "ef166bb535d9914b01610a98acb64489bc25dd2fcfa77e3b02d93013a8301b6e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "88560955f9c6261fa2a988aa744bba0fb290207b8053e2ba0735e855af891b66",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "6cbf64e558bca01563fa364da7de6cb86f3c64aab6a8db4d75b53190278ed9d1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "3c6c2d47873b4f5026dc851fa8c2460f9b49b96e0fce75500f59b9a7b36e1736",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "dedbc9a44f8f8bd7b5f42971e6853b91f0df77534f0855a13eb06bfc5d25bae4",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "1b81816dca2aa8f86f0b2c0b41996606875b96d749f5146c3dd2989ad5c88492",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "c1f576eb29c02a0c1fac16126fb73af47923f1280919dc9920e3ad0083f526a5",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "ddb279e957ac0d7844685f41dce476b2a432209a3fbbbb6fe7fd127c91652468",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "2eac62e80f068324394508db0bb6f3fbe0c9e8bbaa5d80df6a6072e07b35abf7",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "26b1d38dbfe32d4ace035f3b372a4ae6ce0f1fa69235406421c789c396938e1f",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "0624a26f71c210c6f5a71a5c097f3a63a5e0b77f71268ae7a8e0bb287e3baae5",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "2ede1818bc591ea865de64a4d02b7b69f7163339f89caa68fa55040ccccf3d32",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "a287ca7b9c7eb8cb7ea45dc6aa7a9a0c7889444900d4cf0db5752c369903e7d6",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "0aadf5735a9118b1b7c52b1f0c90bd608af25093edd9dc9f0d8c793db4a88b7e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "752f2c421bc65967012e9b158c444bfb5a3c1f1551bcd76b6a51745d9d110064",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "c4f1d66ab697e5dff06b948729984d7676c74a5f5ccb5fcd15dd05db94991bac",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "13aa35b446a875ac95f28969282674dc26d98f4bb799a1fb4d7e1bb72dd82818",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "9e754cf0b8f11cf5b0e13d36af5f3617bf2accb9b67b6a432deddc2471b00b11",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "2fecf171ddaa582b2679c93a3c6ceb7da1f1b521fcf58763dfb89d3852313ce4",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "c9cb4823be91c70250d84e912244f7f7d82b921fc98f7a8bc608919ac01e5d73",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "2134a88159052a85803a3ea18019af9b82a1d25b6a708cb1004a53bc354f2005",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "b31bde6ebccd6d90c5ee3448651cdfbc8aabfe9da68dccd31d5609caca0a8816",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": -2,
+        "variant_id": "phase0-interface1-minus2"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          22,
+          32
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "d88676c283407763185ea03ca5cc99bfdaae6c95310ec11edd09a59e775217d3",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "354674128690003212bb800bef0d03ebcc20419ca38094e67a5895d3efcb03aa",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "7e33a72f6e45ab41e4f01b979c2bf8c6985bc0b659cab5b3b6d4c3c43734f3af",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "c7a5a13c2b98e92406bb12cb94dbe1f2dae849663fe28a0f3fd9ad30f91fa569",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "dddcb7ead89bd577aef87bcee16a55c1ec17f75437344ef96e7a30fc65c21c8e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "366eff17d214d3584a56febf66f6369cd47de4313b4793872b5da9741d21ab9c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "997b9bac22a3c623edfdf1b3ffa1dcf94f53d1986dfd2e0af54d0b7db2b386e9",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "1785373b4d062f56062831a85cb9a40c3e9809edcc323875ce4efcc6bb5f5e7c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "9982452309c6be681e9416312083259052ef0b81d84c54e9916bcae02f2622a9",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "5c4a3036fe8940ff3ab1b7934db78d4e54ec2141e27cac0b52d20c5c37ea0559",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "8097f40437bcd58232d5eb77e347737deeb85a3033dc7865d6ae260acd7d64a7",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "51ce836fbcf2e685e4ac6f003468e9192329c222efed9fdcde9cfc8b0f39ab94",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "ebe00355c86064f016e611eb7c25ec6705219a27ea27839aeb74fa3522627fb8",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "6f45cb2127c9b97292b8d0fef1c66d6c1a4fd00f097f0763b51eb1c89f4cc1ab",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "b0a06d4180987014933e8aec234ca2d6974670c405cd248b4114018d42899821",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "a1bba9b680cb7ac3f4b1246d7a9d1089d8ca5991ab5745398059b670cd876f2a",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "38c0b9fae652f88219f10d2c7fba1bcdfd430d9b395d1a19b9b5569991449de3",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "b29073b9a7dfe7ed38fd4def010072d629c13073bb6a8997d8901288a8226d5c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "1c6dae834bd67b371cffaf23b00a00af3e613d928be6a50590234a79b2051aaf",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "63b96fb7120bb7617c431c60b58f46f34acf87fe289a839ba20e891ce2e1f835",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "a51c7e904ac2308673b6d3d9e656c8f70a269a5ea9f879ee2bdc8fddca06fb65",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "a1b6b943e4addb965f1562cb1c0a00cf2f864270fca6b5667b3eb9ba0c29c4cc",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "9d8ede69d6d9ac9aaff650c82f7883cc7079c960bd489653ca56a6c64f84a0b6",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": -1,
+        "variant_id": "phase0-interface1-minus1"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          24,
+          30
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "7040edd74f66a873968055ecba8c15f5b44728285cc8774cfa1500b79812360c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "15c45eb669a9c5c5ecbecdf41203cc4880feb12b5b3744a26ab77159163517c5",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "12b5069b5404e8932c6744847a288d676fe7e2d3e64af2e543f42401ab0fc8a1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "f3fa9e85194e75d839374b3f9603fa6ece594bb428a7ba2d1292e695ad4a7bb5",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "4d0ae9ca1db09ec7a5231f59b7e5e3cbfaa0a31e3a35e39dded780252e681394",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "7f2b4cb852331592ac8b56b5030ac4a90a694460cd9d0ba052f0a9f967e2191c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "a469304be248e74e262ada4c920ba466d572312a9d4986319dc55889caa8e8ee",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "568847b4f7b374b8a1314c184da9d6827251869331ee5bd377be19dda03dcb4a",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "a65987e9ea810647a9feec4066a1e0e29d0b97ee81086fbb02364e9df4648d30",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "d9bb83fe0ad67ce8bc9563bd73eadba1203ba4848b9823dc16c0404d9cf797f7",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "ab845ce25e0a280595287056f73d1a75e91b213f626b0c3a3a10af76fac44f3b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "54340122169c41b7d2b86f3273103bcbbc1e9ae11af8a353b1c7a38795fffe1d",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "f53d6076e19c0440afb433f49f7e38ba7ae4558e5f76a72bb2bb9db4443af482",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "dbf53e0c3a176b3d98869f0097fe68fbb105016746668d8570e266001992806f",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "39ad98f4671d24b8d1b1cd84b18260be01dfa2d84480e38d993a2b83c586155f",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "30050ccc3275a2aa72f100d5b44af4f558fdf290f486b1cf79fda7c568692cbb",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "4e0b74d349c8e7e9472d9b657f00d2650b1c43bfb6238f874a68b31860e62dff",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "88e2f63db1f2eef685be294f7ce42c73a7c7b4de3bc8423fb24d45f97f3ea4c0",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "217360c00f1130c6d5709eacfe999a6698d6f02bebaeb5862d781bfc488d8f1c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "ee4f6a01ce46618c4f946ba533d064001ded1a9ac315683bc38e62cd2afbfbf3",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "d61a45731ed214d2bce2b804de26543a2e26fe997f4d612c4f68738cff79b68c",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "bf1003138a25102dbb88167a5cd9f08d1b9084b6bec571c66ac6979e8be25c53",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "137907a8f045e2c826ed1155f48e3cd346c30ef6d5b3ce71785282dcd9711bdd",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": 1,
+        "variant_id": "phase0-interface1-plus1"
+      },
+      {
+        "fragment_lengths": [
+          28,
+          25,
+          29
+        ],
+        "interface": 1,
+        "phase": 0,
+        "results": [
+          {
+            "base": 18,
+            "clause_count": 715404,
+            "dimacs_digest": "d477cf31995d78fd7514b70cd8b5fd25993249c32671ddcf64a04cd962ab040f",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9439
+          },
+          {
+            "base": 19,
+            "clause_count": 797310,
+            "dimacs_digest": "6333f6529f2c646d57b5608fe6a7700ff36cd2a4b7d301d8604478c947204cce",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 9936
+          },
+          {
+            "base": 20,
+            "clause_count": 883657,
+            "dimacs_digest": "b345a610c5304ad10671fdab73c9b59483caf9d1c841d124fa35d04c661793d9",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10433
+          },
+          {
+            "base": 21,
+            "clause_count": 974445,
+            "dimacs_digest": "4fe5f3d4377efecab461586067137decfe2e27a036a3b8f9699c4369e126ca2e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 10930
+          },
+          {
+            "base": 22,
+            "clause_count": 1069674,
+            "dimacs_digest": "33e7704c600355be9d6dada430a9f810edb09546a1bafe35f6fa895071242ea2",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11427
+          },
+          {
+            "base": 23,
+            "clause_count": 1169344,
+            "dimacs_digest": "7a95e2af3aa8ecd005f7020b2fccf416d169f5c2cbe5bac23be6471acff7ddcc",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 11924
+          },
+          {
+            "base": 24,
+            "clause_count": 1273455,
+            "dimacs_digest": "a9870ed159e8a5b95c7737b022c6ac897c2fa0b496589f8e77cbc59d230725a2",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12421
+          },
+          {
+            "base": 25,
+            "clause_count": 1382007,
+            "dimacs_digest": "3ef111224deb7f2091b0eac40da20544c55fdfcd9f681c69169cfad894e8ac12",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 12918
+          },
+          {
+            "base": 26,
+            "clause_count": 1495000,
+            "dimacs_digest": "a5b642dddfad4ed3eaf8dd1b6f47ae1d2300a33d6cebd696745de5fbd97e0d17",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13415
+          },
+          {
+            "base": 27,
+            "clause_count": 1612434,
+            "dimacs_digest": "f9cc11a137682558d6f8169a56cfa7ca40a824982076ece175f20cd29c4109f1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 13912
+          },
+          {
+            "base": 28,
+            "clause_count": 1734309,
+            "dimacs_digest": "4bd5756c8895b9bc2f0393d589df7e339c78aa0cf76d02ce98aa9a451bb8a049",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14409
+          },
+          {
+            "base": 29,
+            "clause_count": 1860625,
+            "dimacs_digest": "3ebe1ff6f43e765656c65b983ae52dbe6bed64bfd93aa38a798904b4bfe6a70e",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 14906
+          },
+          {
+            "base": 30,
+            "clause_count": 1991382,
+            "dimacs_digest": "25940f8f6f73b734f617082200427fefe52fec8625c01079a70e735ce1477951",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15403
+          },
+          {
+            "base": 31,
+            "clause_count": 2126580,
+            "dimacs_digest": "9d6e36a1294d76ed185de44f735acf7ad9ba1d4f218aaea9f6d8e0be7e119c91",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 15900
+          },
+          {
+            "base": 32,
+            "clause_count": 2266219,
+            "dimacs_digest": "d933aeec0ecb82fbb1de7376838a427a054e0b0d49fb57735fd15e1f4af620c9",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16397
+          },
+          {
+            "base": 33,
+            "clause_count": 2410299,
+            "dimacs_digest": "2b5216fbe7561345ac715aeaf13cbbaeffa32039dd6f192afb8e49383902b7f6",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 16894
+          },
+          {
+            "base": 34,
+            "clause_count": 2558820,
+            "dimacs_digest": "373569a3e33d100d0744c9b38f79bc3fbecf8a678ed7fbc4a235dc36d4c81990",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17391
+          },
+          {
+            "base": 35,
+            "clause_count": 2711782,
+            "dimacs_digest": "7419f189d37165325b145d1befaaf390f59b44ef6427f868aec2bfd6319fcea1",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 17888
+          },
+          {
+            "base": 36,
+            "clause_count": 2869185,
+            "dimacs_digest": "1746d7f56e941bef20ff24c585f13cef2f1a5d2fb3372a74c560de1d412c4691",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18385
+          },
+          {
+            "base": 37,
+            "clause_count": 3031029,
+            "dimacs_digest": "a38b017c258b1e5aa4cb8d7a7a691b274a5473875e26c288306e02caba7f05e7",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 18882
+          },
+          {
+            "base": 38,
+            "clause_count": 3197314,
+            "dimacs_digest": "420705f871c51e17d17ea9f7d18b42788897bb411a5502ed42bd69fb0744a8d0",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19379
+          },
+          {
+            "base": 39,
+            "clause_count": 3368040,
+            "dimacs_digest": "fc22df36caa7bfb673f637f745c92ca223b4f8e1ce7ffed885023890c18569ee",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 19876
+          },
+          {
+            "base": 40,
+            "clause_count": 3543207,
+            "dimacs_digest": "88881d78f1efb13d74c02fde6f94a2f978eb053147c6a3bc18f5b25212e6935b",
+            "encoding": "one-hot digits with exact carry transitions",
+            "parameters_checked": [
+              0
+            ],
+            "status": "infeasible_at_n_zero",
+            "variable_count": 20373
+          }
+        ],
+        "shift": 2,
+        "variant_id": "phase0-interface1-plus2"
+      }
+    ],
+    "verified_realizations": []
+  },
+  "scope": {
+    "allowed_shifts": [
+      -2,
+      -1,
+      1,
+      2
+    ],
+    "fixed_digits": "arbitrary independent values in 0..B-1",
+    "interfaces_per_phase": 2,
+    "repeat_mapping": "0 -> 0 and 16 -> B-1",
+    "source_topology": "T21 six-phase base-17 certificate",
+    "total_moves": 48
+  },
+  "solver": {
+    "engine": "PicoSAT via pycosat",
+    "pycosat_version": "0.6.3"
+  },
+  "status": "no_n_zero_realizations",
+  "structural_reduction": {
+    "inherited_moves": 40,
+    "reason": "at n=0 only the wrap output contains repeats, and it targets phase 0",
+    "relevant_phase": 0,
+    "scanned_moves": 8,
+    "t24_bases": [
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40
+    ]
+  }
+}

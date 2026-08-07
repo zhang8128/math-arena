@@ -683,3 +683,108 @@ method comparison, two failed MILP diagnostics, a base-17 carry-skeleton test,
 TDD for the topology and one-hot compiler, 23 primary exact solves, a standalone
 binary full-adder implementation, 23 CaDiCaL audits, two positive calibrations,
 four deterministic full replays, and 10 focused acceptance tests.
+
+## T25 STATUS — EVERY ONE-INTERFACE MOVE BY AT MOST TWO COLUMNS FAILS
+
+The topology obstruction is stable under the smallest local layout changes.
+Starting from T21's six-phase construction, exactly one of the two repeat
+interfaces in exactly one phase was moved left or right by one or two fixed
+columns. The flattened fixed-digit order, repeat order, successor relation,
+arbitrary digit domains, and fresh Boolean carries were preserved. No such
+topology has a realization in any base `18..40`, already at `n=0`.
+
+### EXACT REDUCTION
+
+There are 48 admissible moves: six phases, two interfaces, and four signed
+shifts. At `n=0`, repeats vanish from every source and from the outputs of the
+first five transitions. The only repeated output is the wrap from phase five
+at `n=0` to phase zero at `n=1`. Consequently, moving an interface in phases
+one through five leaves the canonical `n=0` column system unchanged and
+inherits T24's independently audited obstruction. This accounts for 40 moves
+without new solver calls.
+
+Only phase-zero placement can affect the necessary condition. Its fragment
+lengths `(28,23,31)` produce the eight new layouts
+
+`(26,25,31), (27,24,31), (29,22,31), (30,21,31),`
+`(28,21,33), (28,22,32), (28,24,30), (28,25,29)`.
+
+Each was classified in every base `18..40`: 184 genuinely new instances.
+
+### DUAL EXACT RESULT
+
+The primary one-hot/PicoSAT encoding reports UNSAT for all 184 systems. No
+instance reaches `n=0,1,2` interpolation, exact `Z[q]` materialization, or
+non-palindrome verification because none survives the necessary filter.
+
+A separately isolated audit reparses T21 JSON, implements the boundary move
+independently, encodes digits in binary, constructs ripple full-adders, and
+uses CaDiCaL 3.0.1. It also reports UNSAT for all 184 systems. Every paired
+status agrees and every paired DIMACS digest differs. Formula sizes remain the
+same as T24 because only incidence positions change: at base 18 the primary
+formulas have 9,439 variables and 715,404 clauses while the audit formulas
+have 12,958 variables and 78,504 clauses; at base 40 the corresponding counts
+are 20,373/3,543,207 and 15,451/96,416.
+
+Two complete integrated generations run concurrently and produce identical
+157,328-byte JSON, SHA-256
+`bb3aef086a95c1e95e71c80d36b44b34ee908f5f92aac81d24755b8c9cf723bc`.
+This is strong computational evidence, not a checked DRAT/LRAT proof trace.
+
+### PRISM
+
+Math Prism was invoked with `qwen3.6:27b-mlx`, long thinking, and
+information-encoding, modular-local-global, and invariants-monovariants
+dispositions on two immutable problem snapshots. All three applications
+failed Prism's artifact schema. They produced zero valid artifacts and enter
+neither the proof nor frame evolution. The dispositional question that
+survives is useful: seek a boundary-local carry/residue certificate that
+compresses these solver negatives. No such invariant was supplied by Prism.
+
+### SIGNIFICANCE AND LIMITS
+
+- T24 ruled out one isolated repeat layout. T25 rules out its complete
+  one-interface radius-two neighborhood: all 48 local moves, not a sample.
+- The structural reduction is reusable. Any future `n=0` topology search need
+  vary only interfaces appearing in the incremented wrap target.
+- This does not rule out two simultaneous moves, a displacement of three or
+  more columns, changed repeat digits/order, another period, another proof
+  grammar, or Lychrel numbers in these bases.
+- The result is an internally new scoped negative, not a claimed publication
+  or a new base construction.
+
+### RESEARCH
+
+`not found`, with no publication claim. A current recheck found Seal's exact
+base-17 period-six construction, the public-domain classification/search for
+other proof grammars, OEIS A060382's numerical smallest-candidate table, and
+2024 arbitrary-base thread experiments, but no single-interface deformation
+or arbitrary-digit SAT classification of Seal's topology. Queries included
+`Lychrel repeat interface topology base 17`, `reverse and add SAT base
+topology Lychrel`, and exact topology/deformation phrases.
+
+Sources rechecked on 2026-08-06:
+
+- David Seal's base-17 construction: <https://www.mathpages.com/home/dseal.htm>
+- Public-domain search/classification: <https://cocalc.com/share/download/00ae14310fa0520ec7b59482b0807d8082d2c891/ReverseAndAddPDF.pdf>
+- OEIS A060382: <https://oeis.org/A060382>
+- 2024 arbitrary-base numerical experiments:
+  <https://canum2024.math.cnrs.fr/programme/soumission/3a00c64b-9099-4c01-a7fc-367cfc8e04b4/abstract.pdf>
+
+### NEXT
+
+Move from classification to explanation. Extract a deletion-minimal `n=0`
+UNSAT column core for each of the eight phase-zero variants and compare them
+under fixed-occurrence renaming. If a shared boundary-window core exists,
+rebuild it with a standalone exhaustive carry/digit eliminator and derive a
+uniform symbolic obstruction in `B`. Only after that proof-compression attempt
+should the search expand to two simultaneous interface moves.
+
+### COST
+
+Roughly two hours: three long-thinking 27B Prism attempts (all invalid), three
+method comparisons, an exact structural reduction from 48 moves to eight,
+TDD for perturbation semantics and isolation, 184 one-hot/PicoSAT solves, 184
+independently implemented binary/CaDiCaL solves, one caught isolated-import
+defect, current literature/OEIS rechecks, and two concurrent deterministic
+integrated replays.
