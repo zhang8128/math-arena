@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import gc
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +22,125 @@ from lychrel_interface_perturbations import (  # noqa: E402
 )
 from lychrel_wordproof import ParametricWord  # noqa: E402
 from t22_lychrel_affine_lift import base17_reference_cycle  # noqa: E402
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(scope="module")
+def group_mus_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    binary = tmp_path_factory.mktemp("t26-group-mus") / "t26_group_mus"
+    subprocess.run(
+        (
+            "clang++",
+            "-std=c++17",
+            "-O2",
+            str(ROOT / ".timeloop" / "runs" / "t26_group_mus.cpp"),
+            "-I/opt/homebrew/opt/cadical/include",
+            "/opt/homebrew/opt/cadical/lib/libcadical.a",
+            "-o",
+            str(binary),
+        ),
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return binary
+
+
+def run_group_mus_fixture(
+    binary: Path,
+    tmp_path: Path,
+    mode: str,
+) -> dict[str, object]:
+    formula = tmp_path / "fixture.cnf"
+    selectors = tmp_path / "selectors.txt"
+    formula.write_text(
+        "p cnf 4 3\n"
+        "-2 1 0\n"
+        "-3 -1 0\n"
+        "-4 1 -1 0\n",
+        encoding="utf-8",
+    )
+    selectors.write_text("2\n3\n4\n", encoding="utf-8")
+    completed = subprocess.run(
+        (str(binary), str(formula), str(selectors), mode),
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert completed.stderr == ""
+    return json.loads(completed.stdout)
+
+
+def test_group_mus_client_extracts_unique_irreducible_core(
+    group_mus_binary: Path,
+    tmp_path: Path,
+) -> None:
+    evidence = run_group_mus_fixture(group_mus_binary, tmp_path, "extract")
+
+    assert evidence["status"] == "UNSAT"
+    assert evidence["input_variables"] == 4
+    assert evidence["input_clauses"] == 3
+    assert evidence["requested_selectors"] == [2, 3, 4]
+    assert evidence["core_selectors"] == [2, 3]
+    assert evidence["deletion_statuses"] == [
+        {"selector": 2, "status": "SAT"},
+        {"selector": 3, "status": "SAT"},
+    ]
+    assert evidence["solve_calls"] >= 3
+    assert evidence["cadical_version"]
+
+
+def test_group_mus_client_verifies_requested_nonminimal_set(
+    group_mus_binary: Path,
+    tmp_path: Path,
+) -> None:
+    evidence = run_group_mus_fixture(group_mus_binary, tmp_path, "verify")
+
+    assert evidence["status"] == "UNSAT"
+    assert evidence["core_selectors"] == [2, 3, 4]
+    assert evidence["deletion_statuses"] == [
+        {"selector": 2, "status": "SAT"},
+        {"selector": 3, "status": "SAT"},
+        {"selector": 4, "status": "UNSAT"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("formula_text", "selector_text", "mode"),
+    (
+        ("p cnf 4 2\n-2 1 0\n", "2\n", "extract"),
+        ("p cnf 4 1\n-2 5 0\n", "2\n", "extract"),
+        ("p cnf 4 1\n-2 1 0\n1\n", "2\n", "extract"),
+        ("p cnf 4 1\n-2 1 0\n", "0\n", "extract"),
+        ("p cnf 4 1\n-2 1 0\n", "5\n", "extract"),
+        ("p cnf 4 1\n-2 1 0\n", "2\n2\n", "extract"),
+        ("p cnf 4 1\n-2 1 0\n", "2\n", "minimize"),
+    ),
+)
+def test_group_mus_client_rejects_malformed_inputs_without_json(
+    group_mus_binary: Path,
+    tmp_path: Path,
+    formula_text: str,
+    selector_text: str,
+    mode: str,
+) -> None:
+    formula = tmp_path / "malformed.cnf"
+    selectors = tmp_path / "malformed-selectors.txt"
+    formula.write_text(formula_text, encoding="utf-8")
+    selectors.write_text(selector_text, encoding="utf-8")
+
+    completed = subprocess.run(
+        (str(group_mus_binary), str(formula), str(selectors), mode),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert completed.stderr.startswith("t26_group_mus: ")
 
 
 def test_grouped_formula_keeps_domains_hard_and_groups_exact_columns() -> None:
