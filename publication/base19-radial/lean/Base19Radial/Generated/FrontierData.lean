@@ -8,7 +8,7 @@ structure GeneratedLayerData where
   outputStates : List (List Int)
 deriving Repr, DecidableEq
 
-def frontierSourceSha256 : String := "3e640abe9e22159c64c870202f9c21dcd646a6040ac13aa03ce6dfcbd632cf42"
+def frontierSourceSha256 : String := "1ce1b3c59bd95264e5338f7fba5bdffa15fb7635917964980057615395cf138c"
 
 def generatedLayerStates0 : List (List Int) := [
   [1, 1, 1]

@@ -217,6 +217,12 @@ def test_promoted_frontier_and_witness_have_exact_checked_schema() -> None:
         ).encode("ascii")
         assert hashlib.sha256(payload).hexdigest() == layer["output_states_sha256"]
         assert len(layer["equation_provenances"]) == layer["equation_count"]
+        assert len(layer["transitions"]) == layer["input_state_count"]
+        assert {
+            tuple(output)
+            for transition in layer["transitions"]
+            for output in transition["output_states"]
+        } == {tuple(output) for output in layer["output_states"]}
 
     assert witness["schema"] == "base19-radial-witness-v1"
     assert witness["status"] == "SAT"
@@ -256,6 +262,38 @@ def test_lean_data_renderer_rejects_an_out_of_range_state(tmp_path: Path) -> Non
     assert "outside its declared domain" in completed.stderr
 
 
+def test_lean_data_renderer_rejects_a_disconnected_transition(tmp_path: Path) -> None:
+    corrupted = tmp_path / "disconnected-frontier.json"
+    payload = json.loads(FRONTIER.read_text(encoding="utf-8"))
+    layer = next(
+        item
+        for item in payload["layers"]
+        if item["transitions"] and item["transitions"][0]["input_state"]
+    )
+    input_state = layer["transitions"][0]["input_state"]
+    input_state[0] = 1 - input_state[0]
+    corrupted.write_text(json.dumps(payload), encoding="utf-8")
+
+    completed = subprocess.run(
+        (
+            sys.executable,
+            str(LEAN_DATA_RENDERER),
+            "--frontier",
+            str(corrupted),
+            "--witness",
+            str(KNOWN_WITNESS),
+            "--output-dir",
+            str(tmp_path / "generated"),
+        ),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "do not match the input frontier" in completed.stderr
+
+
 def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:
     outputs = (tmp_path / "first", tmp_path / "second")
     for output in outputs:
@@ -277,3 +315,35 @@ def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:
 
     for name in ("FrontierData.lean", "WitnessData.lean"):
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes()
+    assert not (outputs[0] / "FrontiersExperimental.lean").exists()
+
+
+def test_experimental_frontier_proof_render_is_explicit_and_deterministic(
+    tmp_path: Path,
+) -> None:
+    outputs = (tmp_path / "first-experimental", tmp_path / "second-experimental")
+    for output in outputs:
+        subprocess.run(
+            (
+                sys.executable,
+                str(LEAN_DATA_RENDERER),
+                "--frontier",
+                str(FRONTIER),
+                "--witness",
+                str(KNOWN_WITNESS),
+                "--output-dir",
+                str(output),
+                "--experimental-frontier-proofs",
+            ),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+    name = "FrontiersExperimental.lean"
+    assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes()
+    source = (outputs[0] / name).read_text(encoding="utf-8")
+    assert "generatedLayerNeg1Closed" in source
+    assert "generatedLayer22Closed" in source
+    assert "generatedLayer33Closed" in source
+    assert all(token not in source for token in ("sorry", "native_decide", "axiom"))

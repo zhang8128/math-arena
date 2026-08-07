@@ -290,9 +290,11 @@ def solve_radial_frontier(
 
         input_states = states
         output_states: set[tuple[int, ...]] = set()
+        transitions: list[dict[str, object]] = []
         parents = {}
         model_count = 0
         for input_state in sorted(input_states):
+            input_outputs: set[tuple[int, ...]] = set()
             solver.push()
             if len(previous_frontier) != len(input_state):
                 raise AssertionError("radial input state has the wrong width")
@@ -334,6 +336,7 @@ def solve_radial_frontier(
                         },
                     )
                 output_states.add(output_state)
+                input_outputs.add(output_state)
                 if not output_frontier:
                     break
                 solver.add(
@@ -350,6 +353,15 @@ def solve_radial_frontier(
                     )
                 )
             solver.pop()
+            if include_certificate:
+                transitions.append(
+                    {
+                        "input_state": list(input_state),
+                        "output_states": [
+                            list(state) for state in sorted(input_outputs)
+                        ],
+                    }
+                )
 
         digit_frontier = sum(
             problem.variable_kinds[variable] == "digit"
@@ -378,6 +390,7 @@ def solve_radial_frontier(
                     "input_variables": list(previous_frontier),
                     "output_variables": list(output_frontier),
                     "output_states": [list(state) for state in sorted(output_states)],
+                    "transitions": transitions,
                 }
             )
         layer_records.append(layer_record)

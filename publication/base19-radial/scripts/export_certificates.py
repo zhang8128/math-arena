@@ -70,16 +70,36 @@ def _validate_frontier(payload: dict[str, Any]) -> None:
         raise ValueError("frontier layer interval changed")
     if layers[-1].get("output_states") != []:
         raise ValueError("frontier terminal state set is not empty")
-    for layer in layers:
+    expected_inputs: list[list[int]] = [[]]
+    expected_input_variables: list[str] = []
+    for expected_layer, layer in zip(range(-1, 34), layers, strict=True):
         provenances = layer.get("equation_provenances")
+        input_variables = layer.get("input_variables")
         variables = layer.get("output_variables")
         states = layer.get("output_states")
+        transitions = layer.get("transitions")
+        if layer.get("layer") != expected_layer:
+            raise ValueError("frontier layer order changed")
         if not isinstance(provenances, list) or len(provenances) != layer.get(
             "equation_count"
         ):
             raise ValueError("frontier layer equation coverage is incomplete")
-        if not isinstance(variables, list) or not isinstance(states, list):
+        if (
+            not isinstance(input_variables, list)
+            or not isinstance(variables, list)
+            or not isinstance(states, list)
+        ):
             raise ValueError("frontier layer variables or states are malformed")
+        if not isinstance(transitions, list) or len(transitions) != layer.get(
+            "input_state_count"
+        ):
+            raise ValueError("frontier transition coverage is incomplete")
+        if input_variables != expected_input_variables:
+            raise ValueError("frontier layer interfaces are disconnected")
+        if layer.get("input_state_count") != len(expected_inputs):
+            raise ValueError("frontier input-state count is invalid")
+        if layer.get("output_state_count") != len(states):
+            raise ValueError("frontier output-state count is invalid")
         if states != sorted(states):
             raise ValueError("frontier states are not in canonical order")
         for state in states:
@@ -96,6 +116,35 @@ def _validate_frontier(payload: dict[str, Any]) -> None:
         ).hexdigest()
         if digest != layer.get("output_states_sha256"):
             raise ValueError("frontier state digest mismatch")
+        transition_outputs: set[tuple[int, ...]] = set()
+        transition_inputs: list[list[int]] = []
+        for transition in transitions:
+            input_state = transition.get("input_state")
+            local_outputs = transition.get("output_states")
+            if (
+                not isinstance(input_state, list)
+                or len(input_state) != len(input_variables)
+                or not isinstance(local_outputs, list)
+                or local_outputs != sorted(local_outputs)
+            ):
+                raise ValueError("frontier transition is malformed")
+            transition_inputs.append(input_state)
+            if len({tuple(output) for output in local_outputs}) != len(local_outputs):
+                raise ValueError("frontier transition output is duplicated")
+            for output in local_outputs:
+                if not isinstance(output, list) or len(output) != len(variables):
+                    raise ValueError("frontier transition output width is invalid")
+                transition_outputs.add(tuple(output))
+        if transition_inputs != expected_inputs:
+            raise ValueError("frontier transitions do not match the input frontier")
+        if transition_outputs != {tuple(state) for state in states}:
+            raise ValueError("frontier transitions do not cover the output frontier")
+        if layer.get("local_model_count") != sum(
+            len(transition["output_states"]) for transition in transitions
+        ):
+            raise ValueError("frontier local-model count is invalid")
+        expected_inputs = states
+        expected_input_variables = variables
 
 
 def build_frontier_certificate() -> dict[str, Any]:
