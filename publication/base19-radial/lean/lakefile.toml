@@ -4,6 +4,12 @@ defaultTargets = ["Base19Radial"]
 
 [leanOptions]
 relaxedAutoImplicit = false
+maxRecDepth = 100000
+maxHeartbeats = 2000000
 
 [[lean_lib]]
 name = "Base19Radial"
+
+[[lean_exe]]
+name = "export_manifest"
+root = "ExportManifest"

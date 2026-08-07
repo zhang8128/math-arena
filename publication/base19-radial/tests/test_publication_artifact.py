@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parents[3]
 ARTIFACT = ROOT / "publication" / "base19-radial"
 TOPOLOGY = ARTIFACT / "instance" / "topology.json"
 BUILDER = ARTIFACT / "scripts" / "build_manifest.py"
+COMPARATOR = ARTIFACT / "scripts" / "compare_manifests.py"
+INSTANCE_RENDERER = ARTIFACT / "scripts" / "render_lean_instance.py"
+LEAN = ARTIFACT / "lean"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -78,6 +81,7 @@ def test_standalone_manifest_matches_production_builder() -> None:
 
     assert independent == production
     assert len(independent) == 409
+    assert len({row["provenance"] for row in independent}) == 409
     assert independent[0]["provenance"] == "phase=0,n=0,column=0"
     assert independent[-1]["provenance"] == "phase=5,n=0,column=83"
 
@@ -131,3 +135,60 @@ def test_manifest_cli_is_deterministic_and_self_digested(tmp_path: Path) -> None
             "utf-8"
         )
     ).hexdigest() == digest
+
+
+def test_manifest_comparator_reports_first_mutated_field(tmp_path: Path) -> None:
+    original = ARTIFACT / "instance" / "equations.json"
+    mutated = tmp_path / "mutated.json"
+    payload = json.loads(original.read_text(encoding="utf-8"))
+    payload["equations"][0]["target"] = {"literal": 7}
+    mutated.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        (sys.executable, str(COMPARATOR), str(original), str(mutated)),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert "equations[0].target" in completed.stderr
+
+
+def test_lean_instance_renderer_is_deterministic_and_transparent(tmp_path: Path) -> None:
+    manifest = ARTIFACT / "instance" / "equations.json"
+    outputs = (tmp_path / "first.lean", tmp_path / "second.lean")
+
+    for output in outputs:
+        subprocess.run(
+            (sys.executable, str(INSTANCE_RENDERER), str(manifest), str(output)),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+    assert outputs[0].read_bytes() == outputs[1].read_bytes()
+    source = outputs[0].read_text(encoding="utf-8")
+    assert "def generatedVariableNames : List String" in source
+    assert "def generatedCandidate : Problem" in source
+    assert "List.replicate 409 .digit" in source
+    assert "List.replicate 410 .carry" in source
+    assert all(token not in source for token in ("sorry", "native_decide", "axiom"))
+
+
+def test_lean_builder_exports_the_canonical_manifest() -> None:
+    completed = subprocess.run(
+        ("lake", "exe", "export_manifest"),
+        cwd=LEAN,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.encode("utf-8") == (
+        ARTIFACT / "instance" / "equations.json"
+    ).read_bytes()
