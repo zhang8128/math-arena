@@ -29,6 +29,9 @@ from lychrel_wordproof import (  # noqa: E402
     verify_cycle,
 )
 from t22_lychrel_affine_lift import base17_reference_cycle  # noqa: E402
+from t24_lychrel_arbitrary_topology_independent import (  # noqa: E402
+    build_audit,
+)
 
 
 def solve_formula(formula: CNFFormula) -> tuple[bool | None, ...] | None:
@@ -136,6 +139,17 @@ def build_evidence() -> dict[str, object]:
         item["status"] != "infeasible_at_n_zero" for item in results
     ):
         status = "no_verified_realizations"
+    independent_audit = build_audit()
+    primary_negative_bases = [
+        item["base"]
+        for item in results
+        if item["status"] == "infeasible_at_n_zero"
+    ]
+    independent_audit["status_agreement"] = (
+        independent_audit["covered_bases"] == primary_negative_bases
+    )
+    if not independent_audit["status_agreement"]:
+        raise AssertionError("primary and independent scans disagree")
     return {
         "kind": "arbitrary_digit_topology_classification",
         "status": status,
@@ -173,6 +187,7 @@ def build_evidence() -> dict[str, object]:
             "hits": hits,
             "results": results,
         },
+        "independent_audit": independent_audit,
         "prism": {
             "model": "qwen3.6:27b-mlx",
             "prompt_version": 2,
@@ -192,7 +207,7 @@ def build_evidence() -> dict[str, object]:
         },
         "limitations": [
             "The negative scope fixes the T21 topology and bases 18..40.",
-            "PicoSAT UNSAT results require the independent binary/CaDiCaL audit before final reporting.",
+            "Two independently encoded solver results are not a checked DRAT/LRAT proof trace.",
             "No minimal unsatisfiable column core is claimed.",
         ],
     }

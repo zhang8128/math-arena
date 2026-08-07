@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -214,8 +216,52 @@ def test_primary_evidence_scans_every_base() -> None:
     assert base18["clause_count"] == 715404
     assert len(base18["dimacs_digest"]) == 64
     assert evidence["solver"]["engine"] == "PicoSAT via pycosat"
+    assert evidence["independent_audit"]["implementation"] == (
+        "standalone binary digit encoding"
+    )
+    assert evidence["independent_audit"]["solver"] == {
+        "engine": "CaDiCaL",
+        "version": "3.0.1",
+    }
+    assert evidence["independent_audit"]["all_unsatisfiable"] is True
+    assert evidence["independent_audit"]["covered_bases"] == list(range(18, 41))
+    assert evidence["independent_audit"]["status_agreement"] is True
     assert evidence["prism"]["model"] == "qwen3.6:27b-mlx"
     assert evidence["prism"]["artifacts"] == [
         "99415b8fc2a52e62f541c03b93712c1bae61f39ac0d3a61fdf898409c92687ce",
         "8a9c0b6e3bb8539cf2aa022edaeba1508a09281bc562c382f57d4b738758e90c",
+    ]
+
+
+def test_standalone_binary_audit() -> None:
+    runs = Path(__file__).resolve().parents[1] / "runs"
+    script = runs / "t24_lychrel_arbitrary_topology_independent.py"
+    source = runs / "t21_lychrel_multi_interface.json"
+
+    with tempfile.TemporaryDirectory() as directory:
+        isolated = Path(directory)
+        shutil.copy2(script, isolated / script.name)
+        shutil.copy2(source, isolated / source.name)
+        completed = subprocess.run(
+            [sys.executable, "-I", str(isolated / script.name)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    audit = json.loads(completed.stdout)
+    primary = json.loads(
+        (runs / "t24_lychrel_arbitrary_topology.json").read_text()
+    )
+
+    assert audit["kind"] == "independent_binary_topology_audit"
+    assert audit["implementation"] == "standalone binary digit encoding"
+    assert audit["solver"] == {"engine": "CaDiCaL", "version": "3.0.1"}
+    assert audit["bases_tested"] == 23
+    assert audit["covered_bases"] == list(range(18, 41))
+    assert {item["status"] for item in audit["results"]} == {"unsatisfiable"}
+    assert {item["parameters_checked"] for item in audit["results"]} == {0}
+    assert audit["all_unsatisfiable"] is True
+    assert audit["results"][0]["dimacs_digest"] != primary["scan"]["results"][0][
+        "dimacs_digest"
     ]
