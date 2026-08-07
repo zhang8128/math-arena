@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from lychrel_interface_perturbations import (  # noqa: E402
 from lychrel_wordproof import ParametricWord  # noqa: E402
 from t22_lychrel_affine_lift import base17_reference_cycle  # noqa: E402
 from t25_lychrel_interface_perturbations_independent import BinaryCNF  # noqa: E402
+import t26_radial_frontier as radial_frontier  # noqa: E402
 from t26_lychrel_interface_cores import (  # noqa: E402
     discover_variant_families,
     extract_hybrid_core,
@@ -37,21 +39,91 @@ from t26_radial_frontier import (  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class _FakeSolver:
+    def __init__(self, status: object, model: object | None = None) -> None:
+        self.status = status
+        self.saved_model = model
+
+    def check(self) -> object:
+        return self.status
+
+    def model(self) -> object:
+        return self.saved_model
+
+    def reason_unknown(self) -> str:
+        return "test-unknown"
+
+
 def base19_radial_candidate() -> tuple[str, ...]:
-    bands = {
-        0: ((0, 33), (48, 82)),
-        1: ((0, 33), (49, 82)),
-        2: ((0, 33), (49, 82)),
-        3: ((0, 33), (49, 82)),
-        4: ((0, 33), (49, 82)),
-        5: ((0, 33), (49, 83)),
-    }
-    return tuple(
-        f"phase={phase},n=0,column={column}"
-        for phase, ranges in bands.items()
-        for start, stop in ranges
-        for column in range(start, stop + 1)
-        if (phase, column) != (5, 82)
+    return radial_frontier.base19_candidate_provenances()
+
+
+def test_checked_model_distinguishes_exact_solver_statuses() -> None:
+    sat = object()
+    unsat = object()
+
+    class FakeZ3:
+        pass
+
+    FakeZ3.sat = sat
+    FakeZ3.unsat = unsat
+    model = {"digit": 7}
+
+    assert radial_frontier._checked_model(
+        FakeZ3,
+        _FakeSolver(sat, model),
+    ) == model
+    assert radial_frontier._checked_model(
+        FakeZ3,
+        _FakeSolver(unsat),
+    ) is None
+    with pytest.raises(radial_frontier.ExactSolverError, match="test-unknown"):
+        radial_frontier._checked_model(
+            FakeZ3,
+            _FakeSolver(object()),
+        )
+
+
+def test_certificate_mode_exports_sorted_states_matching_digests() -> None:
+    pytest.importorskip("z3")
+    words = (
+        ParametricWord(2, ((1, 1),), ()),
+        ParametricWord(2, ((1, 1),), ()),
+    )
+    provenances = (
+        "phase=0,n=0,column=0",
+        "phase=0,n=0,column=1",
+        "phase=1,n=0,column=0",
+        "phase=1,n=0,column=1",
+    )
+
+    evidence = solve_radial_frontier(
+        words,
+        2,
+        provenances,
+        include_certificate=True,
+    )
+
+    for layer in evidence["layers"]:
+        assert layer["input_variables"] == sorted(layer["input_variables"])
+        assert layer["output_variables"] == sorted(layer["output_variables"])
+        assert layer["output_states"] == sorted(layer["output_states"])
+        payload = json.dumps(
+            layer["output_states"],
+            separators=(",", ":"),
+        ).encode("ascii")
+        assert hashlib.sha256(payload).hexdigest() == layer["output_states_sha256"]
+
+
+def test_base19_candidate_coordinates_have_frozen_digest() -> None:
+    candidate = radial_frontier.base19_candidate_provenances()
+
+    assert len(candidate) == len(set(candidate)) == 409
+    assert candidate[0] == "phase=0,n=0,column=0"
+    assert candidate[-1] == "phase=5,n=0,column=83"
+    payload = "".join(f"{item}\n" for item in candidate).encode("utf-8")
+    assert hashlib.sha256(payload).hexdigest() == (
+        "df743120f7733a45a946ee006a2d7301634e472b8b23ecef197641fee3ee080b"
     )
 
 

@@ -152,6 +152,28 @@ def _provenance_digest(provenances: tuple[str, ...]) -> str:
     ).hexdigest()
 
 
+def base19_candidate_provenances() -> tuple[str, ...]:
+    """Return the frozen 409-column base-19 radial candidate."""
+    bands = {
+        0: ((0, 33), (48, 82)),
+        1: ((0, 33), (49, 82)),
+        2: ((0, 33), (49, 82)),
+        3: ((0, 33), (49, 82)),
+        4: ((0, 33), (49, 82)),
+        5: ((0, 33), (49, 83)),
+    }
+    result = tuple(
+        f"phase={phase},n=0,column={column}"
+        for phase, ranges in bands.items()
+        for start, stop in ranges
+        for column in range(start, stop + 1)
+        if (phase, column) != (5, 82)
+    )
+    if len(result) != 409 or len(result) != len(set(result)):
+        raise AssertionError("base-19 radial candidate is not 409 unique columns")
+    return result
+
+
 def _load_z3():
     try:
         import z3  # type: ignore
@@ -160,6 +182,19 @@ def _load_z3():
             "radial frontier solving requires the optional z3-solver dependency"
         ) from error
     return z3
+
+
+class ExactSolverError(RuntimeError):
+    """The solver failed to return an exact SAT/UNSAT result."""
+
+
+def _checked_model(z3_module, solver):
+    status = solver.check()
+    if status == z3_module.sat:
+        return solver.model()
+    if status == z3_module.unsat:
+        return None
+    raise ExactSolverError(f"solver returned unknown: {solver.reason_unknown()}")
 
 
 def _z3_name(variable: str) -> str:
@@ -179,6 +214,7 @@ def solve_radial_frontier(
     provenances: Iterable[str],
     *,
     include_witness: bool = False,
+    include_certificate: bool = False,
 ) -> dict[str, object]:
     """Project exact local solutions across folded radial frontiers."""
     problem = _build_problem(words, base, provenances)
@@ -270,8 +306,10 @@ def solve_radial_frontier(
                         else value
                     )
                 )
-            while solver.check() == z3.sat:
-                model = solver.model()
+            while True:
+                model = _checked_model(z3, solver)
+                if model is None:
+                    break
                 model_count += 1
                 output_state = tuple(
                     _model_value(
@@ -321,20 +359,27 @@ def solve_radial_frontier(
         max_digit_frontier = max(max_digit_frontier, digit_frontier)
         max_carry_frontier = max(max_carry_frontier, carry_frontier)
         max_reachable_states = max(max_reachable_states, len(output_states))
-        layer_records.append(
-            {
-                "layer": layer,
-                "equation_count": len(layer_provenances),
-                "input_frontier_size": len(previous_frontier),
-                "output_frontier_size": len(output_frontier),
-                "output_frontier_digit_count": digit_frontier,
-                "output_frontier_carry_count": carry_frontier,
-                "input_state_count": len(input_states),
-                "output_state_count": len(output_states),
-                "local_model_count": model_count,
-                "output_states_sha256": _state_digest(output_states),
-            }
-        )
+        layer_record: dict[str, object] = {
+            "layer": layer,
+            "equation_count": len(layer_provenances),
+            "input_frontier_size": len(previous_frontier),
+            "output_frontier_size": len(output_frontier),
+            "output_frontier_digit_count": digit_frontier,
+            "output_frontier_carry_count": carry_frontier,
+            "input_state_count": len(input_states),
+            "output_state_count": len(output_states),
+            "local_model_count": model_count,
+            "output_states_sha256": _state_digest(output_states),
+        }
+        if include_certificate:
+            layer_record.update(
+                {
+                    "input_variables": list(previous_frontier),
+                    "output_variables": list(output_frontier),
+                    "output_states": [list(state) for state in sorted(output_states)],
+                }
+            )
+        layer_records.append(layer_record)
         if include_witness:
             parent_records[layer] = parents
         processed_layers.append(layer)
