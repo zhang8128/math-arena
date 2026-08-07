@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -228,6 +230,15 @@ def test_primary_evidence_classifies_every_relevant_instance() -> None:
     ]
     assert evidence["scan"]["n_zero_survivors"] == n_zero_survivors
     assert evidence["scan"]["verified_realizations"] == verified
+    assert evidence["independent_audit"]["kind"] == (
+        "independent_binary_interface_audit"
+    )
+    assert evidence["independent_audit"]["instances_tested"] == 184
+    assert evidence["independent_audit"]["status_agreement"] is True
+    assert evidence["independent_audit"]["encodings_distinct"] is True
+    assert evidence["independent_audit"]["satisfiable_instances"] == (
+        n_zero_survivors
+    )
     assert evidence["prism"] == {
         "model": "qwen3.6:27b-mlx",
         "applications": [
@@ -246,3 +257,49 @@ def test_primary_evidence_classifies_every_relevant_instance() -> None:
         ],
         "artifacts": [],
     }
+
+
+def test_standalone_binary_audit_classifies_every_relevant_instance() -> None:
+    runs = Path(__file__).resolve().parents[1] / "runs"
+    audit_script = runs / "t25_lychrel_interface_perturbations_independent.py"
+    binary_encoder = runs / "t24_lychrel_arbitrary_topology_independent.py"
+    source = runs / "t21_lychrel_multi_interface.json"
+
+    with tempfile.TemporaryDirectory() as directory:
+        isolated = Path(directory)
+        for path in (audit_script, binary_encoder, source):
+            shutil.copy2(path, isolated / path.name)
+        completed = subprocess.run(
+            [sys.executable, "-I", str(isolated / audit_script.name)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=3600,
+        )
+    audit = json.loads(completed.stdout)
+
+    assert audit["kind"] == "independent_binary_interface_audit"
+    assert audit["implementation"] == (
+        "JSON-only interface movement plus standalone binary full adders"
+    )
+    assert audit["solver"] == {"engine": "CaDiCaL", "version": "3.0.1"}
+    assert audit["variants_tested"] == 8
+    assert audit["instances_tested"] == 184
+    assert len(audit["variants"]) == 8
+    assert {(item["interface"], item["shift"]) for item in audit["variants"]} == {
+        (interface, shift)
+        for interface in (0, 1)
+        for shift in (-2, -1, 1, 2)
+    }
+    for variant in audit["variants"]:
+        assert [item["base"] for item in variant["results"]] == list(
+            range(18, 41)
+        )
+        assert {item["status"] for item in variant["results"]} <= {
+            "satisfiable",
+            "unsatisfiable",
+        }
+        assert all(len(item["dimacs_digest"]) == 64 for item in variant["results"])
+    assert len(audit["unsatisfiable_instances"]) + len(
+        audit["satisfiable_instances"]
+    ) == 184

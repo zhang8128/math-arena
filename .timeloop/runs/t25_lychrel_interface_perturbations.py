@@ -32,6 +32,9 @@ from lychrel_wordproof import (  # noqa: E402
     verify_cycle,
 )
 from t22_lychrel_affine_lift import base17_reference_cycle  # noqa: E402
+from t25_lychrel_interface_perturbations_independent import (  # noqa: E402
+    build_audit,
+)
 
 
 T24_EVIDENCE = Path(__file__).with_name("t24_lychrel_arbitrary_topology.json")
@@ -181,7 +184,7 @@ def build_evidence() -> dict[str, object]:
     elif n_zero_survivors:
         status = "no_verified_realizations"
 
-    return {
+    evidence = {
         "kind": "single_interface_topology_classification",
         "status": status,
         "scope": {
@@ -242,6 +245,36 @@ def build_evidence() -> dict[str, object]:
             "Solver agreement is not a checked DRAT or LRAT proof trace.",
         ],
     }
+    audit = build_audit()
+    audit_variants = audit["variants"]
+    if len(audit_variants) != len(variants):
+        raise AssertionError("primary and independent variant counts disagree")
+    agreement = True
+    distinct = True
+    for primary_variant, audit_variant in zip(variants, audit_variants):
+        if primary_variant["variant_id"] != audit_variant["variant_id"]:
+            raise AssertionError("primary and independent variant IDs disagree")
+        primary_results = primary_variant["results"]
+        audit_results = audit_variant["results"]
+        if len(primary_results) != len(audit_results):
+            raise AssertionError("primary and independent base counts disagree")
+        for primary_result, audit_result in zip(primary_results, audit_results):
+            if primary_result["base"] != audit_result["base"]:
+                raise AssertionError("primary and independent bases disagree")
+            primary_unsat = primary_result["status"] == "infeasible_at_n_zero"
+            audit_unsat = audit_result["status"] == "unsatisfiable"
+            agreement = agreement and primary_unsat == audit_unsat
+            distinct = distinct and (
+                primary_result["dimacs_digest"] != audit_result["dimacs_digest"]
+            )
+    audit["status_agreement"] = agreement
+    audit["encodings_distinct"] = distinct
+    if not agreement:
+        raise AssertionError("primary and independent statuses disagree")
+    if not distinct:
+        raise AssertionError("primary and independent encodings are not distinct")
+    evidence["independent_audit"] = audit
+    return evidence
 
 
 def main() -> None:
