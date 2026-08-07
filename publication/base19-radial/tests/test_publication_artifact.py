@@ -19,6 +19,7 @@ LEAN = ARTIFACT / "lean"
 FRONTIER = ARTIFACT / "certificates" / "frontier.json"
 KNOWN_WITNESS = ARTIFACT / "certificates" / "delete-p0-c0.json"
 LEAN_DATA_RENDERER = ARTIFACT / "scripts" / "render_lean_data.py"
+CERTIFICATE_EXPORTER = ARTIFACT / "scripts" / "export_certificates.py"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -31,6 +32,25 @@ def _load_builder() -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_exporter() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "base19_export_certificates", CERTIFICATE_EXPORTER
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _redigest(payload: dict[str, object]) -> None:
+    payload.pop("content_sha256", None)
+    canonical = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    payload["content_sha256"] = hashlib.sha256(canonical).hexdigest()
 
 
 def _production_rows() -> list[dict[str, object]]:
@@ -294,6 +314,68 @@ def test_lean_data_renderer_rejects_a_disconnected_transition(tmp_path: Path) ->
     assert "do not match the input frontier" in completed.stderr
 
 
+def test_lean_data_renderer_replays_witness_and_rejects_corruption(
+    tmp_path: Path,
+) -> None:
+    original = json.loads(KNOWN_WITNESS.read_text(encoding="utf-8"))
+    corruptions = []
+
+    missing = json.loads(json.dumps(original))
+    missing["witness"]["digits"].pop(next(iter(missing["witness"]["digits"])))
+    _redigest(missing)
+    corruptions.append(("missing", missing))
+
+    out_of_range = json.loads(json.dumps(original))
+    first_digit = next(iter(out_of_range["witness"]["digits"]))
+    out_of_range["witness"]["digits"][first_digit] = 19
+    _redigest(out_of_range)
+    corruptions.append(("out-of-range", out_of_range))
+
+    changed_carry = json.loads(json.dumps(original))
+    first_carry = next(iter(changed_carry["witness"]["carries"]))
+    changed_carry["witness"]["carries"][first_carry] = (
+        1 - changed_carry["witness"]["carries"][first_carry]
+    )
+    _redigest(changed_carry)
+    corruptions.append(("changed-carry", changed_carry))
+
+    for name, payload in corruptions:
+        corrupted = tmp_path / f"{name}.json"
+        corrupted.write_text(json.dumps(payload), encoding="utf-8")
+        completed = subprocess.run(
+            (
+                sys.executable,
+                str(LEAN_DATA_RENDERER),
+                "--frontier",
+                str(FRONTIER),
+                "--witness",
+                str(corrupted),
+                "--output-dir",
+                str(tmp_path / f"generated-{name}"),
+            ),
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        assert completed.returncode != 0, name
+
+
+def test_certificate_exporter_replays_witness_on_readback() -> None:
+    exporter = _load_exporter()
+    corrupted = json.loads(KNOWN_WITNESS.read_text(encoding="utf-8"))
+    first_carry = next(iter(corrupted["witness"]["carries"]))
+    corrupted["witness"]["carries"][first_carry] = (
+        1 - corrupted["witness"]["carries"][first_carry]
+    )
+
+    try:
+        exporter._validate_witness(corrupted)
+    except ValueError as error:
+        assert "witness violates" in str(error)
+    else:
+        raise AssertionError("corrupted witness passed exporter replay")
+
+
 def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:
     outputs = (tmp_path / "first", tmp_path / "second")
     for output in outputs:
@@ -313,8 +395,11 @@ def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:
             capture_output=True,
         )
 
-    for name in ("FrontierData.lean", "WitnessData.lean"):
+    for name in ("FrontierData.lean", "WitnessData.lean", "Witness.lean"):
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes()
+        assert (outputs[0] / name).read_bytes() == (
+            LEAN / "Base19Radial" / "Generated" / name
+        ).read_bytes()
     assert not (outputs[0] / "FrontiersExperimental.lean").exists()
 
 

@@ -123,7 +123,76 @@ def _validate_frontier(payload: dict[str, Any]) -> None:
     _validate_content_digest(payload)
 
 
-def _validate_witness(payload: dict[str, Any]) -> None:
+def _witness_assignment(
+    payload: dict[str, Any], equations_manifest: dict[str, Any]
+) -> list[int]:
+    equations = equations_manifest.get("equations")
+    if not isinstance(equations, list) or len(equations) != 409:
+        raise ValueError("equation manifest must contain 409 equations")
+    variable_ids = _variable_ids(equations)
+    witness = payload["witness"]
+    digits = witness["digits"]
+    carries = witness["carries"]
+    expected_digits = {
+        name.removeprefix("digit:")
+        for name in variable_ids
+        if name.startswith("digit:")
+    }
+    expected_carries = {name for name in variable_ids if name.startswith("c:")}
+    if set(digits) != expected_digits or set(carries) != expected_carries:
+        raise ValueError("witness variable assignment is incomplete or has extras")
+    ordered_names = sorted(variable_ids, key=variable_ids.get)
+    return [
+        digits[name.removeprefix("digit:")]
+        if name.startswith("digit:")
+        else carries[name]
+        for name in ordered_names
+    ]
+
+
+def _replay_witness(
+    payload: dict[str, Any], equations_manifest: dict[str, Any]
+) -> None:
+    equations = equations_manifest["equations"]
+    witness = payload["witness"]
+    digits = witness["digits"]
+    carries = witness["carries"]
+    removed = payload["removed"]
+    if sum(equation["provenance"] == removed for equation in equations) != 1:
+        raise ValueError("witness deletion provenance is not unique")
+
+    def atom_value(atom: dict[str, Any]) -> int:
+        if "literal" in atom:
+            return atom["literal"]
+        return digits[atom["variable"]]
+
+    retained = 0
+    for equation in equations:
+        if equation["provenance"] == removed:
+            continue
+        retained += 1
+        carry_in = 0 if equation["carry_in"] is None else carries[equation["carry_in"]]
+        carry_out = (
+            0 if equation["carry_out"] is None else carries[equation["carry_out"]]
+        )
+        if (
+            atom_value(equation["left"])
+            + atom_value(equation["right"])
+            + carry_in
+            != atom_value(equation["target"]) + 19 * carry_out
+        ):
+            raise ValueError(
+                "witness arithmetic replay failed at " + equation["provenance"]
+            )
+    if retained != 408:
+        raise ValueError("witness retained-equation count is invalid")
+    if any(digits[f"p{phase}:f0:d0"] <= 0 for phase in range(6)):
+        raise ValueError("witness violates a leading-digit constraint")
+
+
+def _validate_witness(
+    payload: dict[str, Any], equations_manifest: dict[str, Any]
+) -> None:
     if payload.get("schema") != "base19-radial-witness-v1":
         raise ValueError("witness schema is invalid")
     if payload.get("status") != "SAT" or payload.get("equation_count") != 408:
@@ -143,6 +212,15 @@ def _validate_witness(payload: dict[str, Any]) -> None:
         raise ValueError("witness digit is outside its declared domain")
     if any(value not in (0, 1) for value in carries.values()):
         raise ValueError("witness carry is outside its declared domain")
+    if payload.get("witness_replay") != {
+        "status": "valid",
+        "equation_count": 408,
+        "digit_count": 409,
+        "carry_count": 410,
+    }:
+        raise ValueError("witness replay metadata is invalid")
+    _witness_assignment(payload, equations_manifest)
+    _replay_witness(payload, equations_manifest)
     _validate_content_digest(payload)
 
 
@@ -812,6 +890,50 @@ def _render_witness(payload: dict[str, Any], source_sha256: str) -> str:
     return "\n".join(lines)
 
 
+def _render_witness_proof(
+    payload: dict[str, Any], equations_manifest: dict[str, Any]
+) -> str:
+    assignment = _witness_assignment(payload, equations_manifest)
+    lines = [
+        "import Base19Radial.Instance",
+        "",
+        "set_option maxRecDepth 100000",
+        "set_option maxHeartbeats 2000000",
+        "",
+        "namespace Base19Radial",
+        "",
+        "def deleteP0C0 : Problem := {",
+        "  candidate with",
+        "  equations := candidate.equations.filter fun column =>",
+        '    column.provenance != "phase=0,n=0,column=0"',
+        "}",
+        "",
+        "def deleteP0C0Witness : Assignment := [",
+    ]
+    for start in range(0, len(assignment), 12):
+        chunk = assignment[start : start + 12]
+        suffix = "," if start + len(chunk) < len(assignment) else ""
+        lines.append("  " + ", ".join(str(value) for value in chunk) + suffix)
+    lines.extend(
+        [
+            "]",
+            "",
+            "theorem deleteP0C0WitnessSatisfies :",
+            "    deleteP0C0.Satisfies deleteP0C0Witness := by",
+            "  decide",
+            "",
+            "theorem deleteP0C0Sat : ∃ assignment, deleteP0C0.Satisfies assignment :=",
+            "  ⟨deleteP0C0Witness, deleteP0C0WitnessSatisfies⟩",
+            "",
+            "#print axioms deleteP0C0Sat",
+            "",
+            "end Base19Radial",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _load(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -834,7 +956,7 @@ def main(argv: list[str] | None = None) -> int:
     witness = _load(args.witness)
     equations_manifest = _load(EQUATIONS)
     _validate_frontier(frontier)
-    _validate_witness(witness)
+    _validate_witness(witness, equations_manifest)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     frontier_sha = hashlib.sha256(args.frontier.read_bytes()).hexdigest()
     witness_sha = hashlib.sha256(args.witness.read_bytes()).hexdigest()
@@ -844,6 +966,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     (args.output_dir / "WitnessData.lean").write_text(
         _render_witness(witness, witness_sha),
+        encoding="utf-8",
+    )
+    (args.output_dir / "Witness.lean").write_text(
+        _render_witness_proof(witness, equations_manifest),
         encoding="utf-8",
     )
     if args.experimental_frontier_proofs:

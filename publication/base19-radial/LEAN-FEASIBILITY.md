@@ -42,3 +42,12 @@ The experimental renderer remains available only behind
 compile those proofs.  No theorem named `candidateUnsat` is exposed.  Any
 paper-facing statement must describe the concrete UNSAT result as exactly
 computed and independently replayed, not kernel checked.
+
+## Kernel-checked deletion witness
+
+The neighboring instance obtained by deleting
+`phase=0,n=0,column=0` is separately kernel checked. The generated theorem
+`Base19Radial.deleteP0C0Sat` uses an inline 819-value assignment in fixed
+variable-ID order and ordinary `by decide`; it does not use `native_decide`.
+A clean sequential module build checked the theorem in 37.60 seconds with
+7,507,558,400 bytes peak RSS. `#print axioms` reports only `propext`.

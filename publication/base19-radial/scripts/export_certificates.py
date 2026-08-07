@@ -20,6 +20,7 @@ from lychrel_interface_perturbations import InterfaceMove, move_interface  # noq
 from t22_lychrel_affine_lift import base17_reference_cycle  # noqa: E402
 from t26_radial_frontier import (  # noqa: E402
     base19_candidate_provenances,
+    replay_radial_witness,
     solve_radial_frontier,
 )
 
@@ -170,13 +171,27 @@ def _validate_witness(payload: dict[str, Any]) -> None:
         raise ValueError("witness does not certify the 408-equation neighbor")
     if payload.get("removed") != KNOWN_DELETION:
         raise ValueError("witness records the wrong removed equation")
-    if payload.get("witness_replay") != {
+    expected_replay = {
         "status": "valid",
         "equation_count": 408,
         "digit_count": 409,
         "carry_count": 410,
-    }:
+    }
+    if payload.get("witness_replay") != expected_replay:
         raise ValueError("witness exact replay is missing or invalid")
+    provenances = tuple(
+        provenance
+        for provenance in base19_candidate_provenances()
+        if provenance != KNOWN_DELETION
+    )
+    actual_replay = replay_radial_witness(
+        _moved_words(),
+        19,
+        provenances,
+        payload.get("witness"),
+    )
+    if actual_replay != expected_replay:
+        raise ValueError("witness exact replay result changed")
 
 
 def build_witness_certificate() -> dict[str, Any]:
