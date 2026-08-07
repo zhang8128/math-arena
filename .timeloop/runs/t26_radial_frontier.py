@@ -374,6 +374,7 @@ def solve_radial_frontier(
         if include_certificate:
             layer_record.update(
                 {
+                    "equation_provenances": list(layer_provenances),
                     "input_variables": list(previous_frontier),
                     "output_variables": list(output_frontier),
                     "output_states": [list(state) for state in sorted(output_states)],

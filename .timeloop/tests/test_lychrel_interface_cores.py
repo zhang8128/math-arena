@@ -105,6 +105,7 @@ def test_certificate_mode_exports_sorted_states_matching_digests() -> None:
     )
 
     for layer in evidence["layers"]:
+        assert len(layer["equation_provenances"]) == layer["equation_count"]
         assert layer["input_variables"] == sorted(layer["input_variables"])
         assert layer["output_variables"] == sorted(layer["output_variables"])
         assert layer["output_states"] == sorted(layer["output_states"])

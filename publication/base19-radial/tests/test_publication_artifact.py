@@ -16,6 +16,9 @@ BUILDER = ARTIFACT / "scripts" / "build_manifest.py"
 COMPARATOR = ARTIFACT / "scripts" / "compare_manifests.py"
 INSTANCE_RENDERER = ARTIFACT / "scripts" / "render_lean_instance.py"
 LEAN = ARTIFACT / "lean"
+FRONTIER = ARTIFACT / "certificates" / "frontier.json"
+KNOWN_WITNESS = ARTIFACT / "certificates" / "delete-p0-c0.json"
+LEAN_DATA_RENDERER = ARTIFACT / "scripts" / "render_lean_data.py"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -192,3 +195,85 @@ def test_lean_builder_exports_the_canonical_manifest() -> None:
     assert completed.stdout.encode("utf-8") == (
         ARTIFACT / "instance" / "equations.json"
     ).read_bytes()
+
+
+def test_promoted_frontier_and_witness_have_exact_checked_schema() -> None:
+    frontier = json.loads(FRONTIER.read_text(encoding="utf-8"))
+    witness = json.loads(KNOWN_WITNESS.read_text(encoding="utf-8"))
+
+    assert frontier["schema"] == "base19-radial-frontier-v1"
+    assert frontier["status"] == "UNSAT"
+    assert frontier["base"] == 19
+    assert frontier["equation_count"] == 409
+    assert len(frontier["layers"]) == 35
+    assert frontier["max_reachable_state_count"] == 314
+    assert frontier["layers"][0]["layer"] == -1
+    assert frontier["layers"][-1]["layer"] == 33
+    assert frontier["layers"][-1]["output_states"] == []
+    for layer in frontier["layers"]:
+        payload = json.dumps(
+            layer["output_states"],
+            separators=(",", ":"),
+        ).encode("ascii")
+        assert hashlib.sha256(payload).hexdigest() == layer["output_states_sha256"]
+        assert len(layer["equation_provenances"]) == layer["equation_count"]
+
+    assert witness["schema"] == "base19-radial-witness-v1"
+    assert witness["status"] == "SAT"
+    assert witness["removed"] == "phase=0,n=0,column=0"
+    assert witness["witness_replay"] == {
+        "status": "valid",
+        "equation_count": 408,
+        "digit_count": 409,
+        "carry_count": 410,
+    }
+
+
+def test_lean_data_renderer_rejects_an_out_of_range_state(tmp_path: Path) -> None:
+    corrupted = tmp_path / "corrupted-frontier.json"
+    payload = json.loads(FRONTIER.read_text(encoding="utf-8"))
+    layer = next(item for item in payload["layers"] if item["output_states"])
+    layer["output_states"][0][0] = 19
+    corrupted.write_text(json.dumps(payload), encoding="utf-8")
+
+    completed = subprocess.run(
+        (
+            sys.executable,
+            str(LEAN_DATA_RENDERER),
+            "--frontier",
+            str(corrupted),
+            "--witness",
+            str(KNOWN_WITNESS),
+            "--output-dir",
+            str(tmp_path / "generated"),
+        ),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "outside its declared domain" in completed.stderr
+
+
+def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:
+    outputs = (tmp_path / "first", tmp_path / "second")
+    for output in outputs:
+        subprocess.run(
+            (
+                sys.executable,
+                str(LEAN_DATA_RENDERER),
+                "--frontier",
+                str(FRONTIER),
+                "--witness",
+                str(KNOWN_WITNESS),
+                "--output-dir",
+                str(output),
+            ),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+    for name in ("FrontierData.lean", "WitnessData.lean"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes()
