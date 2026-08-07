@@ -78,6 +78,37 @@ class CNFFormula:
         return digest.hexdigest()
 
 
+@dataclass(frozen=True)
+class CNFGroup:
+    provenance: str
+    clauses: tuple[tuple[int, ...], ...]
+
+
+@dataclass(frozen=True)
+class GroupedCNFFormula:
+    base: int
+    parameters: tuple[int, ...]
+    hard_clauses: tuple[tuple[int, ...], ...]
+    groups: tuple[CNFGroup, ...]
+    semantic_keys: tuple[str, ...]
+    digit_keys: tuple[str, ...]
+    selector_keys: tuple[str, ...]
+
+    def guarded_formula(self) -> CNFFormula:
+        selector_start = len(self.semantic_keys) + 1
+        guarded = list(self.hard_clauses)
+        for offset, group in enumerate(self.groups):
+            selector = selector_start + offset
+            guarded.extend((-selector,) + clause for clause in group.clauses)
+        return CNFFormula(
+            base=self.base,
+            parameters=self.parameters,
+            clauses=tuple(guarded),
+            semantic_keys=self.semantic_keys + self.selector_keys,
+            digit_keys=self.digit_keys,
+        )
+
+
 def _reference_base(words: tuple[ParametricWord, ...]) -> int:
     if not words:
         raise ValueError("at least one phase is required")
@@ -182,13 +213,17 @@ def build_column_constraints(
     return tuple(constraints)
 
 
-def compile_one_hot_cnf(
+def _compile_one_hot_parts(
     words: tuple[ParametricWord, ...],
     base: int,
     *,
     parameters: tuple[int, ...] = (0,),
-) -> CNFFormula:
-    """Compile digit domains and exact columns into deterministic CNF."""
+) -> tuple[
+    tuple[tuple[int, ...], ...],
+    tuple[CNFGroup, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
     constraints = build_column_constraints(
         words,
         base,
@@ -197,7 +232,8 @@ def compile_one_hot_cnf(
     digit_keys = _all_digit_keys(words)
     semantic_keys: list[str] = []
     variable_ids: dict[str, int] = {}
-    clauses: list[tuple[int, ...]] = []
+    hard_clauses: list[tuple[int, ...]] = []
+    groups: list[CNFGroup] = []
 
     def variable(semantic: str) -> int:
         if semantic not in variable_ids:
@@ -210,17 +246,18 @@ def compile_one_hot_cnf(
 
     for key in digit_keys:
         domain = tuple(digit_variable(key, value) for value in range(base))
-        clauses.append(domain)
+        hard_clauses.append(domain)
         for left in range(base):
             for right in range(left + 1, base):
-                clauses.append((-domain[left], -domain[right]))
+                hard_clauses.append((-domain[left], -domain[right]))
 
     for phase, word in enumerate(words):
         if not word.fragments[0]:
             raise ValueError("the first fragment of every phase must be nonempty")
-        clauses.append((-digit_variable(_digit_key(phase, 0, 0), 0),))
+        hard_clauses.append((-digit_variable(_digit_key(phase, 0, 0), 0),))
 
     for constraint in constraints:
+        clauses: list[tuple[int, ...]] = []
         left_values = (
             range(base)
             if constraint.left.variable is not None
@@ -274,13 +311,62 @@ def compile_one_hot_cnf(
                         )
                     elif carry_out:
                         clauses.append(tuple(condition))
+        groups.append(CNFGroup(constraint.provenance, tuple(clauses)))
+
+    return (
+        tuple(hard_clauses),
+        tuple(groups),
+        tuple(semantic_keys),
+        digit_keys,
+    )
+
+
+def compile_one_hot_cnf(
+    words: tuple[ParametricWord, ...],
+    base: int,
+    *,
+    parameters: tuple[int, ...] = (0,),
+) -> CNFFormula:
+    """Compile digit domains and exact columns into deterministic CNF."""
+    hard_clauses, groups, semantic_keys, digit_keys = _compile_one_hot_parts(
+        words,
+        base,
+        parameters=parameters,
+    )
 
     return CNFFormula(
         base=base,
         parameters=parameters,
-        clauses=tuple(clauses),
-        semantic_keys=tuple(semantic_keys),
+        clauses=hard_clauses
+        + tuple(clause for group in groups for clause in group.clauses),
+        semantic_keys=semantic_keys,
         digit_keys=digit_keys,
+    )
+
+
+def compile_grouped_one_hot_cnf(
+    words: tuple[ParametricWord, ...],
+    base: int,
+    *,
+    parameters: tuple[int, ...] = (0,),
+) -> GroupedCNFFormula:
+    """Compile hard digit clauses and selector-guarded column groups."""
+    hard_clauses, groups, semantic_keys, digit_keys = _compile_one_hot_parts(
+        words,
+        base,
+        parameters=parameters,
+    )
+    selector_keys = tuple(
+        f"selector:{group.provenance}" for group in groups
+    )
+    return GroupedCNFFormula(
+        base=base,
+        parameters=parameters,
+        hard_clauses=hard_clauses,
+        groups=groups,
+        semantic_keys=semantic_keys,
+        digit_keys=digit_keys,
+        selector_keys=selector_keys,
     )
 
 
