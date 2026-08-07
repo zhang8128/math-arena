@@ -10,10 +10,12 @@ replay, then promote a symbolic obstruction only if one survives both checks.
 
 **Architecture:** Refactor the existing one-hot compiler to emit hard clauses
 and selector-guarded column groups without changing its unguarded formula.  A
-small C++ CaDiCaL API client extracts and verifies group MUSes incrementally;
-a Python orchestrator discovers representative core families across the eight
-variants and 23 bases.  A standalone JSON-driven CSP implementation rebuilds
-and exhaustively replays every core and deletion witness.
+small C++ CaDiCaL API client seeds and minimizes group MUSes in the calibrated
+compact binary encoding, then verifies the exact resulting columns in the
+one-hot encoding.  A Python orchestrator discovers representative core
+families across the eight variants and 23 bases.  A standalone JSON-driven CSP
+implementation rebuilds and exhaustively replays every core and deletion
+witness.
 
 **Tech Stack:** Python 3.9, SageMath 10.9 Python 3.14, C++17, Homebrew
 CaDiCaL 3.0.1 static library, pytest, exact integer arithmetic.
@@ -50,21 +52,21 @@ CaDiCaL 3.0.1 static library, pytest, exact integer arithmetic.
   `GroupedCNFFormula.guarded_formula() -> CNFFormula`, and
   `compile_grouped_one_hot_cnf(words, base, parameters=(0,))`.
 
-- [ ] **Step 1: Write literal grouped-formula tests**
+- [x] **Step 1: Write literal grouped-formula tests**
 
   Use a two-phase, two-digit fixture.  Assert that digit-domain and
   leading-nonzero clauses are hard, every transition implication is in the
   exact provenance group, selector keys follow column order, and each guarded
   clause is `(-selector, *original_clause)`.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
   Run:
   `python3 -m pytest .timeloop/tests/test_lychrel_interface_cores.py -q`
 
   Expected: collection fails because grouped APIs do not exist.
 
-- [ ] **Step 3: Refactor the compiler around labeled clauses**
+- [x] **Step 3: Refactor the compiler around labeled clauses**
 
   Add one private builder that performs the existing deterministic variable
   allocation once and returns hard clauses plus ordered column groups.
@@ -72,21 +74,21 @@ CaDiCaL 3.0.1 static library, pytest, exact integer arithmetic.
   `compile_grouped_one_hot_cnf` must append selectors after every original
   semantic variable and guard only grouped clauses.
 
-- [ ] **Step 4: Add exact T25 calibration tests**
+- [x] **Step 4: Add exact T25 calibration tests**
 
   For each of the eight phase-zero moves at base 18, strip the leading selector
   from every guarded clause, flatten hard clauses and groups, and assert exact
   equality with `compile_one_hot_cnf`.  Assert 499 groups with unique
   provenances and deterministic guarded DIMACS digest.
 
-- [ ] **Step 5: Run focused and T24/T25 regression tests GREEN**
+- [x] **Step 5: Run focused and T24/T25 regression tests GREEN**
 
   Run:
   `python3 -m pytest .timeloop/tests/test_lychrel_interface_cores.py .timeloop/tests/test_lychrel_arbitrary_topology.py .timeloop/tests/test_lychrel_interface_perturbations.py -q -k 'not primary_evidence and not standalone_binary_audit'`
 
   Expected: all tests pass and existing unguarded digests remain unchanged.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
   ```bash
   git add .timeloop/lib/lychrel_arbitrary_topology.py .timeloop/tests/test_lychrel_interface_cores.py
@@ -109,7 +111,7 @@ CaDiCaL 3.0.1 static library, pytest, exact integer arithmetic.
   `input_variables`, `input_clauses`, `requested_selectors`, `core_selectors`,
   `deletion_statuses`, and `solve_calls`.
 
-- [ ] **Step 1: Write failing compiled-client tests**
+- [x] **Step 1: Write failing compiled-client tests**
 
   In a temporary directory compile with:
 
@@ -125,28 +127,28 @@ CaDiCaL 3.0.1 static library, pytest, exact integer arithmetic.
   returns those two and two SAT deletion statuses; assert `verify` preserves a
   requested nonminimal set and reports the UNSAT deletion accurately.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
   Run the two compiled-client tests.  Expected: compilation fails because the
   C++ source is absent.
 
-- [ ] **Step 3: Implement strict DIMACS and selector parsing**
+- [x] **Step 3: Implement strict DIMACS and selector parsing**
 
   Reject duplicate/zero/out-of-range selectors, clause counts differing from
   the header, literals outside the variable range, trailing non-whitespace,
   unsupported mode, and unreadable files.  Emit errors to stderr and return a
   nonzero process status without partial JSON.
 
-- [ ] **Step 4: Implement incremental extraction and verification**
+- [x] **Step 4: Implement seed, parallel extraction, and verification**
 
-  Load every clause into one `CaDiCaL::Solver`, freeze selectors, and solve
-  under positive selector assumptions.  In `extract`, seed from selectors for
-  which `failed(selector)` is true, then restart deletion scanning whenever an
-  UNSAT deletion permits another shrink.  In `verify`, keep the requested set.
-  Finally require joint UNSAT and solve every one-selector deletion, recording
-  exact SAT/UNSAT statuses.  Treat status 0 as fatal.
+  Use assumption-based `seed` mode on compact binary groups, deterministic
+  chunk and parallel deletion batches in `extract`, and incremental
+  assumption replay in `verify`.  After each removable group, restart from the
+  canonically first proven deletion.  Finally require joint UNSAT and solve
+  every one-selector deletion, recording exact SAT/UNSAT statuses.  Treat
+  status 0 as fatal.
 
-- [ ] **Step 5: Run compiled-client tests GREEN and commit**
+- [x] **Step 5: Run compiled-client tests GREEN and commit**
 
   ```bash
   python3 -m pytest .timeloop/tests/test_lychrel_interface_cores.py -q

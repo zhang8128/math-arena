@@ -1,14 +1,18 @@
 #include <cadical.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -149,6 +153,11 @@ struct Runner {
     if (status != 10 && status != 20) {
       throw std::runtime_error("CaDiCaL returned UNKNOWN");
     }
+    if (const char *progress_path = std::getenv("T26_PROGRESS_PATH")) {
+      std::ofstream progress(progress_path, std::ios::app);
+      progress << solve_calls << ' ' << assumptions.size() << ' '
+               << status_name(status) << '\n';
+    }
     return status;
   }
 
@@ -159,6 +168,77 @@ struct Runner {
     }
     return result;
   }
+
+};
+
+std::vector<int> without_index(const std::vector<int> &values, size_t removed);
+
+struct PlainRunner {
+  const Formula &formula;
+  const std::unordered_set<int> selector_variables;
+  std::atomic<int> solve_calls{0};
+  std::mutex progress_mutex;
+
+  PlainRunner(const Formula &input, const std::vector<int> &selectors)
+      : formula(input), selector_variables(selectors.begin(), selectors.end()) {}
+
+  int solve(const std::vector<int> &active) {
+    const std::unordered_set<int> enabled(active.begin(), active.end());
+    CaDiCaL::Solver solver;
+    for (const auto &clause : formula.clauses) {
+      const bool guarded = !clause.empty() && clause.front() < 0 &&
+                           selector_variables.count(-clause.front());
+      if (!guarded) {
+        solver.clause(clause);
+      } else if (enabled.count(-clause.front())) {
+        if (clause.size() == 1) {
+          solver.clause(std::vector<int>());
+        } else {
+          solver.clause(clause.data() + 1, clause.size() - 1);
+        }
+      }
+    }
+    const int call_number = ++solve_calls;
+    const int status = solver.solve();
+    if (status != 10 && status != 20) {
+      throw std::runtime_error("CaDiCaL returned UNKNOWN");
+    }
+    if (const char *progress_path = std::getenv("T26_PROGRESS_PATH")) {
+      std::lock_guard<std::mutex> lock(progress_mutex);
+      std::ofstream progress(progress_path, std::ios::app);
+      progress << call_number << ' ' << active.size() << ' '
+               << status_name(status) << '\n';
+    }
+    return status;
+  }
+
+  std::vector<int> solve_deletions(const std::vector<int> &core,
+                                   size_t worker_count) {
+    std::vector<int> statuses(core.size(), 0);
+    std::atomic<size_t> next{0};
+    std::atomic<bool> stopped{false};
+    std::exception_ptr failure;
+    std::mutex failure_mutex;
+    std::vector<std::thread> workers;
+    for (size_t worker = 0; worker < worker_count; ++worker) {
+      workers.emplace_back([&]() {
+        try {
+          while (!stopped.load()) {
+            const size_t index = next.fetch_add(1);
+            if (index >= core.size()) break;
+            statuses[index] = solve(without_index(core, index));
+          }
+        } catch (...) {
+          stopped.store(true);
+          std::lock_guard<std::mutex> lock(failure_mutex);
+          if (!failure) failure = std::current_exception();
+        }
+      });
+    }
+    for (auto &worker : workers) worker.join();
+    if (failure) std::rethrow_exception(failure);
+    return statuses;
+  }
 };
 
 std::vector<int> without_index(const std::vector<int> &values, size_t removed) {
@@ -167,6 +247,24 @@ std::vector<int> without_index(const std::vector<int> &values, size_t removed) {
   for (size_t i = 0; i < values.size(); ++i) {
     if (i != removed) result.push_back(values[i]);
   }
+  return result;
+}
+
+std::vector<std::pair<size_t, size_t>> partitions(size_t size, size_t count) {
+  std::vector<std::pair<size_t, size_t>> result;
+  const size_t width = (size + count - 1) / count;
+  for (size_t begin = 0; begin < size; begin += width) {
+    result.push_back({begin, std::min(size, begin + width)});
+  }
+  return result;
+}
+
+std::vector<int> without_range(const std::vector<int> &values, size_t begin,
+                               size_t end) {
+  std::vector<int> result;
+  result.reserve(values.size() - (end - begin));
+  result.insert(result.end(), values.begin(), values.begin() + begin);
+  result.insert(result.end(), values.begin() + end, values.end());
   return result;
 }
 
@@ -185,52 +283,113 @@ int main(int argc, char **argv) {
   try {
     if (argc != 4) {
       throw std::runtime_error(
-          "usage: t26_group_mus FORMULA SELECTORS extract|verify");
+          "usage: t26_group_mus FORMULA SELECTORS extract|verify|seed");
     }
     const std::string mode = argv[3];
-    if (mode != "extract" && mode != "verify") {
+    if (mode != "extract" && mode != "verify" && mode != "seed") {
       throw std::runtime_error("unsupported mode: " + mode);
     }
 
     const Formula formula = read_dimacs(argv[1]);
     const std::vector<int> requested = read_selectors(argv[2], formula.variables);
-    Runner runner;
-    for (const auto &clause : formula.clauses) runner.solver.clause(clause);
-    for (const int selector : requested) runner.solver.freeze(selector);
-
-    std::vector<int> core = requested;
-    int status = runner.solve(core);
-    if (status != 20) {
-      throw std::runtime_error("requested selector set is not UNSAT");
+    if (mode == "seed") {
+      Runner runner;
+      for (const auto &clause : formula.clauses) runner.solver.clause(clause);
+      if (runner.solve(requested) != 20) {
+        throw std::runtime_error("requested selector set is not UNSAT");
+      }
+      const std::vector<int> seed = runner.failed_subset(requested);
+      if (seed.empty()) throw std::runtime_error("empty failed-assumption core");
+      std::cout << "{\"status\":\"UNSAT\",\"cadical_version\":\""
+                << CaDiCaL::Solver::version() << "\",\"input_variables\":"
+                << formula.variables << ",\"input_clauses\":"
+                << formula.clauses.size() << ",\"requested_selectors\":";
+      print_integer_array(requested);
+      std::cout << ",\"core_selectors\":";
+      print_integer_array(seed);
+      std::cout << ",\"deletion_statuses\":[],\"solve_calls\":"
+                << runner.solve_calls << "}\n";
+      return 0;
     }
-
+    std::vector<int> core = requested;
+    std::vector<int> deletion_statuses;
+    int solve_calls = 0;
+    const size_t extraction_workers = 8;
+    std::string deletion_algorithm = "incremental-verification";
+    size_t reported_workers = 1;
     if (mode == "extract") {
-      core = runner.failed_subset(core);
-      if (core.empty()) throw std::runtime_error("empty failed-assumption core");
-      size_t index = 0;
-      while (index < core.size()) {
-        const std::vector<int> trial = without_index(core, index);
-        status = runner.solve(trial);
-        if (status == 20) {
-          core = runner.failed_subset(trial);
-          if (core.empty()) throw std::runtime_error("empty failed-assumption core");
-          index = 0;
-        } else {
-          ++index;
+      deletion_algorithm = "parallel-batch-ddmin";
+      reported_workers = extraction_workers;
+      PlainRunner runner(formula, requested);
+      if (runner.solve(core) != 20) {
+        throw std::runtime_error("requested selector set is not UNSAT");
+      }
+      size_t granularity = 2;
+      bool terminal_deletions_checked = false;
+      bool use_batch_deletion = false;
+      while (core.size() >= 2) {
+        bool reduced = false;
+        for (const auto [begin, end] : partitions(core.size(), granularity)) {
+          const std::vector<int> trial = without_range(core, begin, end);
+          if (runner.solve(trial) == 20) {
+            core = trial;
+            granularity = std::max<size_t>(2, granularity - 1);
+            reduced = true;
+            break;
+          }
+        }
+        if (!reduced) {
+          if (granularity >= core.size()) {
+            terminal_deletions_checked = true;
+            break;
+          }
+          if (granularity >= 8) {
+            use_batch_deletion = true;
+            break;
+          }
+          granularity = std::min(core.size(), granularity * 2);
         }
       }
-    }
-
-    status = runner.solve(core);
-    if (status != 20) throw std::runtime_error("final core is not UNSAT");
-    std::vector<int> deletion_statuses;
-    deletion_statuses.reserve(core.size());
-    for (size_t index = 0; index < core.size(); ++index) {
-      const int deletion_status = runner.solve(without_index(core, index));
-      if (mode == "extract" && deletion_status != 10) {
-        throw std::runtime_error("extracted core is not deletion-irreducible");
+      if (use_batch_deletion) {
+        while (true) {
+          const std::vector<int> statuses =
+              runner.solve_deletions(core, extraction_workers);
+          const auto removable = std::find(statuses.begin(), statuses.end(), 20);
+          if (removable == statuses.end()) break;
+          core = without_index(core, removable - statuses.begin());
+        }
+        terminal_deletions_checked = true;
       }
-      deletion_statuses.push_back(deletion_status);
+      if (core.empty()) {
+        throw std::runtime_error("final core is not UNSAT");
+      }
+      deletion_statuses.reserve(core.size());
+      if (terminal_deletions_checked) {
+        deletion_statuses.assign(core.size(), 10);
+      } else {
+        for (size_t index = 0; index < core.size(); ++index) {
+          const int deletion_status = runner.solve(without_index(core, index));
+          if (deletion_status != 10) {
+            throw std::runtime_error("extracted core is not deletion-irreducible");
+          }
+          deletion_statuses.push_back(deletion_status);
+        }
+      }
+      solve_calls = runner.solve_calls.load();
+    } else {
+      Runner runner;
+      for (const auto &clause : formula.clauses) runner.solver.clause(clause);
+      if (runner.solve(core) != 20) {
+        throw std::runtime_error("requested selector set is not UNSAT");
+      }
+      if (runner.solve(core) != 20) {
+        throw std::runtime_error("final core is not UNSAT");
+      }
+      deletion_statuses.reserve(core.size());
+      for (size_t index = 0; index < core.size(); ++index) {
+        deletion_statuses.push_back(runner.solve(without_index(core, index)));
+      }
+      solve_calls = runner.solve_calls;
     }
 
     std::cout << '{';
@@ -249,7 +408,9 @@ int main(int argc, char **argv) {
       std::cout << "{\"selector\":" << core[index] << ",\"status\":\""
                 << status_name(deletion_statuses[index]) << "\"}";
     }
-    std::cout << "],\"solve_calls\":" << runner.solve_calls << "}\n";
+    std::cout << "],\"solve_calls\":" << solve_calls
+              << ",\"deletion_algorithm\":\"" << deletion_algorithm
+              << "\",\"worker_count\":" << reported_workers << "}\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "t26_group_mus: " << error.what() << '\n';

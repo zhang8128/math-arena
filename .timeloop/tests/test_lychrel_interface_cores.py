@@ -22,6 +22,12 @@ from lychrel_interface_perturbations import (  # noqa: E402
 )
 from lychrel_wordproof import ParametricWord  # noqa: E402
 from t22_lychrel_affine_lift import base17_reference_cycle  # noqa: E402
+from t25_lychrel_interface_perturbations_independent import BinaryCNF  # noqa: E402
+from t26_lychrel_interface_cores import (  # noqa: E402
+    discover_variant_families,
+    extract_hybrid_core,
+    verify_hybrid_core,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -90,6 +96,8 @@ def test_group_mus_client_extracts_unique_irreducible_core(
     ]
     assert evidence["solve_calls"] >= 3
     assert evidence["cadical_version"]
+    assert evidence["deletion_algorithm"] == "parallel-batch-ddmin"
+    assert evidence["worker_count"] == 8
 
 
 def test_group_mus_client_verifies_requested_nonminimal_set(
@@ -105,6 +113,18 @@ def test_group_mus_client_verifies_requested_nonminimal_set(
         {"selector": 3, "status": "SAT"},
         {"selector": 4, "status": "UNSAT"},
     ]
+
+
+def test_group_mus_client_returns_failed_assumption_seed(
+    group_mus_binary: Path,
+    tmp_path: Path,
+) -> None:
+    evidence = run_group_mus_fixture(group_mus_binary, tmp_path, "seed")
+
+    assert evidence["status"] == "UNSAT"
+    assert evidence["core_selectors"] == [2, 3]
+    assert evidence["deletion_statuses"] == []
+    assert evidence["solve_calls"] == 1
 
 
 @pytest.mark.parametrize(
@@ -143,6 +163,120 @@ def test_group_mus_client_rejects_malformed_inputs_without_json(
     assert completed.stderr.startswith("t26_group_mus: ")
 
 
+def test_bounded_family_discovery_is_complete_irreducible_and_deterministic(
+    group_mus_binary: Path,
+) -> None:
+    words = base17_reference_cycle()
+    move = InterfaceMove(0, 0, -2)
+
+    def fixed_certificate(*args: object) -> dict[str, object]:
+        certificate = {
+            "status": "UNSAT",
+            "deletion_statuses": ["SAT"],
+        }
+        return {
+            "base": 18,
+            "seed_size": 1,
+            "core_size": 1,
+            "core_provenances": ["phase=0,n=0,column=0"],
+            "binary_certificate": certificate,
+            "one_hot_certificate": certificate,
+        }
+
+    first = discover_variant_families(
+        words,
+        move,
+        (18,),
+        group_mus_binary,
+        extract_core=fixed_certificate,
+    )
+    second = discover_variant_families(
+        words,
+        move,
+        (18,),
+        group_mus_binary,
+        extract_core=fixed_certificate,
+    )
+
+    assert first == second
+    assert first["variant_id"] == "phase0-interface0-minus2"
+    assert first["bases"] == [18]
+    assert first["uncovered_bases"] == []
+    families = first["families"]
+    assert families[0]["representative_base"] == 18
+    assigned = [base for family in families for base in family["covered_bases"]]
+    assert assigned == [18]
+    assert len(assigned) == len(set(assigned))
+    for family in families:
+        assert family["core_size"] == len(family["core_provenances"])
+        assert family["core_size"] > 0
+        for verification in family["verifications"]:
+            for encoding in ("binary_certificate", "one_hot_certificate"):
+                certificate = verification[encoding]
+                assert certificate["status"] == "UNSAT"
+                assert set(certificate["deletion_statuses"]) == {"SAT"}
+        assert len(family["canonical_incidence_sha256"]) == 64
+
+
+def test_hybrid_base18_core_matches_binary_and_one_hot_certificates(
+    group_mus_binary: Path,
+) -> None:
+    evidence = extract_hybrid_core(
+        base17_reference_cycle(),
+        InterfaceMove(0, 0, -2),
+        18,
+        group_mus_binary,
+    )
+
+    assert evidence["seed_size"] == 158
+    assert evidence["core_size"] == 156
+    assert evidence["binary_certificate"]["status"] == "UNSAT"
+    assert set(evidence["binary_certificate"]["deletion_statuses"]) == {"SAT"}
+    assert evidence["one_hot_certificate"]["status"] == "UNSAT"
+    assert set(evidence["one_hot_certificate"]["deletion_statuses"]) == {"SAT"}
+    assert evidence["columns_by_phase"] == {
+        "0": [[1, 12], [69, 82]],
+        "1": [[0, 12], [70, 82]],
+        "2": [[0, 12], [70, 82]],
+        "3": [[0, 12], [70, 82]],
+        "4": [[0, 12], [70, 82]],
+        "5": [[0, 12], [71, 83]],
+    }
+
+
+def test_base18_band_core_does_not_persist_unchanged_at_base19(
+    group_mus_binary: Path,
+) -> None:
+    bands = {
+        0: ((1, 12), (69, 82)),
+        1: ((0, 12), (70, 82)),
+        2: ((0, 12), (70, 82)),
+        3: ((0, 12), (70, 82)),
+        4: ((0, 12), (70, 82)),
+        5: ((0, 12), (71, 83)),
+    }
+    provenances = tuple(
+        f"phase={phase},n=0,column={column}"
+        for phase, ranges in bands.items()
+        for start, stop in ranges
+        for column in range(start, stop + 1)
+    )
+
+    evidence = verify_hybrid_core(
+        base17_reference_cycle(),
+        InterfaceMove(0, 0, -2),
+        19,
+        provenances,
+        group_mus_binary,
+    )
+
+    assert evidence["core_size"] == 156
+    assert evidence["binary_certificate"]["status"] == "SAT"
+    assert evidence["binary_certificate"]["deletion_statuses"] == []
+    assert evidence["one_hot_certificate"]["status"] == "SAT"
+    assert evidence["one_hot_certificate"]["deletion_statuses"] == []
+
+
 def test_grouped_formula_keeps_domains_hard_and_groups_exact_columns() -> None:
     words = (
         ParametricWord(2, ((1, 1),), ()),
@@ -173,6 +307,36 @@ def test_grouped_formula_keeps_domains_hard_and_groups_exact_columns() -> None:
     assert grouped.hard_clauses + tuple(
         clause for group in grouped.groups for clause in group.clauses
     ) == ordinary.clauses
+
+
+def test_binary_column_ranges_preserve_t25_formula_bytes(tmp_path: Path) -> None:
+    moved = move_interface(
+        base17_reference_cycle(),
+        InterfaceMove(0, 0, -2),
+    )
+    phases = [
+        {
+            "fragments": [list(fragment) for fragment in word.fragments],
+            "repeats": list(word.repeats),
+        }
+        for word in moved
+    ]
+    formula = BinaryCNF(18, phases)
+    formula.build()
+
+    assert len(formula.column_groups) == 499
+    assert formula.column_groups[0][1] == formula.hard_clause_count
+    assert formula.column_groups[-1][2] == len(formula.clauses)
+    for (_, start, stop), (_, next_start, _) in zip(
+        formula.column_groups,
+        formula.column_groups[1:],
+    ):
+        assert start < stop
+        assert stop == next_start
+    path = tmp_path / "binary.cnf"
+    assert formula.dimacs_digest_and_write(path) == (
+        "8e720f877b10aa0496422b789978b110bda52f2f54de2e0d9be4f71dc0378f8a"
+    )
 
 
 def test_guarded_formula_uses_negative_selectors_and_appends_variables() -> None:

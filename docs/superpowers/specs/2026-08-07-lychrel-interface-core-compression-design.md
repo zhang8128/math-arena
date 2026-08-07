@@ -40,22 +40,39 @@ silently changing the mathematical problem.
 
 Use CaDiCaL 3.0.1 through its installed C++ API (`cadical.hpp` and
 `libcadical.a`).  Its documented incremental interface supports
-`assume(literal)` and `failed(literal)`.  A small tracked C++ executable:
+`assume(literal)` and `failed(literal)`.  Full one-hot selector extraction was
+measured and rejected after two bounded trials: freezing 499 selectors blocked
+useful preprocessing, while restoration-based assumptions still failed to
+finish the first base-18 seed in four minutes even though the corresponding
+unguarded formula solved in 1.69 seconds.
+
+The primary extractor therefore uses two calibrated encodings of the same
+named columns.  The compact T25 binary full-adder encoder supplies an initial
+failed-assumption seed and performs deletion minimization.  The deterministic
+one-hot encoder then replays the exact resulting provenance set and every
+deletion.  Both encodings retain all digit domains and leading constraints as
+hard clauses.  A small tracked C++ executable:
 
 1. parses one grouped DIMACS formula and its ordered selector list;
-2. freezes selector variables and assumes the requested groups;
+2. assumes requested groups in `seed` and `verify` modes;
 3. requires an exact SAT or UNSAT result;
-4. for UNSAT, retains only assumptions reported by `failed`;
-5. deletion-shrinks that set, reusing the same incremental solver; and
-6. rechecks joint UNSAT and every one-group deletion SAT before emitting JSON.
+4. in `seed` mode, retains assumptions reported by `failed`;
+5. in `extract` mode, uses deterministic chunk deletion followed by exact
+   deletion batches over fresh, fully preprocessed solvers; and
+6. in `verify` mode, rechecks joint UNSAT and every one-group deletion under
+   incremental assumptions before emitting JSON.
 
 The executable's output identifies solver version, input digest, selected
 groups, status, and deletion witnesses.  UNKNOWN, malformed input, selector
 misalignment, or a failed irreducibility check stops evidence generation.
 
-This is a group MUS over columns, not a clause MUS.  Learned clauses accelerate
-later checks but do not enter the durable certificate; the original selected
-column constraints are always replayed from scratch by the independent path.
+Broad seeds may use eight parallel deletion workers.  A batch removes only the
+first canonical group whose deletion is independently UNSAT, then restarts;
+an all-SAT batch proves deletion irreducibility.  Scheduling cannot affect the
+chosen core.  This is a group MUS over columns, not a clause MUS.  Learned
+clauses and failed-core membership guide search but do not enter the durable
+certificate; the original selected column constraints are replayed in both
+CNF representations and again by the independent path.
 
 ## Family discovery and bounded coverage
 

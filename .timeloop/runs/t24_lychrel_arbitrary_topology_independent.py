@@ -29,6 +29,8 @@ class BinaryCNF:
         self.width = math.ceil(math.log2(base))
         self.ids: dict[str, int] = {}
         self.clauses: list[list[int]] = []
+        self.hard_clause_count = 0
+        self.column_groups: list[tuple[str, int, int]] = []
 
     def variable(self, key: str) -> int:
         if key not in self.ids:
@@ -181,6 +183,8 @@ class BinaryCNF:
                 [self.digit_bit(leading, bit) for bit in range(self.width)]
             )
 
+        self.hard_clause_count = len(self.clauses)
+
         for phase in range(len(self.phases)):
             source = self.render(phase, 0)
             next_phase = (phase + 1) % len(self.phases)
@@ -188,6 +192,7 @@ class BinaryCNF:
             if len(output) not in (len(source), len(source) + 1):
                 raise ValueError("saved topology has an invalid transition length")
             for column in range(len(output)):
+                group_start = len(self.clauses)
                 if column < len(source):
                     left = source[column]
                     right = source[-1 - column]
@@ -217,8 +222,25 @@ class BinaryCNF:
                 )
                 for lhs_bit, rhs_bit in zip(lhs, rhs):
                     self.equate(lhs_bit, rhs_bit)
+                self.column_groups.append(
+                    (
+                        f"phase={phase},n=0,column={column}",
+                        group_start,
+                        len(self.clauses),
+                    )
+                )
 
         self.reference_digits = digit_values
+
+    def selected_column_clauses(self, provenances: set[str]) -> list[list[int]]:
+        available = {provenance for provenance, _, _ in self.column_groups}
+        if not provenances <= available:
+            raise ValueError("unknown binary column provenance")
+        selected = self.clauses[: self.hard_clause_count]
+        for provenance, start, stop in self.column_groups:
+            if provenance in provenances:
+                selected.extend(self.clauses[start:stop])
+        return selected
 
     def reference_units(self) -> list[list[int]]:
         return [
