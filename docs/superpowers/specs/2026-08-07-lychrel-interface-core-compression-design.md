@@ -96,6 +96,32 @@ each fixed occurrence to `(phase, flattened_fixed_index)`.  Carries retain
 their `(phase,column)` identity.  Families may be merged across variants only
 when canonical constraints, not merely provenance strings, agree.
 
+## Measured base-19 radial escalation
+
+The first base-18 representative does not cover base 19: its exact 156 column
+coordinates are SAT in both calibrated encodings at base 19.  A fresh compact
+binary failed-assumption proof at base 19 instead returns 410 columns.  Those
+columns are not arbitrary bands.  They are exactly 34 complete outer radial
+layers, with two reversal-paired columns per phase in each layer, plus the two
+overflow columns.  Phase-five column 82 is removable, leaving a 409-equation
+UNSAT candidate.
+
+Folding by radial layer exposes a small exact path decomposition.  The 409
+equations contain 409 active digit variables and 410 carries.  Every digit
+occurs in one layer or two adjacent layers; across every radial cut, at most
+two base-19 digits and exactly 12 carry bits remain live.  The raw frontier
+bound is therefore `19^2 * 2^12`, but exact local arithmetic projection is far
+smaller: the measured reachable set peaks at 314 states and becomes empty at
+layer 33.  This is an exact finite-state proof that the 409 equations are
+jointly UNSAT.
+
+As a falsification check, deleting phase-zero column 0 leaves a surviving
+path.  The same algorithm peaks at 1,480 states, reconstructs all 819 active
+digit/carry values, and replays all 408 remaining equations exactly.  This
+establishes one deletion witness, not deletion irreducibility of the complete
+409-column candidate.  The remaining one-column deletions still require
+checked witnesses before this candidate can become a family representative.
+
 ## Independent finite-domain replay
 
 A standalone Python script reads only T21 JSON and the serialized T26 core
@@ -163,7 +189,12 @@ from extracted cores, not a search restriction.
 Prism applied duality and graph/hypergraph frames to immutable problem
 `lychrel-interface-unsat-core-compression`, version 1, seed `20260807`, using
 `qwen3.6:27b-mlx`.  Both applications were schema-invalid and produced zero
-artifacts.  No Prism claim enters the design or later frame evolution.
+artifacts.  A later Qwen-backed pass over the verified 14-variable radial
+frontier selected generating-functions and extremal-principle frames; both
+applications (`application:ee783c4c51c99856a9e5ad539743ac7ac0c484ef5d760e9c0ab3cfaebe5b3a1b`
+and `application:c7999cd2b1d73ee0b49660fb743479076b58df7084e6267c1e0c9f52d73a159f`)
+were also schema-invalid and produced no artifacts.  No Prism claim enters
+the design or later frame evolution.
 
 The selected method is consistent with established group-MUS practice:
 selector assumptions expose constraint groups, failed assumptions seed a

@@ -28,9 +28,31 @@ from t26_lychrel_interface_cores import (  # noqa: E402
     extract_hybrid_core,
     verify_hybrid_core,
 )
+from t26_radial_frontier import (  # noqa: E402
+    replay_radial_witness,
+    solve_radial_frontier,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def base19_radial_candidate() -> tuple[str, ...]:
+    bands = {
+        0: ((0, 33), (48, 82)),
+        1: ((0, 33), (49, 82)),
+        2: ((0, 33), (49, 82)),
+        3: ((0, 33), (49, 82)),
+        4: ((0, 33), (49, 82)),
+        5: ((0, 33), (49, 83)),
+    }
+    return tuple(
+        f"phase={phase},n=0,column={column}"
+        for phase, ranges in bands.items()
+        for start, stop in ranges
+        for column in range(start, stop + 1)
+        if (phase, column) != (5, 82)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -275,6 +297,70 @@ def test_base18_band_core_does_not_persist_unchanged_at_base19(
     assert evidence["binary_certificate"]["deletion_statuses"] == []
     assert evidence["one_hot_certificate"]["status"] == "SAT"
     assert evidence["one_hot_certificate"]["deletion_statuses"] == []
+
+
+def test_base19_radial_frontier_proves_409_column_candidate_unsat() -> None:
+    pytest.importorskip("z3")
+    moved = move_interface(
+        base17_reference_cycle(),
+        InterfaceMove(0, 0, -2),
+    )
+
+    evidence = solve_radial_frontier(
+        moved,
+        19,
+        base19_radial_candidate(),
+    )
+
+    assert evidence["status"] == "UNSAT"
+    assert evidence["equation_count"] == 409
+    assert evidence["active_digit_count"] == 409
+    assert evidence["active_carry_count"] == 410
+    assert evidence["max_frontier_digit_count"] == 2
+    assert evidence["max_frontier_carry_count"] == 12
+    assert evidence["max_reachable_state_count"] == 314
+    assert evidence["layers"][0]["layer"] == -1
+    assert evidence["layers"][0]["output_state_count"] == 1
+    assert evidence["layers"][-1]["layer"] == 33
+    assert evidence["layers"][-1]["output_state_count"] == 0
+    assert "witness" not in evidence
+
+
+def test_base19_radial_frontier_reconstructs_exact_deletion_witness() -> None:
+    pytest.importorskip("z3")
+    moved = move_interface(
+        base17_reference_cycle(),
+        InterfaceMove(0, 0, -2),
+    )
+    deletion = "phase=0,n=0,column=0"
+    provenances = tuple(
+        provenance
+        for provenance in base19_radial_candidate()
+        if provenance != deletion
+    )
+
+    evidence = solve_radial_frontier(
+        moved,
+        19,
+        provenances,
+        include_witness=True,
+    )
+
+    assert evidence["status"] == "SAT"
+    assert evidence["equation_count"] == 408
+    assert evidence["max_reachable_state_count"] == 1480
+    assert evidence["layers"][-1]["output_state_count"] == 1
+    assert replay_radial_witness(
+        moved,
+        19,
+        provenances,
+        evidence["witness"],
+    ) == {
+        "status": "valid",
+        "equation_count": 408,
+        "digit_count": 409,
+        "carry_count": 410,
+    }
 
 
 def test_grouped_formula_keeps_domains_hard_and_groups_exact_columns() -> None:

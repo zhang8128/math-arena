@@ -18,7 +18,8 @@ implementation rebuilds and exhaustively replays every core and deletion
 witness.
 
 **Tech Stack:** Python 3.9, SageMath 10.9 Python 3.14, C++17, Homebrew
-CaDiCaL 3.0.1 static library, pytest, exact integer arithmetic.
+CaDiCaL 3.0.1 static library, optional `z3-solver` 5.x radial projection,
+pytest, exact integer arithmetic.
 
 ## Global Constraints
 
@@ -213,6 +214,16 @@ CaDiCaL 3.0.1 static library, pytest, exact integer arithmetic.
   git add .timeloop/runs/t26_lychrel_interface_cores.py .timeloop/tests/test_lychrel_interface_cores.py
   git commit -m "exp: discover interface obstruction core families"
   ```
+
+**Verified research checkpoint (not Task 3 completion):** the base-18
+156-column family is SAT unchanged at base 19.  The fresh base-19 seed folds
+into 34 radial layers plus two overflow equations; removing phase-five column
+82 leaves a 409-equation candidate with a frontier of at most 12 carries and
+two digits.  Exact layer projection peaks at 314 reachable states and proves
+joint UNSAT at layer 33.  Deleting phase-zero column 0 instead peaks at 1,480
+states and yields a replayed 408-equation witness.  All remaining deletions
+must still be witnessed before the 409-column candidate is called
+deletion-irreducible or used as a representative family.
 
 ### Task 4: Standalone finite-domain core audit
 
