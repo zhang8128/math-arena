@@ -551,3 +551,135 @@ Roughly two additional hours: two deep 27B Prism frames, three method designs,
 six TDD acceptance tests, a complete 83-base exact scan, three compact core
 families, a standalone exhaustive reimplementation, deterministic replay,
 current literature searches, and two independently falsified Prism outcomes.
+
+## T24 STATUS — THE FIXED T21 TOPOLOGY ITSELF FAILS IN BASES 18..40
+
+The exact T21 six-phase fragment lengths, repeat locations, and repeat digits
+have no realization in any base `18..40`, even when all 497 fixed digit
+occurrences are arbitrary independent values in `0..B-1` and every carry is
+fresh. Every target base is impossible already at `n=0`; therefore no
+`n=1,2` interpolation solve or lower/upper-deviation minimization is reached.
+
+### SEARCHED
+
+For each base `B`, fixed occurrences were represented by unrestricted finite
+domain variables. Repeat token `0` remained zero and token `16` became `B-1`.
+Each least-significant-first column enforced exactly
+
+`left + right + carry_in = target + B*carry_out`,
+
+with Boolean carries. The six `n=0` transitions contain 499 output columns.
+The final transition targets phase zero at `n=1`, so both repeat insertions
+remain active constraints in the wrap even though they vanish from the five
+earlier `n=0` sources.
+
+The primary one-hot CNF was solved by PicoSAT through pycosat 0.6.3. Base 18
+has 9,439 Boolean variables and 715,404 clauses (DIMACS digest
+`975f6e5adcc9218af5ca42dc3dfc6a10988922038e701eb1df46c809eeaed490`);
+base 40 has 20,373 variables and 3,543,207 clauses (digest
+`9344698f42d7730bee39c2fb7e5618bf79365a7e632eff443b2fa7d5adeaf199`).
+All 23 formulas are UNSAT.
+
+The base-17 control was not entrusted to search. Its 497 published digits and
+all actual carries were encoded as a complete assignment and satisfy every one
+of 637,939 generated clauses (digest
+`ed3f866d0cd1d6ca293fd641c577816d9fdb2c2aff40517d8242af7981c41adc`).
+The existing exact `Z[q]` verifier and 54 direct integer additions also pass.
+
+### INDEPENDENT AUDIT
+
+A standalone script imports no T24 production code. It reads only the saved
+T21 JSON, represents every digit in binary, and builds ripple full-adders for
+both sides of each column identity. CaDiCaL 3.0.1 accepts the fixed-digit
+base-17 control and independently reports UNSAT for all bases `18..40`.
+
+This is structurally different from the one-hot truth-table compiler. In base
+18 the audit has 12,958 variables and 78,504 clauses (digest
+`8ed10a48b4e62f57272a88d78fc5607448cf8c4970ad0dc461edb48ee602ad4e`);
+in base 40 it has 15,451 variables and 96,416 clauses (digest
+`70e12e371c5b5ecb10f445cb41f8414c4b0d5c410578b9b5009e8c53c83e8e81`).
+The isolated-copy pytest proves the audit can run with only its script and the
+T21 JSON. Both complete evidence generations are byte-deterministic.
+
+This dual result is strong computational evidence, not a checked DRAT/LRAT
+proof trace. The full 499-column `n=0` system is the topology-only obstruction;
+no minimal column core is claimed.
+
+### RULED OUT
+
+- No arbitrary fixed-digit realization of this exact six-phase, two-interface
+  topology exists in bases `18..40`.
+- The result is strictly stronger than T23's lower/upper-alphabet negative on
+  this base range.
+- It does not rule out moving an interface, changing fragment lengths or
+  period, using another proof grammar, or Lychrel numbers in these bases.
+- The known base-20 and base-26 certificates remain outside this topology.
+
+### TECHNIQUE
+
+- Encode the larger finite alphabet and the two-state carry process at
+  different levels: one-hot digits give strong local propagation; binary
+  full-adders provide a compact independent audit.
+- Calibrate a negative encoder by satisfying every clause with a known exact
+  positive assignment before trusting any UNSAT result.
+- Stop a purported all-parameter family at one impossible member. Here `n=0`
+  avoids an unnecessary `n=1,2` system without weakening the negative logic.
+- Keep deterministic DIMACS digests and solver identities, while stating
+  plainly that solver agreement is not a proof-trace checker.
+
+### PRISM
+
+Math Prism applied graph/hypergraph and algebraic-lifting frames to immutable
+problem `lychrel-bases:base17-arbitrary-digit-topology`, version 1, with prompt
+version 2, model `qwen3.6:27b-mlx` for both frames, and seed `20260806`.
+
+The useful dispositional change was to view carries as layered finite state and
+seek a topology cut rather than continue base scanning. The proposed
+carry-flux, determinant/resultant `Omega(B)`, and bounded-treewidth claims have
+no derivation and were not used. Its claim that larger bases might require
+multi-bit carries is false for two base-`B` digits plus a Boolean input carry:
+the output carry is always in `{0,1}`.
+
+After the binary/CaDiCaL audit, Prism recorded the graph artifact as
+`falsified` because its base-18 closed-walk expectation fails, and recorded the
+algebraic artifact as `bounded_no_counterexample` for the empty projected
+systems in bases `18..40`. Exactly one outcome was fitness-eligible; no frame
+lifecycle event fired.
+
+### NOVELTY
+
+`not found`, with no publication claim. Searches found Seal's published
+base-17 construction, the public-domain carry classification, OEIS's base
+table, general finite-domain-to-SAT methodology, and recent arbitrary-base
+thread experiments, but no prior arbitrary-digit realization test for this
+specific topology or this 23-base obstruction. Exact queries included
+`base 17 Lychrel topology arbitrary digits`, `Lychrel carry equations variable
+base`, `reverse and add SAT encoding`, and the distinguishing six-phase scope.
+
+Sources rechecked on 2026-08-06:
+
+- David Seal's construction: <https://www.mathpages.com/home/dseal.htm>
+- Public-domain classification paper/code:
+  <https://cocalc.com/share/download/00ae14310fa0520ec7b59482b0807d8082d2c891/ReverseAndAddPDF.pdf>
+- OEIS A060382: <https://oeis.org/A060382>
+- Metodi and Codish, finite-domain constraints to SAT:
+  <https://arxiv.org/abs/1206.3883>
+- 2024 arbitrary-base numerical experiments:
+  <https://canum2024.math.cnrs.fr/programme/soumission/3a00c64b-9099-4c01-a7fc-367cfc8e04b4/abstract.pdf>
+
+### NEXT
+
+Relax topology rather than digits. Retain six phases and the repeat digits but
+move exactly one repeat interface by at most two fixed columns in one phase.
+Use the dual `n=0` encodings as a bounded filter in bases `18..40`; only a
+survivor earns the `n=0,1,2` interpolation solve and exact `Z[q]` verification.
+This is the smallest change that directly tests whether interface placement is
+the obstruction without reopening unconstrained topology search.
+
+### COST
+
+Roughly four additional hours: two deep 27B Prism frames, literature and solver
+method comparison, two failed MILP diagnostics, a base-17 carry-skeleton test,
+TDD for the topology and one-hot compiler, 23 primary exact solves, a standalone
+binary full-adder implementation, 23 CaDiCaL audits, two positive calibrations,
+four deterministic full replays, and 10 focused acceptance tests.
