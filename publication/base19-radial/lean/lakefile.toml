@@ -1,0 +1,9 @@
+name = "base19_radial"
+version = "0.1.0"
+defaultTargets = ["Base19Radial"]
+
+[leanOptions]
+relaxedAutoImplicit = false
+
+[[lean_lib]]
+name = "Base19Radial"
