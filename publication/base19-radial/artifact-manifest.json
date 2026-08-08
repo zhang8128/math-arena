@@ -1,6 +1,7 @@
 {
   "schema": "base19-radial-artifact-manifest-v1",
   "certificate_revision": "f1f92230fd11e55b396fd664d5129c9e8aa5b005",
+  "clean_clone_tested_revision": "ad0e0cd41c1897281aefc8c90a22e9f08ead61a7",
   "platform": {
     "operating_system": "macOS 26.5.2",
     "architecture": "arm64"
@@ -186,6 +187,11 @@
     ]
   },
   "measured_runs": {
+    "clean_clone_quick_reproduction": {
+      "exit_code": 0,
+      "wall_seconds": 245.46,
+      "peak_rss_bytes": 7476101120
+    },
     "quick_reproduction": {
       "exit_code": 0,
       "wall_seconds": 240.14,
