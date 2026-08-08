@@ -659,6 +659,7 @@ def test_reproduction_entry_point_is_strict_and_has_quick_and_full_modes() -> No
 
     assert source.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     assert "$HOME" not in source
+    assert "python --version 2>&1" not in source
     for token in (
         "quick|full",
         "mktemp -d",

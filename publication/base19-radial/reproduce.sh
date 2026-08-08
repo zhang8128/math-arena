@@ -37,7 +37,7 @@ check_exact() {
 }
 
 check_exact "uv" "uv 0.8.3 (7e78f54e7 2025-07-24)" "$(uv --version)"
-check_exact "Python" "Python 3.13.5" "$(uv run --frozen python --version 2>&1)"
+check_exact "Python" "Python 3.13.5" "$(uv run --frozen python --version)"
 check_exact "Z3" "5.0.0" "$(uv run --frozen --extra exact python -c 'import z3; print(z3.get_version_string())')"
 case "$(lean --version)" in
   "Lean (version 4.32.2,"*) ;;
