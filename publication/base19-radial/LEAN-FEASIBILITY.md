@@ -43,6 +43,35 @@ compile those proofs.  No theorem named `candidateUnsat` is exposed.  Any
 paper-facing statement must describe the concrete UNSAT result as exactly
 computed and independently replayed, not kernel checked.
 
+## Computationally certified deletion-minimal core
+
+The complete 409-way deletion audit identifies exactly one equation whose
+removal leaves an UNSAT system:
+`phase=0,n=0,column=82`.  The resulting 408-equation set is deletion-minimal
+UNSAT in the computational certificate model:
+
+1. `minimal-core-frontier.json` has an empty terminal frontier after 35
+   layers for those 408 equations.  The standalone `verify_frontier.py`
+   checker imports no exploratory T26 module; it reads the frozen equation
+   manifest, rebuilds every layer independently in finite QF_LIA, enumerates
+   every output projection, and compares every transition exactly.  The
+   promoted file has SHA-256
+   `7635e7188197021cfc15cbad6d087f6fdbfa7a8bbfe4e4ed9b91a15a89498c67`.
+2. For each equation `f` in that 408-equation set, the deletion-audit witness
+   for the stronger system obtained from the original candidate by deleting
+   only `f` replays all 408 remaining equations exactly.  The same assignment
+   therefore satisfies the weaker system obtained by deleting both `f` and
+   `phase=0,n=0,column=82`.  The 409-record audit has SHA-256
+   `0566f6e2025aec28fe0d2f824f1f6b343cf912e9191a9036629a2a1d4ef03325`.
+
+On the development machine, full three-certificate regeneration took 172.90
+seconds and 621,477,888 bytes peak RSS.  Independent replay of the minimal
+core took 34.53 seconds and 72,138,752 bytes peak RSS.  These are exact
+computational checks, not Lean kernel checks, not proof-producing SMT traces,
+and not a minimum-cardinality-core claim.  “Unique” refers only to the single
+408-equation subset of this fixed 409-equation candidate that remained UNSAT
+under the complete one-deletion audit.
+
 ## Kernel-checked deletion witness
 
 The neighboring instance obtained by deleting

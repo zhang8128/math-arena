@@ -25,7 +25,11 @@ from t26_radial_frontier import (  # noqa: E402
 )
 
 EQUATIONS = ROOT / "publication" / "base19-radial" / "instance" / "equations.json"
+DELETIONS = (
+    ROOT / "publication" / "base19-radial" / "certificates" / "deletions.jsonl"
+)
 KNOWN_DELETION = "phase=0,n=0,column=0"
+MINIMAL_CORE_REMOVED = "phase=0,n=0,column=82"
 
 
 def canonical_bytes(payload: object) -> bytes:
@@ -59,11 +63,19 @@ def _moved_words():
     )
 
 
-def _validate_frontier(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "base19-radial-frontier-v1":
+def _validate_frontier(
+    payload: dict[str, Any],
+    *,
+    expected_schema: str = "base19-radial-frontier-v1",
+    expected_equation_count: int = 409,
+) -> None:
+    if payload.get("schema") != expected_schema:
         raise ValueError("frontier schema is invalid")
-    if payload.get("status") != "UNSAT" or payload.get("equation_count") != 409:
-        raise ValueError("frontier does not certify the 409-equation UNSAT result")
+    if (
+        payload.get("status") != "UNSAT"
+        or payload.get("equation_count") != expected_equation_count
+    ):
+        raise ValueError("frontier does not certify the expected UNSAT result")
     layers = payload.get("layers")
     if not isinstance(layers, list) or len(layers) != 35:
         raise ValueError("frontier must contain exactly 35 radial layers")
@@ -146,6 +158,22 @@ def _validate_frontier(payload: dict[str, Any]) -> None:
             raise ValueError("frontier local-model count is invalid")
         expected_inputs = states
         expected_input_variables = variables
+    if sum(layer["equation_count"] for layer in layers) != expected_equation_count:
+        raise ValueError("frontier layer equation counts do not cover the system")
+
+
+def _validate_minimal_core_frontier(payload: dict[str, Any]) -> None:
+    if payload.get("removed") != MINIMAL_CORE_REMOVED:
+        raise ValueError("minimal-core frontier removes the wrong equation")
+    if payload.get("deletions_sha256") != hashlib.sha256(
+        DELETIONS.read_bytes()
+    ).hexdigest():
+        raise ValueError("minimal-core frontier is not bound to the deletion audit")
+    _validate_frontier(
+        payload,
+        expected_schema="base19-radial-minimal-core-frontier-v1",
+        expected_equation_count=408,
+    )
 
 
 def build_frontier_certificate() -> dict[str, Any]:
@@ -161,6 +189,31 @@ def build_frontier_certificate() -> dict[str, Any]:
         **evidence,
     }
     _validate_frontier(payload)
+    return _content_digested(payload)
+
+
+def build_minimal_core_frontier_certificate() -> dict[str, Any]:
+    provenances = tuple(
+        provenance
+        for provenance in base19_candidate_provenances()
+        if provenance != MINIMAL_CORE_REMOVED
+    )
+    if len(provenances) != 408:
+        raise ValueError("minimal-core provenance set is not 408 equations")
+    evidence = solve_radial_frontier(
+        _moved_words(),
+        19,
+        provenances,
+        include_certificate=True,
+    )
+    payload = {
+        "schema": "base19-radial-minimal-core-frontier-v1",
+        "equations_sha256": _equations_sha256(),
+        "deletions_sha256": hashlib.sha256(DELETIONS.read_bytes()).hexdigest(),
+        "removed": MINIMAL_CORE_REMOVED,
+        **evidence,
+    }
+    _validate_minimal_core_frontier(payload)
     return _content_digested(payload)
 
 
@@ -239,9 +292,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--frontier", required=True, type=Path)
     parser.add_argument("--witness", required=True, type=Path)
+    parser.add_argument("--minimal-core-frontier", type=Path)
     args = parser.parse_args(argv)
     write_atomic(args.frontier, build_frontier_certificate(), _validate_frontier)
     write_atomic(args.witness, build_witness_certificate(), _validate_witness)
+    if args.minimal_core_frontier is not None:
+        write_atomic(
+            args.minimal_core_frontier,
+            build_minimal_core_frontier_certificate(),
+            _validate_minimal_core_frontier,
+        )
     return 0
 
 

@@ -19,9 +19,11 @@ LEAN = ARTIFACT / "lean"
 FRONTIER = ARTIFACT / "certificates" / "frontier.json"
 KNOWN_WITNESS = ARTIFACT / "certificates" / "delete-p0-c0.json"
 DELETIONS = ARTIFACT / "certificates" / "deletions.jsonl"
+MINIMAL_CORE_FRONTIER = ARTIFACT / "certificates" / "minimal-core-frontier.json"
 LEAN_DATA_RENDERER = ARTIFACT / "scripts" / "render_lean_data.py"
 CERTIFICATE_EXPORTER = ARTIFACT / "scripts" / "export_certificates.py"
 DELETION_AUDITOR = ARTIFACT / "scripts" / "audit_deletions.py"
+FRONTIER_REPLAYER = ARTIFACT / "scripts" / "verify_frontier.py"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -487,6 +489,75 @@ def test_complete_deletion_audit_identifies_the_unique_minimal_core() -> None:
     )
     assert len(minimal_core) == 408
     assert {record["removed"] for record in sat} == set(minimal_core)
+
+
+def test_minimal_core_has_an_independent_exact_frontier_certificate() -> None:
+    payload = json.loads(MINIMAL_CORE_FRONTIER.read_text(encoding="utf-8"))
+
+    assert payload["schema"] == "base19-radial-minimal-core-frontier-v1"
+    assert payload["status"] == "UNSAT"
+    assert payload["equation_count"] == 408
+    assert payload["removed"] == "phase=0,n=0,column=82"
+    assert payload["deletions_sha256"] == hashlib.sha256(
+        DELETIONS.read_bytes()
+    ).hexdigest()
+    assert len(payload["layers"]) == 35
+    assert payload["layers"][-1]["output_states"] == []
+
+
+def test_standalone_replayer_accepts_the_minimal_core_frontier() -> None:
+    completed = subprocess.run(
+        (
+            sys.executable,
+            str(FRONTIER_REPLAYER),
+            str(ARTIFACT / "instance" / "equations.json"),
+            str(MINIMAL_CORE_FRONTIER),
+        ),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "verified 408 equations across 35 layers\n"
+
+
+def test_standalone_replayer_rejects_changed_arithmetic(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "equations.json"
+    certificate_path = tmp_path / "frontier.json"
+    manifest = json.loads(
+        (ARTIFACT / "instance" / "equations.json").read_text(encoding="utf-8")
+    )
+    certificate = json.loads(MINIMAL_CORE_FRONTIER.read_text(encoding="utf-8"))
+    manifest["equations"][0]["target"] = {"literal": 7}
+    _redigest(manifest)
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    certificate["equations_sha256"] = hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    _redigest(certificate)
+    certificate_path.write_text(
+        json.dumps(certificate, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        (
+            sys.executable,
+            str(FRONTIER_REPLAYER),
+            str(manifest_path),
+            str(certificate_path),
+        ),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "frontier transition mismatch" in completed.stderr
 
 
 def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:
