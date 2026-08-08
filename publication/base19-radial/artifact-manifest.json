@@ -1,0 +1,228 @@
+{
+  "schema": "base19-radial-artifact-manifest-v1",
+  "certificate_revision": "f1f92230fd11e55b396fd664d5129c9e8aa5b005",
+  "platform": {
+    "operating_system": "macOS 26.5.2",
+    "architecture": "arm64"
+  },
+  "tools": {
+    "uv": "0.8.3",
+    "python": "3.13.5",
+    "z3": "5.0.0",
+    "lean": "4.32.2",
+    "lake": "5.0.0-src+f3b06c7"
+  },
+  "claims": [
+    {
+      "id": "generic_radial_soundness",
+      "statement": "A closed sequence of exact radial layers ending in the empty frontier implies unsatisfiability.",
+      "assurance": "lean-kernel-checked",
+      "lean_theorem": "Base19Radial.unsat_of_closed_empty_frontier",
+      "evidence": [
+        {
+          "path": "lean/Base19Radial/Radial.lean",
+          "locator": "theorem unsat_of_closed_empty_frontier"
+        },
+        {
+          "path": "lean/Base19Radial/RadialTests.lean",
+          "locator": "theorem radialTinyProblemUnsat"
+        }
+      ]
+    },
+    {
+      "id": "delete_p0_c0_sat",
+      "statement": "Deleting phase=0,n=0,column=0 leaves a satisfiable 408-equation instance.",
+      "assurance": "lean-kernel-checked",
+      "lean_theorem": "Base19Radial.deleteP0C0Sat",
+      "evidence": [
+        {
+          "path": "lean/Base19Radial/Generated/Witness.lean",
+          "locator": "theorem deleteP0C0Sat"
+        },
+        {
+          "path": "certificates/delete-p0-c0.json",
+          "json_pointer": "/witness_replay/status"
+        }
+      ]
+    },
+    {
+      "id": "candidate_409_unsat",
+      "statement": "The fixed 409-equation base-19 candidate has no bounded digit/carry assignment.",
+      "assurance": "exact-computational-replay",
+      "lean_theorem": null,
+      "evidence": [
+        {
+          "path": "certificates/frontier.json",
+          "json_pointer": "/status"
+        },
+        {
+          "path": "scripts/verify_frontier.py",
+          "locator": "verify"
+        }
+      ]
+    },
+    {
+      "id": "minimal_core_408",
+      "statement": "Removing phase=0,n=0,column=82 gives a deletion-minimal UNSAT 408-equation subset of the fixed candidate.",
+      "assurance": "exact-computational-replay",
+      "lean_theorem": null,
+      "evidence": [
+        {
+          "path": "certificates/minimal-core-frontier.json",
+          "json_pointer": "/status"
+        },
+        {
+          "path": "certificates/deletions.jsonl",
+          "locator": "409 canonical records; 408 SAT witnesses and one UNSAT deletion"
+        },
+        {
+          "path": "scripts/verify_frontier.py",
+          "locator": "verify"
+        },
+        {
+          "path": "scripts/audit_deletions.py",
+          "locator": "replay_completed_witness"
+        }
+      ]
+    }
+  ],
+  "quantities": [
+    {
+      "id": "base",
+      "value": 19,
+      "source": {
+        "path": "instance/equations.json",
+        "json_pointer": "/base"
+      }
+    },
+    {
+      "id": "candidate_equation_count",
+      "value": 409,
+      "source": {
+        "path": "certificates/frontier.json",
+        "json_pointer": "/equation_count"
+      }
+    },
+    {
+      "id": "minimal_core_equation_count",
+      "value": 408,
+      "source": {
+        "path": "certificates/minimal-core-frontier.json",
+        "json_pointer": "/equation_count"
+      }
+    },
+    {
+      "id": "radial_layer_count",
+      "value": 35,
+      "source": {
+        "path": "certificates/minimal-core-frontier.json",
+        "json_pointer": "/layers",
+        "transform": "length"
+      }
+    },
+    {
+      "id": "peak_reachable_states",
+      "value": 314,
+      "source": {
+        "path": "certificates/minimal-core-frontier.json",
+        "json_pointer": "/max_reachable_state_count"
+      }
+    },
+    {
+      "id": "maximum_frontier_digits",
+      "value": 2,
+      "source": {
+        "path": "certificates/minimal-core-frontier.json",
+        "json_pointer": "/max_frontier_digit_count"
+      }
+    },
+    {
+      "id": "maximum_frontier_carries",
+      "value": 12,
+      "source": {
+        "path": "certificates/minimal-core-frontier.json",
+        "json_pointer": "/max_frontier_carry_count"
+      }
+    },
+    {
+      "id": "deletion_audit_record_count",
+      "value": 409,
+      "source": {
+        "path": "certificates/deletions.jsonl",
+        "transform": "jsonl-line-count"
+      }
+    }
+  ],
+  "commands": {
+    "quick": [
+      "./publication/base19-radial/reproduce.sh",
+      "quick"
+    ],
+    "full": [
+      "./publication/base19-radial/reproduce.sh",
+      "full"
+    ],
+    "independent_candidate_replay": [
+      "uv",
+      "run",
+      "--frozen",
+      "--extra",
+      "exact",
+      "python",
+      "publication/base19-radial/scripts/verify_frontier.py",
+      "publication/base19-radial/instance/equations.json",
+      "publication/base19-radial/certificates/frontier.json"
+    ],
+    "independent_core_replay": [
+      "uv",
+      "run",
+      "--frozen",
+      "--extra",
+      "exact",
+      "python",
+      "publication/base19-radial/scripts/verify_frontier.py",
+      "publication/base19-radial/instance/equations.json",
+      "publication/base19-radial/certificates/minimal-core-frontier.json"
+    ]
+  },
+  "measured_runs": {
+    "quick_reproduction": {
+      "exit_code": 0,
+      "wall_seconds": 240.14,
+      "peak_rss_bytes": 7525007360
+    },
+    "three_certificate_regeneration": {
+      "exit_code": 0,
+      "wall_seconds": 172.90,
+      "peak_rss_bytes": 621477888
+    },
+    "deletion_audit_successful_resume": {
+      "exit_code": 0,
+      "wall_seconds": 32677.27,
+      "peak_rss_bytes": 802717696,
+      "note": "Resumed from 33 validated canonical records after an earlier interrupted pass."
+    },
+    "independent_minimal_core_replay": {
+      "exit_code": 0,
+      "wall_seconds": 34.53,
+      "peak_rss_bytes": 72138752
+    },
+    "lean_delete_p0_c0_witness": {
+      "exit_code": 0,
+      "wall_seconds": 37.60,
+      "peak_rss_bytes": 7507558400
+    },
+    "final_core_test_matrix": {
+      "exit_code": 0,
+      "tests_passed": 50,
+      "wall_seconds": 566.09,
+      "peak_rss_bytes": 738213888
+    }
+  },
+  "limitations": [
+    "The concrete 409-equation and 408-equation UNSAT claims are not Lean kernel-checked.",
+    "The SMT replays do not emit independently checkable LRAT or similar proof traces.",
+    "Deletion-minimal does not mean minimum cardinality.",
+    "The result concerns one fixed base-19 constraint system and is not an all-base Lychrel theorem."
+  ]
+}

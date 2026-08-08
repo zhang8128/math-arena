@@ -24,6 +24,10 @@ LEAN_DATA_RENDERER = ARTIFACT / "scripts" / "render_lean_data.py"
 CERTIFICATE_EXPORTER = ARTIFACT / "scripts" / "export_certificates.py"
 DELETION_AUDITOR = ARTIFACT / "scripts" / "audit_deletions.py"
 FRONTIER_REPLAYER = ARTIFACT / "scripts" / "verify_frontier.py"
+README = ARTIFACT / "README.md"
+REPRODUCE = ARTIFACT / "reproduce.sh"
+ARTIFACT_MANIFEST = ARTIFACT / "artifact-manifest.json"
+CHECKSUMS = ARTIFACT / "SHA256SUMS"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -66,6 +70,16 @@ def _redigest(payload: dict[str, object]) -> None:
         json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
     payload["content_sha256"] = hashlib.sha256(canonical).hexdigest()
+
+
+def _json_pointer(payload: object, pointer: str) -> object:
+    value = payload
+    for raw_part in pointer.removeprefix("/").split("/"):
+        if not raw_part:
+            continue
+        part = raw_part.replace("~1", "/").replace("~0", "~")
+        value = value[int(part)] if isinstance(value, list) else value[part]
+    return value
 
 
 def _production_rows() -> list[dict[str, object]]:
@@ -522,6 +536,23 @@ def test_standalone_replayer_accepts_the_minimal_core_frontier() -> None:
     assert completed.stdout == "verified 408 equations across 35 layers\n"
 
 
+def test_standalone_replayer_accepts_the_full_candidate_frontier() -> None:
+    completed = subprocess.run(
+        (
+            sys.executable,
+            str(FRONTIER_REPLAYER),
+            str(ARTIFACT / "instance" / "equations.json"),
+            str(FRONTIER),
+        ),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "verified 409 equations across 35 layers\n"
+
+
 def test_standalone_replayer_rejects_changed_arithmetic(tmp_path: Path) -> None:
     manifest_path = tmp_path / "equations.json"
     certificate_path = tmp_path / "frontier.json"
@@ -558,6 +589,105 @@ def test_standalone_replayer_rejects_changed_arithmetic(tmp_path: Path) -> None:
 
     assert completed.returncode != 0
     assert "frontier transition mismatch" in completed.stderr
+
+
+def test_artifact_manifest_maps_claims_and_quantities_to_evidence() -> None:
+    manifest = json.loads(ARTIFACT_MANIFEST.read_text(encoding="utf-8"))
+
+    assert manifest["schema"] == "base19-radial-artifact-manifest-v1"
+    claims = {claim["id"]: claim for claim in manifest["claims"]}
+    assert claims["generic_radial_soundness"]["assurance"] == "lean-kernel-checked"
+    assert claims["delete_p0_c0_sat"]["assurance"] == "lean-kernel-checked"
+    assert claims["candidate_409_unsat"]["assurance"] == "exact-computational-replay"
+    assert claims["minimal_core_408"]["assurance"] == "exact-computational-replay"
+    assert claims["candidate_409_unsat"]["lean_theorem"] is None
+    assert claims["minimal_core_408"]["lean_theorem"] is None
+
+    for claim in claims.values():
+        for evidence in claim["evidence"]:
+            path = Path(evidence["path"])
+            assert not path.is_absolute()
+            assert ".." not in path.parts
+            assert (ARTIFACT / path).is_file()
+
+    for quantity in manifest["quantities"]:
+        source = quantity["source"]
+        path = Path(source["path"])
+        assert not path.is_absolute()
+        assert ".." not in path.parts
+        source_path = ARTIFACT / path
+        if "json_pointer" in source:
+            payload = json.loads(source_path.read_text(encoding="utf-8"))
+            actual = _json_pointer(payload, source["json_pointer"])
+            if source.get("transform") == "length":
+                actual = len(actual)
+        else:
+            assert source["transform"] == "jsonl-line-count"
+            actual = len(source_path.read_text(encoding="utf-8").splitlines())
+        assert actual == quantity["value"]
+
+
+def test_checksum_inventory_covers_promoted_evidence_and_is_exact() -> None:
+    required = {
+        "instance/topology.json",
+        "instance/equations.json",
+        "certificates/frontier.json",
+        "certificates/delete-p0-c0.json",
+        "certificates/deletions.jsonl",
+        "certificates/minimal-core-frontier.json",
+        "lean/Base19Radial/Generated/FrontierData.lean",
+        "lean/Base19Radial/Generated/InstanceData.lean",
+        "lean/Base19Radial/Generated/Witness.lean",
+        "lean/Base19Radial/Generated/WitnessData.lean",
+    }
+    entries: dict[str, str] = {}
+    for line in CHECKSUMS.read_text(encoding="utf-8").splitlines():
+        digest, path = line.split("  ", 1)
+        assert len(digest) == 64
+        assert path not in entries
+        entries[path] = digest
+    assert required <= set(entries)
+    for relative, expected in entries.items():
+        path = Path(relative)
+        assert not path.is_absolute()
+        assert ".." not in path.parts
+        assert hashlib.sha256((ARTIFACT / path).read_bytes()).hexdigest() == expected
+
+
+def test_reproduction_entry_point_is_strict_and_has_quick_and_full_modes() -> None:
+    source = REPRODUCE.read_text(encoding="utf-8")
+
+    assert source.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "$HOME" not in source
+    for token in (
+        "quick|full",
+        "mktemp -d",
+        "shasum -a 256 -c",
+        "verify_frontier.py",
+        "pytest",
+        "lake clean",
+        "lake build",
+        "#print axioms",
+        "audit_deletions.py",
+        "export_certificates.py",
+        "cmp",
+    ):
+        assert token in source
+    assert (
+        "'Base19Radial.radialTinyProblemUnsat' depends on axioms: [propext]"
+        in source
+    )
+    assert "'Base19Radial.deleteP0C0Sat' depends on axioms: [propext]" in source
+
+
+def test_readme_states_the_concrete_proof_boundary() -> None:
+    source = README.read_text(encoding="utf-8")
+
+    assert "408-equation deletion-minimal UNSAT core" in source
+    assert "not Lean kernel-checked" in source
+    assert "not a minimum-cardinality claim" in source
+    assert "./publication/base19-radial/reproduce.sh quick" in source
+    assert "./publication/base19-radial/reproduce.sh full" in source
 
 
 def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:

@@ -1,0 +1,61 @@
+# Base-19 radial obstruction artifact
+
+This directory freezes one bounded reverse-and-add digit/carry constraint
+system and the evidence currently justified for it.
+
+The strongest concrete result is a 408-equation deletion-minimal UNSAT core
+inside the fixed 409-equation candidate.  Exact frontier enumeration proves
+the core UNSAT, and 408 explicit assignments prove that deleting any remaining
+equation makes it SAT.  Both concrete UNSAT results are independently replayed
+from the frozen equation JSON, but they are **not Lean kernel-checked** and do
+not include a proof-producing SMT trace.  This is not a minimum-cardinality claim.
+
+Lean 4.32.2 checks the generic radial soundness theorem
+`Base19Radial.unsat_of_closed_empty_frontier`, a tiny worked UNSAT instance,
+and the concrete satisfying-neighbor theorem `Base19Radial.deleteP0C0Sat`.
+The last theorem uses ordinary `decide`; no artifact theorem uses
+`native_decide`, `sorry`, `unsafe`, or a declared axiom.
+
+## Reproduce
+
+From the repository root:
+
+```sh
+./publication/base19-radial/reproduce.sh quick
+```
+
+`quick` verifies all promoted hashes, regenerates the equation and Lean data,
+independently replays both empty frontiers, replays every promoted SAT witness,
+runs the publication tests, cleans and rebuilds Lean, compares Lean's exported
+statement to the independent Python statement, and prints the theorem axioms.
+It needs Python 3.13.5, Z3 5.0.0, Lean 4.32.2, Lake 5.0.0, and `uv` 0.8.3.
+The Lean witness check peaked near 7.51 GB on the development machine.
+
+For a complete regeneration, including the 409-way deletion audit:
+
+```sh
+./publication/base19-radial/reproduce.sh full
+```
+
+`full` first runs `quick`, then regenerates the deletion audit and all three
+solver certificates in a temporary directory and byte-compares them with the
+promoted files.  The completed six-worker audit took about 9 hours when
+resumed from 33 already validated records; a fresh run should be budgeted as
+an overnight computation.  `BASE19_WORKERS` may reduce the worker count, but
+changing it does not change canonical output order.
+
+## Evidence map
+
+- `instance/` contains the frozen topology and canonical 409-equation JSON.
+- `certificates/frontier.json` is the 409-equation empty frontier.
+- `certificates/minimal-core-frontier.json` is the independently replayed
+  408-equation empty frontier after removing phase 0, column 82.
+- `certificates/deletions.jsonl` contains all 409 deletion outcomes; 408 lines
+  carry complete SAT assignments and exact arithmetic replay metadata.
+- `lean/` contains the transparent model, generic soundness theorem, generated
+  statement data, and kernel-checked phase-0-column-0 SAT witness.
+- `artifact-manifest.json` maps every promoted claim and quantitative value to
+  JSON or a Lean theorem. `SHA256SUMS` binds the promoted evidence.
+
+The scope and failed concrete-Lean feasibility experiments are recorded in
+`LEAN-FEASIBILITY.md`.

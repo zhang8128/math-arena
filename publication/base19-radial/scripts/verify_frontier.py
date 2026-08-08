@@ -157,8 +157,13 @@ def verify(manifest_path: Path, certificate_path: Path) -> tuple[int, int]:
     ).hexdigest():
         raise ValueError("certificate is not bound to the equation manifest")
     removed = certificate.get("removed")
-    if not isinstance(removed, str):
-        raise ValueError("certificate does not name one removed equation")
+    if removed is None:
+        if certificate.get("schema") != "base19-radial-frontier-v1":
+            raise ValueError("full-candidate certificate schema is invalid")
+    elif not isinstance(removed, str):
+        raise ValueError("certificate removed equation is malformed")
+    elif certificate.get("schema") != "base19-radial-minimal-core-frontier-v1":
+        raise ValueError("minimal-core certificate schema is invalid")
     raw_equations = manifest.get("equations")
     if not isinstance(raw_equations, list):
         raise ValueError("manifest equations are malformed")
@@ -173,9 +178,11 @@ def verify(manifest_path: Path, certificate_path: Path) -> tuple[int, int]:
             raise ValueError("manifest has duplicate equation provenance")
         equation_variables(equation)
         equation_map[provenance] = equation
-    if removed not in equation_map:
+    if removed is not None and removed not in equation_map:
         raise ValueError("removed equation is absent from the manifest")
-    expected_provenances = set(equation_map) - {removed}
+    expected_provenances = set(equation_map)
+    if removed is not None:
+        expected_provenances.remove(removed)
     if certificate.get("equation_count") != len(expected_provenances):
         raise ValueError("certificate equation count is invalid")
 
