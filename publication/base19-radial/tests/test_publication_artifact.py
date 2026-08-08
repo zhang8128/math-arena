@@ -18,8 +18,10 @@ INSTANCE_RENDERER = ARTIFACT / "scripts" / "render_lean_instance.py"
 LEAN = ARTIFACT / "lean"
 FRONTIER = ARTIFACT / "certificates" / "frontier.json"
 KNOWN_WITNESS = ARTIFACT / "certificates" / "delete-p0-c0.json"
+DELETIONS = ARTIFACT / "certificates" / "deletions.jsonl"
 LEAN_DATA_RENDERER = ARTIFACT / "scripts" / "render_lean_data.py"
 CERTIFICATE_EXPORTER = ARTIFACT / "scripts" / "export_certificates.py"
+DELETION_AUDITOR = ARTIFACT / "scripts" / "audit_deletions.py"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -37,6 +39,17 @@ def _load_builder() -> ModuleType:
 def _load_exporter() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "base19_export_certificates", CERTIFICATE_EXPORTER
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_deletion_auditor() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "base19_audit_deletions", DELETION_AUDITOR
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -374,6 +387,106 @@ def test_certificate_exporter_replays_witness_on_readback() -> None:
         assert "witness violates" in str(error)
     else:
         raise AssertionError("corrupted witness passed exporter replay")
+
+
+def test_deletion_audit_writes_completion_order_as_canonical_candidate_order(
+    tmp_path: Path,
+) -> None:
+    auditor = _load_deletion_auditor()
+    candidates = ("equation-0", "equation-1", "equation-2")
+    records = {
+        index: auditor.make_record(index, removed, "UNSAT", None, None)
+        for index, removed in enumerate(candidates)
+    }
+    output = tmp_path / "deletions.jsonl"
+
+    next_index = auditor.append_ready_records(
+        output,
+        candidates,
+        {2: records[2], 0: records[0], 1: records[1]},
+        0,
+    )
+
+    assert next_index == 3
+    assert auditor.load_prefix(output, candidates, replay_sat=False) == records
+    assert [
+        json.loads(line)["removed"] for line in output.read_text().splitlines()
+    ] == list(candidates)
+
+
+def test_deletion_audit_resume_and_promotion_are_fail_closed(tmp_path: Path) -> None:
+    auditor = _load_deletion_auditor()
+    candidates = ("equation-0", "equation-1", "equation-2")
+    output = tmp_path / "deletions.jsonl"
+    first = auditor.make_record(0, candidates[0], "UNSAT", None, None)
+    auditor.append_ready_records(output, candidates, {0: first}, 0)
+    loaded = auditor.load_prefix(output, candidates, replay_sat=False)
+
+    assert set(loaded) == {0}
+    assert not auditor.minimality_promotable(loaded, candidates)
+
+    sat_records = {
+        index: auditor.make_record(
+            index,
+            removed,
+            "SAT",
+            {"digits": {}, "carries": {}},
+            {"status": "valid"},
+        )
+        for index, removed in enumerate(candidates)
+    }
+    assert not auditor.minimality_promotable(
+        {index: sat_records[index] for index in range(2)}, candidates
+    )
+    assert auditor.minimality_promotable(sat_records, candidates)
+
+
+def test_deletion_audit_completes_inactive_variables() -> None:
+    auditor = _load_deletion_auditor()
+    certificate = json.loads(KNOWN_WITNESS.read_text(encoding="utf-8"))
+    projected = json.loads(json.dumps(certificate["witness"]))
+    projected["carries"].pop("c:p0:n0:col33")
+
+    completed = auditor.complete_witness(projected)
+
+    assert completed["carries"]["c:p0:n0:col33"] == 0
+    assert len(completed["digits"]) == 409
+    assert len(completed["carries"]) == 410
+    auditor.validate_projected_replay(
+        {
+            "status": "valid",
+            "equation_count": 408,
+            "digit_count": 409,
+            "carry_count": 409,
+        },
+        projected,
+    )
+
+
+def test_complete_deletion_audit_identifies_the_unique_minimal_core() -> None:
+    auditor = _load_deletion_auditor()
+    candidates = auditor.base19_candidate_provenances()
+    records = auditor.load_prefix(DELETIONS, candidates)
+
+    assert len(records) == len(candidates) == 409
+    assert hashlib.sha256(DELETIONS.read_bytes()).hexdigest() == (
+        "0566f6e2025aec28fe0d2f824f1f6b343cf912e9191a9036629a2a1d4ef03325"
+    )
+    unsat = [record for record in records.values() if record["status"] == "UNSAT"]
+    sat = [record for record in records.values() if record["status"] == "SAT"]
+    assert len(sat) == 408
+    assert [(record["candidate_index"], record["removed"]) for record in unsat] == [
+        (68, "phase=0,n=0,column=82")
+    ]
+    assert not auditor.minimality_promotable(records, candidates)
+
+    minimal_core = tuple(
+        provenance
+        for provenance in candidates
+        if provenance != "phase=0,n=0,column=82"
+    )
+    assert len(minimal_core) == 408
+    assert {record["removed"] for record in sat} == set(minimal_core)
 
 
 def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:
