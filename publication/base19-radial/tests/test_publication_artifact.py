@@ -28,6 +28,15 @@ README = ARTIFACT / "README.md"
 REPRODUCE = ARTIFACT / "reproduce.sh"
 ARTIFACT_MANIFEST = ARTIFACT / "artifact-manifest.json"
 CHECKSUMS = ARTIFACT / "SHA256SUMS"
+PAPER = ARTIFACT / "paper"
+PAPER_RENDERER = ARTIFACT / "scripts" / "render_paper_data.py"
+GENERATED_RESULTS = PAPER / "generated-results.tex"
+PAPER_SOURCE = PAPER / "main.tex"
+PAPER_PDF = PAPER / "main.pdf"
+PAPER_BUILD = PAPER / "build.sh"
+REFERENCES = PAPER / "references.bib"
+LITERATURE_MATRIX = PAPER / "literature-matrix.md"
+PAPER_DOCKERFILE = ARTIFACT / "Dockerfile.paper"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -639,6 +648,12 @@ def test_checksum_inventory_covers_promoted_evidence_and_is_exact() -> None:
         "lean/Base19Radial/Generated/InstanceData.lean",
         "lean/Base19Radial/Generated/Witness.lean",
         "lean/Base19Radial/Generated/WitnessData.lean",
+        "paper/generated-results.tex",
+        "paper/main.pdf",
+        "paper/main.tex",
+        "paper/references.bib",
+        "paper/literature-matrix.md",
+        "Dockerfile.paper",
     }
     entries: dict[str, str] = {}
     for line in CHECKSUMS.read_text(encoding="utf-8").splitlines():
@@ -654,6 +669,22 @@ def test_checksum_inventory_covers_promoted_evidence_and_is_exact() -> None:
         assert hashlib.sha256((ARTIFACT / path).read_bytes()).hexdigest() == expected
 
 
+def test_preprint_manifest_binds_the_built_pdf_and_assurance_boundary() -> None:
+    manifest = json.loads(ARTIFACT_MANIFEST.read_text(encoding="utf-8"))
+    preprint = manifest["preprint"]
+
+    assert preprint["title"] == (
+        "An Exact Radial Obstruction in a Base-19 Reverse-and-Add "
+        "Constraint System"
+    )
+    assert preprint["path"] == "paper/main.pdf"
+    assert preprint["page_count"] == 5
+    assert preprint["sha256"] == hashlib.sha256(PAPER_PDF.read_bytes()).hexdigest()
+    assert preprint["concrete_unsat_assurance"] == "exact-computational-replay"
+    assert preprint["concrete_unsat_lean_kernel_checked"] is False
+    assert preprint["texlive_image"].startswith("ghcr.io/xu-cheng/texlive-full@sha256:")
+
+
 def test_reproduction_entry_point_is_strict_and_has_quick_and_full_modes() -> None:
     source = REPRODUCE.read_text(encoding="utf-8")
 
@@ -665,6 +696,8 @@ def test_reproduction_entry_point_is_strict_and_has_quick_and_full_modes() -> No
         "mktemp -d",
         "shasum -a 256 -c",
         "verify_frontier.py",
+        "render_paper_data.py",
+        "generated-results.tex",
         "pytest",
         "lake clean",
         "lake build",
@@ -689,6 +722,107 @@ def test_readme_states_the_concrete_proof_boundary() -> None:
     assert "not a minimum-cardinality claim" in source
     assert "./publication/base19-radial/reproduce.sh quick" in source
     assert "./publication/base19-radial/reproduce.sh full" in source
+
+
+def test_paper_data_renderer_is_deterministic_and_matches_promoted_data(
+    tmp_path: Path,
+) -> None:
+    outputs = (tmp_path / "first.tex", tmp_path / "second.tex")
+    for output in outputs:
+        subprocess.run(
+            (
+                sys.executable,
+                str(PAPER_RENDERER),
+                "--artifact-dir",
+                str(ARTIFACT),
+                "--output",
+                str(output),
+            ),
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+    assert outputs[0].read_bytes() == outputs[1].read_bytes()
+    assert outputs[0].read_bytes() == GENERATED_RESULTS.read_bytes()
+    source = outputs[0].read_text(encoding="utf-8")
+    for macro in (
+        r"\newcommand{\BaseValue}{19}",
+        r"\newcommand{\CandidateEquationCount}{409}",
+        r"\newcommand{\CoreEquationCount}{408}",
+        r"\newcommand{\RadialLayerCount}{35}",
+        r"\newcommand{\PeakReachableStates}{314}",
+        r"\newcommand{\SatDeletionCount}{408}",
+        r"\newcommand{\UnsatDeletionCount}{1}",
+    ):
+        assert macro in source
+
+
+def test_preprint_states_claims_and_limitations_conservatively() -> None:
+    source = PAPER_SOURCE.read_text(encoding="utf-8")
+
+    assert r"\title{An Exact Radial Obstruction" in source
+    assert r"\input{generated-results.tex}" in source
+    assert "not kernel-checked" in source
+    assert "not a minimum-cardinality" in source
+    assert "no all-base" in source
+    assert "Every atom, range, boundary convention" not in source
+    assert "Domain and leading-digit conventions are explicit in both checkers" in source
+    for section in (
+        "Introduction and Scope",
+        "Fixed Constraint System",
+        "Radial Decomposition",
+        "Soundness and Certification",
+        "Deletion-Minimal Core",
+        "Reproducibility and Trust",
+        "Related Work",
+        "Limitations",
+    ):
+        assert rf"\section{{{section}}}" in source
+    assert not any(
+        line.startswith("Candidate & 409") or line.startswith("Core & 408")
+        for line in source.splitlines()
+    )
+
+
+def test_literature_matrix_and_bibliography_cover_primary_sources() -> None:
+    matrix = LITERATURE_MATRIX.read_text(encoding="utf-8")
+    bibliography = REFERENCES.read_text(encoding="utf-8")
+
+    assert "Novelty | not established" in matrix
+    for key in (
+        "lmsComputerAidedProofs",
+        "deMouraUllrich2021",
+        "Freuder1990",
+        "DechterPearl1989",
+        "WetzlerHeuleHunt2014",
+        "CruzFilipeEtAl2017",
+        "BaekCarneiroHeule2022",
+        "cadical301",
+        "z3Arithmetic",
+        "oeisA060382",
+        "brownSeal",
+    ):
+        assert f"{{{key}," in bibliography
+
+
+def test_paper_container_uses_an_immutable_texlive_digest() -> None:
+    source = PAPER_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "FROM ghcr.io/" in source
+    assert "@sha256:" in source
+    digest = source.split("@sha256:", 1)[1].splitlines()[0]
+    assert len(digest) == 64
+    assert all(character in "0123456789abcdef" for character in digest)
+    assert ":latest" not in source
+
+
+def test_paper_build_fixes_the_source_epoch_for_deterministic_pdf() -> None:
+    source = PAPER_BUILD.read_text(encoding="utf-8")
+
+    assert "SOURCE_DATE_EPOCH=" in source
+    assert "FORCE_SOURCE_DATE=1" in source
+    assert "TZ=UTC" in source
 
 
 def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:

@@ -75,6 +75,12 @@ for generated in FrontierData.lean WitnessData.lean Witness.lean; do
     "$task_tmp/generated/$generated"
 done
 
+"${python_run[@]}" publication/base19-radial/scripts/render_paper_data.py \
+  --artifact-dir publication/base19-radial \
+  --output "$task_tmp/generated-results.tex"
+cmp publication/base19-radial/paper/generated-results.tex \
+  "$task_tmp/generated-results.tex"
+
 for frontier in frontier.json minimal-core-frontier.json; do
   "${python_run[@]}" publication/base19-radial/scripts/verify_frontier.py \
     publication/base19-radial/instance/equations.json \

@@ -1,0 +1,4 @@
+FROM ghcr.io/xu-cheng/texlive-full@sha256:1a2027fd03aa64455cf36c927c1dfccffc8fc8a3cb11012333be815f8b33e956
+
+WORKDIR /paper
+ENTRYPOINT ["bash", "./build.sh"]

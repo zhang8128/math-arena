@@ -1,0 +1,333 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={An Exact Radial Obstruction in a Base-19 Reverse-and-Add Constraint System},
+  pdfauthor={Anonymous}
+}
+
+\input{generated-results.tex}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newcommand{\Ccandidate}{\ensuremath{\mathcal{C}}}
+\newcommand{\Ccore}{\ensuremath{\mathcal{C}^{\prime}}}
+\newcommand{\Sat}{\mathsf{SAT}}
+\newcommand{\Unsat}{\mathsf{UNSAT}}
+
+\title{An Exact Radial Obstruction in a Base-19 Reverse-and-Add Constraint System}
+\author{Anonymous}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We study one explicitly frozen bounded-integer constraint system extracted
+from a six-phase reverse-and-add topology in base~\BaseValue.  Exact radial
+frontier enumeration gives an empty terminal frontier for a
+\CandidateEquationCount-equation candidate and for a
+\CoreEquationCount-equation subset \Ccore.  A complete one-equation-deletion
+audit supplies a satisfying assignment after deletion of each equation of
+\Ccore, so \Ccore is deletion-minimal unsatisfiable in the computational
+certificate model.  A standalone checker reconstructs every local
+quantifier-free linear-integer problem, enumerates every output projection,
+and compares the complete transition relation with the promoted certificate.
+Lean~4 checks the generic frontier soundness theorem and, separately, one
+concrete satisfying neighbor.  The two concrete unsatisfiability results are
+\emph{not kernel-checked}: they rely on exact Z3 enumeration and do not carry
+an LRAT-like solver proof.  The result is not a minimum-cardinality-core
+claim, gives no all-base theorem, and does not establish any general Lychrel
+claim.
+\end{abstract}
+
+\section{Introduction and Scope}
+
+For a base-$b$ word, the reverse-and-add operation adds the represented
+integer to the integer represented by the reversed word.  Carries couple
+columns that are adjacent in the usual direction, while reversal couples
+digits that are far apart.  A natural way to expose the resulting structure
+is therefore to process columns radially, from both ends toward the center.
+
+This paper reports a finite result about one frozen system, not about the
+unbounded reverse-and-add process.  The topology was motivated by David
+Seal's reported period-six self-similar construction in base 17
+\cite{brownSeal}.  The OEIS sequence A060382 records conjectural least
+palindrome-free starts across bases and explicitly warns that, apart from its
+base-two entry, its listed values are unproved \cite{oeisA060382}.  Neither
+source is used as a premise of the result below, and the present obstruction
+does not settle the base-19 entry of that sequence.
+
+Our contribution is an auditable artifact for the following scoped
+statement.  The fixed candidate \Ccandidate{} is unsatisfiable, and deleting
+one specified equation produces a deletion-minimal unsatisfiable subset
+\Ccore.  ``Deletion-minimal'' means that removing any one remaining equation
+makes this particular subset satisfiable; it does not mean that no smaller
+unsatisfiable subset exists.  The concrete claims have exact computational
+replays, whereas the general soundness implication has a Lean proof.  We keep
+these assurance levels separate throughout.
+
+\section{Fixed Constraint System}
+
+Let $b=\BaseValue$.  A digit variable ranges over
+$D=\{0,\ldots,b-1\}$, a carry variable over $K=\{0,1\}$, and the first
+digit of each phase is constrained to be nonzero.  There are six phases
+$p\in\{0,\ldots,5\}$.  Each phase word has three variable blocks.  Phase zero
+has block lengths $(26,25,31)$; every other phase has lengths $(29,23,31)$.
+For a nonnegative parameter $n$, two constant runs are inserted between the
+blocks.  Their digits are $(0,b-1)$ in phases zero and two through five, and
+$(b-1,0)$ in phase one; each run has length $n$.  Write the resulting word as
+$W_p(n)$.
+
+For $p<5$, phase $p$ relates $W_p(0)$ to $W_{p+1}(0)$.  The last phase
+relates $W_5(0)$ to $W_0(1)$, which is the self-similar growth step.  At
+column $k$, let $\ell_{p,k}$ and $r_{p,k}$ be the two source atoms selected
+from opposite ends, let $t_{p,k}$ be the corresponding target atom, and let
+$c_{p,k-1},c_{p,k}\in K$ be the incoming and outgoing carries.  Missing
+end atoms and boundary carries are zero.  The column equation is
+\begin{equation}\label{eq:column}
+  \ell_{p,k}+r_{p,k}+c_{p,k-1}
+  =t_{p,k}+b\,c_{p,k}.
+\end{equation}
+
+The canonical builder retains columns $0$--$33$ and $48$--$82$ in phase
+zero; columns $0$--$33$ and $49$--$82$ in phases one through four; and
+columns $0$--$33$ and $49$--$83$ in phase five.  It then omits phase-five
+column 82.  This gives the candidate \Ccandidate.  The independent equation
+manifest contains exactly \CandidateEquationCount{} equations over
+\ActiveDigitCount{} active digit variables and \ActiveCarryCount{} carry
+variables.  The retained equations are a subset of the full topology, so
+their inconsistency obstructs that topology; no converse encoding claim is
+needed.
+
+The equation manifest serializes the base, topology digest, and every atom,
+equation, provenance label, and equation order.  Domain and leading-digit conventions are explicit in both checkers and are derived deterministically
+from the base and variable names; they are not separate fields in the version
+one JSON schema.  A standard-library-only Python builder and a Lean builder
+produce canonical equation renderings that are byte-compared during
+reproduction, while construction tests check variable counts and model
+validity.  These checks guard against statement drift; they do not themselves
+prove unsatisfiability.
+
+\section{Radial Decomposition}
+
+Partition the retained equations into ordered radial layers
+$L_0,\ldots,L_m$.  At a cut after $L_i$, a variable is \emph{live} precisely
+when it occurs in an equation at or before the cut and also in an equation
+after the cut.  Let $I_i$ be the canonically sorted live-variable list.  A
+frontier state assigns values only to $I_i$.  Variables used only inside one
+layer are existentially hidden.
+
+For an input state $s$ on $I_{i-1}$, define
+\[
+  T_i(s)=\left\{\pi_{I_i}(a):
+  a\text{ extends }s\text{ and satisfies every equation in }L_i\right\}.
+\]
+Starting with $F_{-1}=\{()\}$, exact propagation sets
+$F_i=\bigcup_{s\in F_{i-1}}T_i(s)$.  This is variable elimination along a
+path decomposition.  Its cost is governed by the live interface rather than
+the total number of variables, echoing the classical bounded-width view of
+constraint satisfaction \cite{Freuder1990,DechterPearl1989}.
+
+For \Ccore, the promoted certificate contains \RadialLayerCount{} serialized
+layers, labeled from $-1$ through \TerminalLayer.  A cut contains at most
+\MaximumFrontierDigits{} live digits and \MaximumFrontierCarries{} live
+carries.  The largest reachable frontier has \PeakReachableStates{} states,
+and the output after layer \TerminalLayer{} is empty.  These figures are read
+from the promoted certificate into this manuscript; they are not copied as
+independent literals.
+
+\section{Soundness and Certification}
+
+Exact enumeration is stronger than necessary for soundness.  Suppose
+$G_{-1},\ldots,G_m$ are sets of interface states such that the empty input is
+in $G_{-1}$ and, for every layer,
+\begin{equation}\label{eq:closure}
+  s\in G_{i-1}\ \wedge\ u\in T_i(s)\quad\Longrightarrow\quad u\in G_i.
+\end{equation}
+
+\begin{theorem}[closed empty frontier]\label{thm:soundness}
+If every global satisfying assignment restricts to a locally satisfying
+assignment in every layer, the frontiers satisfy~\eqref{eq:closure}, and
+$G_m=\varnothing$, then the global constraint system is unsatisfiable.
+\end{theorem}
+
+\begin{proof}
+Assume a global satisfying assignment $a$.  Its restriction to the empty
+initial interface is in $G_{-1}$.  Inductively, local satisfaction in $L_i$
+puts $\pi_{I_i}(a)$ in $T_i(\pi_{I_{i-1}}(a))$, and closure puts that
+restriction in $G_i$.  At the final layer this says
+$\pi_{I_m}(a)\in G_m=\varnothing$, a contradiction.
+\end{proof}
+
+Lean~4 formalizes this argument as \GenericSoundnessTheorem.  It also checks a
+hand-written two-layer contradiction, thereby exercising the theorem with
+concrete data.  The reported axiom dependency is only Lean's standard
+\texttt{propext} principle \cite{deMouraUllrich2021}.
+
+The concrete frontier checker is deliberately separate from the exploratory
+generator.  For each serialized layer and each input state it:
+\begin{enumerate}[leftmargin=*,nosep]
+  \item reconstructs the layer equations from the canonical manifest;
+  \item asserts digit, leading-digit, carry, and input-state bounds in QF\_LIA;
+  \item asks Z3 for a model, records the output projection, blocks that
+        projection, and repeats until unsatisfiable; and
+  \item compares the sorted projections, every input transition, live-cut
+        variables, equation coverage, and content digests with the certificate.
+\end{enumerate}
+Z3's integer sort denotes mathematical integers, and its documented LIA
+machinery uses cuts and branch-and-bound \cite{z3Arithmetic}.  The checker
+rejects \texttt{unknown}; it never treats solver termination as
+unsatisfiability.  Replaying the \Ccore{} certificate took
+\CoreReplaySeconds{} seconds on the recorded development machine.
+
+\begin{proposition}[computational obstruction]\label{prop:concrete}
+Under the correctness of the manifest parser, the QF\_LIA encoding, and Z3's
+reported results, \Ccandidate{} and \Ccore{} are unsatisfiable.
+\end{proposition}
+
+The qualifier in Proposition~\ref{prop:concrete} is material.  The Z3 runs do
+not emit a proof trace checked by a small independent proof checker, and the
+concrete frontier closure obligations are not discharged by the Lean kernel.
+
+\section{Deletion-Minimal Core}
+
+Let $e_\star$ be the equation \RemovedCoreEquation, and set
+$\Ccore=\Ccandidate\setminus\{e_\star\}$.  The standalone frontier replay
+establishes computational unsatisfiability of \Ccore.  A complete audit then
+solves every system $\Ccandidate\setminus\{e\}$ for
+$e\in\Ccandidate$.  Of \DeletionAuditCount{} outcomes,
+\SatDeletionCount{} have complete satisfying assignments and
+\UnsatDeletionCount{} is unsatisfiable; the latter is the deletion of
+$e_\star$.
+
+For any $e\in\Ccore$, the stored assignment for
+$\Ccandidate\setminus\{e\}$ also satisfies its subset
+$\Ccore\setminus\{e\}$.  Direct integer replay checks all bounds and retained
+column equalities for every such assignment.  Therefore every one-equation
+deletion of \Ccore{} is satisfiable in the same computational certificate
+model, proving deletion minimality relative to the frozen candidate.
+
+One neighboring result has a stronger endpoint.  Deleting
+\KnownSatRemovedEquation{} leaves \CoreEquationCount{} equations, and the
+full assignment is embedded as transparent Lean data.  Ordinary kernel
+reduction checks the theorem \ConcreteSatTheorem{} in
+\LeanWitnessSeconds{} seconds on the recorded machine; no
+\texttt{native\_decide} oracle is used.  This kernel check covers one SAT
+neighbor, not the complete deletion audit.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Object & Equations & Assurance endpoint \\
+\midrule
+Candidate & \CandidateEquationCount & exact QF\_LIA frontier replay \\
+Core & \CoreEquationCount & exact replay plus all-deletion witnesses \\
+Known SAT neighbor & \CoreEquationCount & Lean kernel, ordinary \texttt{decide} \\
+Generic soundness theorem & --- & Lean kernel \\
+\bottomrule
+\end{tabular}
+\caption{Claim boundaries.  The first two rows are not Lean theorems.}
+\label{tab:assurance}
+\end{table}
+
+\section{Reproducibility and Trust}
+
+The artifact included with this preprint follows the computer-aided-proof
+principles of making the computational role explicit and supplying
+surveyable code and supporting data \cite{lmsComputerAidedProofs}.  Its quick
+entry point verifies frozen SHA-256 values; regenerates the equation and Lean
+data; independently replays both empty frontiers and all promoted SAT
+witnesses; runs the publication tests; performs a clean Lean build; compares
+the Lean-exported and Python-built statements; and prints theorem axiom
+dependencies.  The command is
+\begin{center}
+\texttt{./publication/base19-radial/reproduce.sh quick}.
+\end{center}
+The recorded clean-clone run took \CleanCloneSeconds{} seconds.  The
+\texttt{full} mode additionally regenerates the complete deletion audit and
+all promoted certificates before byte comparison.  Certificate generation
+alone took \CertificateGenerationSeconds{} seconds; the resumed deletion
+audit took \DeletionAuditSeconds{} seconds.  Timings are observations, not
+mathematical evidence.
+
+The main trust paths are intentionally visible:
+\[
+\begin{array}{c}
+\text{topology JSON}\longrightarrow\text{independent equation manifest}
+\longrightarrow\text{layered QF\_LIA replay},\\[2mm]
+\text{topology JSON}\longrightarrow\text{Lean equation builder}
+\longrightarrow\text{canonical manifest comparison},\\[2mm]
+\text{Lean definitions}\longrightarrow\text{generic theorem and one SAT witness}
+\longrightarrow\text{Lean kernel}.
+\end{array}
+\]
+The first path still trusts Z3, Python, the operating system, and the
+arithmetic encoding.  The second catches translation drift but cannot turn a
+solver status into a theorem.  The third has a smaller logical endpoint but
+does not include the concrete UNSAT instance.
+
+\section{Related Work}
+
+Seal's construction and the OEIS entry provide historical reverse-and-add
+context \cite{brownSeal,oeisA060382}.  Our radial frontier is an instance of
+the familiar principle that bounded separators make structured CSPs
+tractable \cite{Freuder1990,DechterPearl1989}; we make no claim that the
+frontier method itself is new.
+
+For solver-result certification, DRAT-trim checks expressive clausal proofs
+\cite{WetzlerHeuleHunt2014}; LRAT adds hints suitable for simple certified
+checkers \cite{CruzFilipeEtAl2017}; and FRAT supports communication from a
+solver to a later elaborator \cite{BaekCarneiroHeule2022}.  A future Boolean
+encoding could use a proof-producing solver such as CaDiCaL
+\cite{cadical301}, followed by one of these checking paths.  We did not
+promote such a translation or trace because it is not required by the direct
+radial argument and was not validated to the standard of this artifact.
+
+The literature search is documented in \texttt{paper/literature-matrix.md}.
+It did not establish priority for the finite result, so this paper makes no
+literature-wide novelty claim.
+
+\section{Limitations}
+
+The following boundaries are part of the result.
+\begin{itemize}[leftmargin=*]
+  \item The concrete \CandidateEquationCount-equation and
+        \CoreEquationCount-equation unsatisfiability claims are not
+        kernel-checked and have no independently checked LRAT, DRAT, or FRAT
+        trace.
+  \item Deletion minimality is computationally certified.  Only the one
+        neighbor named above is separately checked in Lean.
+  \item This is not a minimum-cardinality claim.  Smaller unsatisfiable
+        subsets may exist.
+  \item There is no all-base result and no proof that any particular starting
+        integer is Lychrel.  The theorem concerns one fixed base-19 topology
+        and a subset of its column equations.
+  \item The one-deletion audit identifies a single unsatisfiable deletion of
+        \Ccandidate, but this does not justify an unqualified uniqueness claim
+        outside those immediate subsets.
+  \item Runtimes and memory use are platform-dependent and are not part of
+        the mathematical statement.
+\end{itemize}
+
+The most valuable next strengthening would be a compact concrete proof object
+checked by a substantially smaller independent verifier, or a feasible Lean
+proof of the concrete frontier closure.  Until then, Proposition
+\ref{prop:concrete} should be cited with its computational assurance boundary.
+
+\begingroup
+\small
+\bibliographystyle{plain}
+\bibliography{references}
+\endgroup
+
+\end{document}

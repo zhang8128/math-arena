@@ -225,6 +225,32 @@
       "peak_rss_bytes": 738213888
     }
   },
+  "preprint": {
+    "title": "An Exact Radial Obstruction in a Base-19 Reverse-and-Add Constraint System",
+    "path": "paper/main.pdf",
+    "page_count": 5,
+    "sha256": "e56dd14235a72821d407d106c259902c267be6f7ed5a2abaa5ccffeac61ac47e",
+    "texlive_image": "ghcr.io/xu-cheng/texlive-full@sha256:1a2027fd03aa64455cf36c927c1dfccffc8fc8a3cb11012333be815f8b33e956",
+    "build_network": "disabled during compilation",
+    "build_command": [
+      "docker",
+      "run",
+      "--rm",
+      "--platform",
+      "linux/amd64",
+      "--network",
+      "none",
+      "-v",
+      "$PWD/publication/base19-radial/paper:/paper",
+      "base19-radial-paper"
+    ],
+    "concrete_unsat_assurance": "exact-computational-replay",
+    "concrete_unsat_lean_kernel_checked": false,
+    "logs": [
+      "paper/main.log",
+      "paper/main.blg"
+    ]
+  },
   "limitations": [
     "The concrete 409-equation and 408-equation UNSAT claims are not Lean kernel-checked.",
     "The SMT replays do not emit independently checkable LRAT or similar proof traces.",

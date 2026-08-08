@@ -59,3 +59,24 @@ changing it does not change canonical output order.
 
 The scope and failed concrete-Lean feasibility experiments are recorded in
 `LEAN-FEASIBILITY.md`.
+
+## Preprint
+
+The conservative manuscript is `paper/main.tex`; the tracked PDF is built
+from a digest-pinned TeX Live image using `Dockerfile.paper`.  Quantitative
+claims in the manuscript are generated from promoted evidence into
+`paper/generated-results.tex`, and `reproduce.sh quick` rejects any drift.
+
+After the pinned image is available locally, build without network access:
+
+```sh
+docker build -f publication/base19-radial/Dockerfile.paper \
+  -t base19-radial-paper publication/base19-radial
+docker run --rm --network none \
+  -v "$PWD/publication/base19-radial/paper:/paper" \
+  base19-radial-paper
+```
+
+The paper deliberately labels the concrete UNSAT results as exact
+computational replays, not Lean theorems.  No DOI or repository URL is claimed
+before an external deposit exists.
