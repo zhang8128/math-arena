@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+INDEPENDENT = ROOT / ".timeloop" / "runs" / "t27_base19_invariant_lift_independent.py"
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
 
@@ -665,3 +667,65 @@ def test_real_gate_a_record_stops_before_symbolic_claims() -> None:
     ]
     assert "symbolic_base_claim" not in record
     assert record["tail_lemma"]["obligation_status"] == "PASS"
+
+
+def test_independent_tail_checker_runs_without_repository_imports(
+    tmp_path: Path,
+) -> None:
+    checker = tmp_path / "checker.py"
+    shutil.copy(INDEPENDENT, checker)
+    completed = subprocess.run(
+        (
+            sys.executable,
+            "-I",
+            str(checker),
+            str(ROOT / "publication/base19-radial/instance/equations.json"),
+            str(
+                ROOT
+                / "publication/base19-radial/certificates/minimal-core-frontier.json"
+            ),
+            str(ROOT / ".timeloop/runs/t27_base19_invariant_lift.json"),
+        ),
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    audit = json.loads(completed.stdout)
+
+    assert audit["status"] == "PASS"
+    assert audit["scope"] == "tail_lemma_only"
+    assert audit["repository_imports"] == []
+    assert audit["reachable_state_count"] == 22
+    assert audit["terminal_clause_statuses"] == ["UNSAT", "UNSAT", "UNSAT"]
+
+
+def test_independent_tail_checker_rejects_a_predicate_mutation(
+    tmp_path: Path,
+) -> None:
+    evidence = json.loads(
+        (ROOT / ".timeloop/runs/t27_base19_invariant_lift.json").read_text()
+    )
+    evidence["tail_lemma"]["predicate"]["clauses"][0]["atoms"][0]["constant"] += 1
+    mutated = tmp_path / "mutated.json"
+    mutated.write_text(json.dumps(evidence), encoding="utf-8")
+
+    completed = subprocess.run(
+        (
+            sys.executable,
+            "-I",
+            str(INDEPENDENT),
+            str(ROOT / "publication/base19-radial/instance/equations.json"),
+            str(
+                ROOT
+                / "publication/base19-radial/certificates/minimal-core-frontier.json"
+            ),
+            str(mutated),
+        ),
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "REJECT:" in completed.stderr
+    assert '"status":"PASS"' not in completed.stdout
