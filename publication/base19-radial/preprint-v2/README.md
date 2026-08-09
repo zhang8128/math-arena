@@ -27,11 +27,17 @@ uv run --frozen python \
   publication/base19-radial/instance/equations.json \
   publication/base19-radial/lean/Base19Radial/Generated/CoreBV.lean
 
-cd publication/base19-radial/lean
-lake env lean Base19Radial/Generated/CoreBV.lean
+(cd publication/base19-radial/lean &&
+  lake env cadical --version &&
+  lake env lean Base19Radial/Generated/CoreBV.lean)
 ```
 
-The last command checks the packed theorem and prints its exact axiom report.
+The CaDiCaL command prints `2.1.2`; this pinned-toolchain output identifies the
+binary used by Lean's default `bv_decide` route.  The official `rel-2.1.2`
+release is cited in the manuscript, but the release page alone does not prove
+which bundled binary ran.  The final command checks the packed theorem and
+prints its exact axiom report.  The subshell returns the caller to the
+repository root for the commands below.
 The 51.01-second, 1,280,688,128-byte maximum-RSS record is one development-
 machine run, not a performance guarantee.  The broader artifact replay is
 documented in `../README.md`.
@@ -39,7 +45,7 @@ documented in `../README.md`.
 ## Build the PDF
 
 After the digest-pinned TeX base image is available in the local Docker cache,
-build the image and then the candidate without network access:
+build the image and then the candidate without network access.  Run the Docker commands from the repository root:
 
 ```sh
 docker build --platform linux/amd64 --network none \

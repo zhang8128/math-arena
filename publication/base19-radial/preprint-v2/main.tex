@@ -529,12 +529,12 @@ of \PackedConstraintCount{} generated constraints.
 \end{tcolorbox}
 
 At the frozen Lean 4.32.2 source commit, \texttt{bv\_decide} reflects and
-bit-blasts the proposition, CaDiCaL performs certificate search, and Lean
-passes the resulting LRAT certificate to its proved-sound LRAT checker.  The
-Lean implementation, the primary LRAT account, and official CaDiCaL
-source/release are cited here at the point of use
-\cite{leanBVDecide432,CruzFilipeEtAl2017,cadical301}.  In particular, it is
-CaDiCaL in this route---not Z3---that searches for the certificate.
+bit-blasts the proposition, selects an adjacent \texttt{cadical} executable by
+default, and invokes it with \texttt{--lrat}.  In the pinned toolchain,
+\texttt{lake env cadical --version} prints \texttt{2.1.2}; hence
+CaDiCaL~2.1.2, not Z3, searches and Lean checks the returned LRAT certificate.
+The pinned output, rather than the release page alone, identifies the binary
+\cite{leanBVDecide432,CruzFilipeEtAl2017,cadical212}.
 
 There is a second, essential layer to the checking story.  Lean's checker has
 a proved soundness theorem, but the frozen implementation's
@@ -584,8 +584,8 @@ The preceding distinctions can be arranged by the scope of their trusted
 base.  The bottom level re-executes the concrete frontier computation using
 Z3's mathematical integers and exact finite comparisons
 \cite{z3Arithmetic}; it does not attribute a proof object to Z3.  The middle
-level is the achieved packed theorem whose CaDiCaL LRAT certificate is checked
-in Lean with native evaluation.  A strict concrete proof checked only by
+level is the achieved packed theorem whose CaDiCaL~2.1.2 LRAT certificate is
+checked in Lean with native evaluation.  A strict concrete proof checked only by
 kernel reduction would be a further endpoint, not a property of the present
 artifact.
 
@@ -690,8 +690,8 @@ certificate lineage, DRAT-trim checks and trims expressive clausal proofs
 small efficient certified checker \cite{CruzFilipeEtAl2017}; and FRAT lets a
 solver communicate additional information to a later elaborator
 \cite{BaekCarneiroHeule2022}.  The achieved packed route is specifically
-CaDiCaL certificate search followed by Lean's LRAT checker, not a claim that
-this artifact emits every one of those formats \cite{cadical301}.
+CaDiCaL~2.1.2 certificate search followed by Lean's LRAT checker, not a claim
+that this artifact emits every one of those formats \cite{cadical212}.
 
 Lean combines an interactive theorem prover with an extensible functional
 programming language \cite{deMouraUllrich2021}.  At the frozen Lean~4.32.2
@@ -762,18 +762,18 @@ uv run --frozen python \
   publication/base19-radial/scripts/render_preprint_v2_data.py \
   --artifact-dir publication/base19-radial \
   --output publication/base19-radial/preprint-v2/generated-results.tex
-
 uv run --frozen python \
   publication/base19-radial/scripts/render_lean_bv_core.py \
   publication/base19-radial/instance/equations.json \
   publication/base19-radial/lean/Base19Radial/Generated/CoreBV.lean
-
-cd publication/base19-radial/lean
-lake env lean Base19Radial/Generated/CoreBV.lean
+(cd publication/base19-radial/lean &&
+  lake env cadical --version &&
+  lake env lean Base19Radial/Generated/CoreBV.lean)
 \end{verbatim}
 }
-The final command prints the exact native axiom dependency discussed in
-\cref{sec:lean-lrat}.  Regeneration emits the full \PackedWidth-bit
+The version command prints \texttt{2.1.2}, and the final command prints the
+exact native axiom dependency discussed in \cref{sec:lean-lrat}.  The
+subshell returns to the repository root.  Regeneration emits the full \PackedWidth-bit
 conjunction to \texttt{CoreBV.lean}; this appendix records the command and
 identity instead of reproducing that source or its LRAT certificate.
 
@@ -787,8 +787,8 @@ at the digest
 \begin{center}
   \nolinkurl{sha256:1a2027fd03aa64455cf36c927c1dfccffc8fc8a3cb11012333be815f8b33e956}.
 \end{center}
-After that image is present locally, the exact AMD64, network-disabled build
-is:
+Run the Docker commands from the repository root.  After that image is present
+locally, the exact AMD64, network-disabled build is:
 {\small
 \begin{verbatim}
 docker build --platform linux/amd64 --network none \

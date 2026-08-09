@@ -79,7 +79,7 @@ def test_bibliography_contains_every_required_primary_source() -> None:
         "deMouraUllrich2021",
         "CruzFilipeEtAl2017",
         "BaekCarneiroHeule2022",
-        "cadical301",
+        "cadical212",
         "z3Arithmetic",
         "leanBVDecide432",
     ):
@@ -101,10 +101,42 @@ def test_every_citation_key_is_defined_and_every_required_key_is_used() -> None:
         "oeisA060382",
         "deMouraUllrich2021",
         "CruzFilipeEtAl2017",
-        "cadical301",
+        "cadical212",
         "z3Arithmetic",
         "leanBVDecide432",
     } <= used
+
+
+def test_cadical_citation_matches_the_pinned_lean_binary(tmp_path: Path) -> None:
+    bib = (PREPRINT / "references.bib").read_text(encoding="utf-8")
+    matrix = (PREPRINT / "citation-matrix.md").read_text(encoding="utf-8")
+    pdf_text = extracted_pdf_text(tmp_path)
+
+    assert "@misc{cadical212," in bib
+    assert "cadical301" not in bib
+    for required_fact in (
+        "rel-2.1.2",
+        "3ff42f04384489916f017acd6d5e7cbfa7257be7",
+        "lake env cadical --version",
+        "2.1.2",
+        "Lean/Meta/Tactic/BVDecide/TacticContext.lean#L49-L57",
+        "Lean/Meta/Tactic/BVDecide/External.lean#L140-L166",
+        "`cadical212`",
+    ):
+        assert required_fact in matrix
+    assert "cadical301" not in matrix
+    assert "CaDiCaL 2.1.2" in pdf_text
+    assert "lake env cadical --version" in pdf_text
+
+
+def test_reproducibility_lean_commands_restore_repository_root() -> None:
+    lean_sequence = """(cd publication/base19-radial/lean &&
+  lake env cadical --version &&
+  lake env lean Base19Radial/Generated/CoreBV.lean)"""
+    for path in (PREPRINT / "README.md", PREPRINT / "main.tex"):
+        source = path.read_text(encoding="utf-8")
+        assert lean_sequence in source
+        assert "Run the Docker commands from the repository root" in source
 
 
 def test_lean_bv_citation_discloses_native_evaluation_boundary() -> None:
