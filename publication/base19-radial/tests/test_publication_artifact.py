@@ -4,6 +4,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,8 @@ REFERENCES = PAPER / "references.bib"
 LITERATURE_MATRIX = PAPER / "literature-matrix.md"
 PAPER_DOCKERFILE = ARTIFACT / "Dockerfile.paper"
 RELEASE_CHECKLIST = ARTIFACT / "RELEASE_CHECKLIST.md"
+# Leave one minute for process startup and teardown beyond bv_decide's budget.
+LEAN_REPLAY_TIMEOUT_SECONDS = 360
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -268,10 +271,18 @@ def test_bv_core_renderer_produces_a_lean_checked_unsat_certificate(
         check=True,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=LEAN_REPLAY_TIMEOUT_SECONDS,
     )
     assert "Base19Radial.packedMinimalCoreUnsat" in completed.stdout
     assert "packedMinimalCoreUnsat._native.bv_decide.ax_1_5" in completed.stdout
+
+
+def test_outer_lean_replay_timeout_exceeds_generated_tactic_budget() -> None:
+    renderer = BV_CORE_RENDERER.read_text(encoding="utf-8")
+    match = re.search(r"timeout := (\d+)", renderer)
+    assert match is not None
+    tactic_timeout_seconds = int(match.group(1))
+    assert LEAN_REPLAY_TIMEOUT_SECONDS >= tactic_timeout_seconds + 60
 
 
 def test_lean_builder_exports_the_canonical_manifest() -> None:

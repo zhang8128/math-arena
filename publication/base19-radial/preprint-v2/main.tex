@@ -8,6 +8,7 @@
 \usepackage{booktabs}
 \usepackage{enumitem}
 \usepackage{fancyhdr}
+\usepackage{float}
 \usepackage{xcolor}
 \usepackage{tcolorbox}
 \usepackage{tikz}
@@ -415,9 +416,16 @@ Lychrel number.
 \label{sec:packed-encoding}
 
 The generated check replaces a tuple of small integers by one bit-vector.
-The active variables of $\Core$ occur in the generator's fixed manifest order:
-first the \ActiveDigitCount{} digit variables, then the \ActiveCarryCount{}
-carry variables.  Thus there are
+The renderer scans the equations in canonical retained-equation order: this
+is exactly the order inherited from the frozen \texttt{equations.json} after
+omitting the named equation, with no additional equation sorting claimed.
+In one scan it records first occurrences from the fields \texttt{left},
+\texttt{right}, \texttt{target}, in that order, to form the digit slots.  In a
+second scan of the same retained equations it records first occurrences from
+\nolinkurl{carry_in}, \nolinkurl{carry_out}, in that order, to form the carry
+slots.  Finally it concatenates the digit-slot list before the carry-slot
+list.  Thus there are \ActiveDigitCount{} digit variables followed by
+\ActiveCarryCount{} carry variables, and hence
 \[
   \ActiveDigitCount+\ActiveCarryCount=819
 \]
@@ -430,7 +438,7 @@ a word
 For $0\leq j<819$, slot $j$ is the unsigned six-bit value extracted from
 the bit interval beginning at least-significant-bit offset $6j$.  In the
 generated Lean source this operation is
-\texttt{assignment.extractLsb' (index * 6) 6}.  The 819 intervals are
+\texttt{assignment.extractLsb\textquotesingle{} (index * 6) 6}.  The 819 intervals are
 disjoint and exhaust all \PackedWidth{} bits; there are no padding bits.
 
 Write $s_j(A)\in\{0,\ldots,63\}$ for the ordinary representative of the
@@ -589,7 +597,7 @@ checked in Lean with native evaluation.  A strict concrete proof checked only by
 kernel reduction would be a further endpoint, not a property of the present
 artifact.
 
-\begin{figure}[t]
+\begin{figure}[H]
   \centering
   \begin{tikzpicture}[
       level/.style={draw=InkNavy,thick,rounded corners=2pt,
