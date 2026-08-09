@@ -46,6 +46,20 @@ def redigest(payload: dict[str, object]) -> dict[str, object]:
     return payload
 
 
+def update_checksum(artifact: Path, relative_path: str) -> None:
+    checksum_path = artifact / "SHA256SUMS"
+    digest = hashlib.sha256((artifact / relative_path).read_bytes()).hexdigest()
+    lines = checksum_path.read_text(encoding="utf-8").splitlines()
+    checksum_path.write_text(
+        "\n".join(
+            f"{digest}  {relative_path}" if line.endswith(f"  {relative_path}") else line
+            for line in lines
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_bibliography_contains_every_required_primary_source() -> None:
     source = (PREPRINT / "references.bib").read_text(encoding="utf-8")
     for key in (
@@ -134,13 +148,46 @@ def test_generated_results_reject_altered_packed_run_context(tmp_path: Path) -> 
     manifest_path = artifact / "artifact-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     run = manifest["measured_runs"]["lean_packed_core_bv"]
-    run["command"] = "lake env lean altered.lean"
     run["axioms"][-1] = "packedMinimalCoreUnsat._native.bv_decide.ax_9_9"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
     assert completed.returncode != 0
     assert "packed Lean run context changed" in completed.stderr
+
+
+def test_generated_results_reject_terminal_layer_latex_injection(tmp_path: Path) -> None:
+    artifact = copied_artifact(tmp_path)
+    core_path = artifact / "certificates" / "minimal-core-frontier.json"
+    core = json.loads(core_path.read_text(encoding="utf-8"))
+    core["layers"][-1]["layer"] = r"}\input{owned}"
+    core_path.write_text(json.dumps(redigest(core)), encoding="utf-8")
+
+    completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
+    assert completed.returncode != 0
+    assert "minimal-core certificate layer is invalid" in completed.stderr
+
+
+def test_generated_results_reject_packed_source_with_matching_mutable_checksum(
+    tmp_path: Path,
+) -> None:
+    artifact = copied_artifact(tmp_path)
+    relative_source = "lean/Base19Radial/Generated/CoreBV.lean"
+    source_path = artifact / relative_source
+    source = source_path.read_text(encoding="utf-8")
+    source_path.write_text(
+        source.replace(
+            "packedSlot assignment 0 < (19 : BitVec 6)",
+            "packedSlot assignment 1 < (19 : BitVec 6)",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    update_checksum(artifact, relative_source)
+
+    completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
+    assert completed.returncode != 0
+    assert "CoreBV.lean does not match the deterministic renderer" in completed.stderr
 
 
 def test_generated_results_reject_redigested_core_relabelled_as_known_sat_removal(
@@ -166,3 +213,17 @@ def test_generated_results_reject_redigested_core_relabelled_as_known_sat_remova
     completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
     assert completed.returncode != 0
     assert "core removal is not the audit's unique UNSAT deletion" in completed.stderr
+
+
+def test_generated_results_reject_redigested_witness_relabelled_to_p0c1(
+    tmp_path: Path,
+) -> None:
+    artifact = copied_artifact(tmp_path)
+    witness_path = artifact / "certificates" / "delete-p0-c0.json"
+    witness = json.loads(witness_path.read_text(encoding="utf-8"))
+    witness["removed"] = "phase=0,n=0,column=1"
+    witness_path.write_text(json.dumps(redigest(witness)), encoding="utf-8")
+
+    completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
+    assert completed.returncode != 0
+    assert "known deletion witness does not satisfy retained equations" in completed.stderr

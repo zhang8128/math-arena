@@ -8,6 +8,10 @@ import hashlib
 import json
 import math
 import re
+import subprocess
+import sys
+import tempfile
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +88,20 @@ def require_number(value: object, label: str) -> float:
     return float(value)
 
 
+def require_nonnegative_int(value: object, label: str) -> int:
+    result = require_int(value, label)
+    if result < 0:
+        raise ValueError(f"{label} must be nonnegative")
+    return result
+
+
+def require_positive_finite_number(value: object, label: str) -> float:
+    result = require_number(value, label)
+    if not math.isfinite(result) or result <= 0:
+        raise ValueError(f"{label} must be positive and finite")
+    return result
+
+
 def validate_promoted_checksum(artifact_dir: Path, relative_path: str) -> None:
     checksum_path = artifact_dir / "SHA256SUMS"
     expected: str | None = None
@@ -100,6 +118,22 @@ def validate_promoted_checksum(artifact_dir: Path, relative_path: str) -> None:
         raise ValueError(f"SHA256SUMS does not bind {relative_path}")
     if file_sha(artifact_dir / relative_path) != expected:
         raise ValueError(f"{Path(relative_path).name} checksum mismatch")
+
+
+def validate_deterministic_core_bv(equation_path: Path, core_bv_path: Path) -> None:
+    renderer_path = Path(__file__).with_name("render_lean_bv_core.py")
+    with tempfile.TemporaryDirectory(prefix="base19-preprint-core-bv-") as temporary:
+        expected_path = Path(temporary) / "CoreBV.lean"
+        completed = subprocess.run(
+            (sys.executable, str(renderer_path), str(equation_path), str(expected_path)),
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if completed.returncode != 0:
+            raise ValueError("deterministic CoreBV renderer failed")
+        if core_bv_path.read_bytes() != expected_path.read_bytes():
+            raise ValueError("CoreBV.lean does not match the deterministic renderer")
 
 
 def atom_variable(atom: object, base: int) -> str | None:
@@ -224,7 +258,7 @@ def measured_run(manifest: dict[str, Any], name: str) -> dict[str, Any]:
 
 def formatted_run_seconds(manifest: dict[str, Any], name: str, label: str) -> str:
     run = measured_run(manifest, name)
-    return f"{require_number(run.get('wall_seconds'), label):.2f}"
+    return f"{require_positive_finite_number(run.get('wall_seconds'), label):.2f}"
 
 
 def validate_packed_run(run: dict[str, Any], equation_sha: str) -> None:
@@ -236,15 +270,12 @@ def validate_packed_run(run: dict[str, Any], equation_sha: str) -> None:
         or run.get("axioms") != PACKED_AXIOMS
     ):
         raise ValueError("packed Lean run context changed")
-    if not math.isfinite(require_number(run.get("wall_seconds"), "packed Lean wall seconds")) or (
-        require_number(run.get("wall_seconds"), "packed Lean wall seconds") <= 0
-    ):
-        raise ValueError("packed Lean wall seconds must be positive and finite")
+    require_positive_finite_number(run.get("wall_seconds"), "packed Lean wall seconds")
     if require_int(run.get("max_rss_bytes"), "packed Lean maximum RSS") <= 0:
         raise ValueError("packed Lean maximum RSS must be positive")
 
 
-def validate_certificate_summary(payload: dict[str, Any], base: int, label: str) -> None:
+def validate_certificate_summary(payload: dict[str, Any], base: int, label: str) -> int:
     if require_int(payload.get("base"), f"{label} base") != base:
         raise ValueError(f"{label} base changed")
     layers = payload.get("layers")
@@ -252,17 +283,93 @@ def validate_certificate_summary(payload: dict[str, Any], base: int, label: str)
         raise ValueError(f"{label} layers are missing")
     if not all(isinstance(layer, dict) for layer in layers):
         raise ValueError(f"{label} layer is malformed")
+    layer_numbers = [
+        require_int(layer.get("layer"), f"{label} layer is invalid")
+        for layer in layers
+    ]
+    if layer_numbers[0] != -1 or any(
+        current != previous + 1
+        for previous, current in pairwise(layer_numbers)
+    ):
+        raise ValueError(f"{label} layer is invalid")
     maximums = {
         "max_reachable_state_count": "output_state_count",
         "max_frontier_digit_count": "output_frontier_digit_count",
         "max_frontier_carry_count": "output_frontier_carry_count",
     }
     for summary_key, layer_key in maximums.items():
-        if require_int(payload.get(summary_key), f"{label} {summary_key}") != max(
-            require_int(layer.get(layer_key), f"{label} layer {layer_key}")
+        if require_nonnegative_int(payload.get(summary_key), f"{label} {summary_key}") != max(
+            require_nonnegative_int(layer.get(layer_key), f"{label} layer {layer_key}")
             for layer in layers
         ):
             raise ValueError(f"{label} {summary_key} disagrees with its layers")
+    return layer_numbers[-1]
+
+
+def validate_witness_assignment(
+    witness: dict[str, Any], equations: list[dict[str, Any]], base: int
+) -> None:
+    removed = witness.get("removed")
+    if not isinstance(removed, str):
+        raise ValueError("known deletion witness removal is malformed")
+    retained = [equation for equation in equations if equation.get("provenance") != removed]
+    digits: set[str] = set()
+    carries: set[str] = set()
+    for equation in retained:
+        for key in ("left", "right", "target"):
+            variable = atom_variable(equation.get(key), base)
+            if variable is not None:
+                digits.add(variable)
+        for key in ("carry_in", "carry_out"):
+            carry = equation.get(key)
+            if carry is not None:
+                if not isinstance(carry, str) or not carry.startswith("c:"):
+                    raise ValueError("known deletion witness equation carry is malformed")
+                carries.add(carry)
+    assignment = witness.get("witness")
+    if not isinstance(assignment, dict) or set(assignment) != {"digits", "carries"}:
+        raise ValueError("known deletion witness assignment is malformed")
+    digit_values = assignment.get("digits")
+    carry_values = assignment.get("carries")
+    if not isinstance(digit_values, dict) or not isinstance(carry_values, dict):
+        raise ValueError("known deletion witness assignment is malformed")
+    if set(digit_values) != digits or set(carry_values) != carries:
+        raise ValueError("known deletion witness variable coverage changed")
+
+    def digit_value(atom: object) -> int:
+        variable = atom_variable(atom, base)
+        if variable is None:
+            assert isinstance(atom, dict)
+            return require_nonnegative_int(atom["literal"], "witness digit literal")
+        value = require_nonnegative_int(digit_values[variable], "witness digit value")
+        if value >= base:
+            raise ValueError("known deletion witness digit is outside the base")
+        return value
+
+    def carry_value(name: object) -> int:
+        if name is None:
+            return 0
+        if not isinstance(name, str) or name not in carry_values:
+            raise ValueError("known deletion witness carry is malformed")
+        value = require_nonnegative_int(carry_values[name], "witness carry value")
+        if value > 1:
+            raise ValueError("known deletion witness carry is outside its range")
+        return value
+
+    for name in digits:
+        value = require_nonnegative_int(digit_values[name], "witness digit value")
+        if value >= base:
+            raise ValueError("known deletion witness digit is outside the base")
+        if re.fullmatch(r"p\d+:f0:d0", name) is not None and value == 0:
+            raise ValueError("known deletion witness leading digit is zero")
+    for equation in retained:
+        left = digit_value(equation["left"])
+        right = digit_value(equation["right"])
+        target = digit_value(equation["target"])
+        if left + right + carry_value(equation["carry_in"]) != target + base * carry_value(
+            equation["carry_out"]
+        ):
+            raise ValueError("known deletion witness does not satisfy retained equations")
 
 
 def claim_theorem(manifest: dict[str, Any], identifier: str) -> str:
@@ -324,7 +431,9 @@ def render(artifact_dir: Path) -> str:
         or core.get("deletions_sha256") != file_sha(deletion_path)
     ):
         raise ValueError("minimal-core certificate is not bound to frozen evidence")
-    validate_certificate_summary(core, base, "minimal-core certificate")
+    core_terminal_layer = validate_certificate_summary(
+        core, base, "minimal-core certificate"
+    )
     if (
         witness.get("schema") != WITNESS_SCHEMA
         or witness.get("status") != "SAT"
@@ -367,12 +476,20 @@ def render(artifact_dir: Path) -> str:
         or deletion_records.get(witness_removal, {}).get("status") != "SAT"
     ):
         raise ValueError("known deletion witness removal is not SAT in the audit")
+    validate_witness_assignment(witness, all_equations, base)
+    concrete_sat_theorem = claim_theorem(manifest, "delete_p0_c0_sat")
+    if (
+        witness_removal != "phase=0,n=0,column=0"
+        or concrete_sat_theorem != "Base19Radial.deleteP0C0Sat"
+    ):
+        raise ValueError("known deletion witness has no matching concrete theorem")
 
     packed_run = measured_run(manifest, "lean_packed_core_bv")
     validate_packed_run(packed_run, equation_sha)
     validate_promoted_checksum(
         artifact_dir, "lean/Base19Radial/Generated/CoreBV.lean"
     )
+    validate_deterministic_core_bv(equation_path, core_bv_path)
     core_source = core_bv_path.read_text(encoding="utf-8")
     packed_theorem_name = packed_run["theorem"].rsplit(".", maxsplit=1)[-1]
     if (
@@ -383,19 +500,41 @@ def render(artifact_dir: Path) -> str:
     ):
         raise ValueError("packed Lean source is not bound to the frozen core")
     packed_width, slot_width, constraint_count = packed_shape(equations, core, core_source)
+    candidate_equation_count = require_int(
+        frontier.get("equation_count"), "candidate equation count"
+    )
+    core_equation_count = require_int(core.get("equation_count"), "core equation count")
+    peak_reachable_states = require_nonnegative_int(
+        core.get("max_reachable_state_count"), "core peak reachable states"
+    )
+    maximum_frontier_digits = require_nonnegative_int(
+        core.get("max_frontier_digit_count"), "core maximum frontier digits"
+    )
+    maximum_frontier_carries = require_nonnegative_int(
+        core.get("max_frontier_carry_count"), "core maximum frontier carries"
+    )
+    active_digit_count = require_nonnegative_int(
+        core.get("active_digit_count"), "core active digit count"
+    )
+    active_carry_count = require_nonnegative_int(
+        core.get("active_carry_count"), "core active carry count"
+    )
     packed_max_rss = require_int(packed_run.get("max_rss_bytes"), "packed Lean maximum RSS")
+    packed_lean_seconds = require_positive_finite_number(
+        packed_run.get("wall_seconds"), "packed Lean wall seconds"
+    )
 
     values = [
         ("BaseValue", base),
-        ("CandidateEquationCount", frontier["equation_count"]),
-        ("CoreEquationCount", core["equation_count"]),
+        ("CandidateEquationCount", candidate_equation_count),
+        ("CoreEquationCount", core_equation_count),
         ("RadialLayerCount", len(core["layers"])),
-        ("TerminalLayer", core["layers"][-1]["layer"]),
-        ("PeakReachableStates", core["max_reachable_state_count"]),
-        ("MaximumFrontierDigits", core["max_frontier_digit_count"]),
-        ("MaximumFrontierCarries", core["max_frontier_carry_count"]),
-        ("ActiveDigitCount", core["active_digit_count"]),
-        ("ActiveCarryCount", core["active_carry_count"]),
+        ("TerminalLayer", core_terminal_layer),
+        ("PeakReachableStates", peak_reachable_states),
+        ("MaximumFrontierDigits", maximum_frontier_digits),
+        ("MaximumFrontierCarries", maximum_frontier_carries),
+        ("ActiveDigitCount", active_digit_count),
+        ("ActiveCarryCount", active_carry_count),
         ("DeletionAuditCount", sat_deletions + unsat_deletions),
         ("SatDeletionCount", sat_deletions),
         ("UnsatDeletionCount", unsat_deletions),
@@ -451,14 +590,14 @@ def render(artifact_dir: Path) -> str:
         ),
         (
             "ConcreteSatTheorem",
-            latex_texttt(claim_theorem(manifest, "delete_p0_c0_sat")),
+            latex_texttt(concrete_sat_theorem),
         ),
         ("PackedWidth", packed_width),
         ("PackedSlotWidth", slot_width),
         ("PackedConstraintCount", constraint_count),
         (
             "PackedLeanSeconds",
-            f"{require_number(packed_run.get('wall_seconds'), 'packed Lean wall seconds'):.2f}",
+            f"{packed_lean_seconds:.2f}",
         ),
         ("PackedLeanMaxRSS", f"{packed_max_rss / 1_000_000_000:.2f}\\,GB"),
         ("PackedTheorem", latex_texttt(packed_run["theorem"])),
