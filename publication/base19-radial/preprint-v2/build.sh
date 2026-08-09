@@ -15,7 +15,7 @@ if grep -Eq 'undefined citations|undefined references|Citation.*undefined|Refere
   echo "preprint build has undefined citations or references" >&2
   exit 1
 fi
-if grep -F 'Overfull \hbox' main.log >/dev/null; then
+if grep -Eq 'Overfull \\[hv]box' main.log; then
   echo "preprint build has an overfull box" >&2
   exit 1
 fi

@@ -238,3 +238,8 @@ def test_preprint_source_has_submission_metadata_and_trust_boxes() -> None:
     assert r"\newtcolorbox{nonclaim}" in source
     assert r"\hypersetup" in source
     assert "pdfauthor={8128}" in source
+
+
+def test_preprint_build_script_rejects_overfull_hboxes_and_vboxes() -> None:
+    source = (PREPRINT / "build.sh").read_text(encoding="utf-8")
+    assert r"Overfull \\[hv]box" in source

@@ -10,9 +10,10 @@ After the digest-pinned TeX base image is available in the local Docker cache,
 build the image and then the candidate without network access:
 
 ```sh
-docker build --network none -f publication/base19-radial/Dockerfile.paper \
+docker build --platform linux/amd64 --network none \
+  -f publication/base19-radial/Dockerfile.paper \
   -t base19-radial-paper publication/base19-radial
-docker run --rm --network none \
+docker run --rm --platform linux/amd64 --network none \
   -v "$PWD/publication/base19-radial/preprint-v2:/paper" \
   base19-radial-paper
 ```
@@ -24,7 +25,8 @@ references, overfull boxes, or an empty `main.pdf`.
 To check the required visual packages in the pinned image before building:
 
 ```sh
-docker run --rm --network none --entrypoint bash base19-radial-paper:latest -c \
+docker run --rm --platform linux/amd64 --network none --entrypoint bash \
+  base19-radial-paper:latest -c \
   'kpsewhich newtxtext.sty && kpsewhich tcolorbox.sty && kpsewhich tikz.sty'
 ```
 
