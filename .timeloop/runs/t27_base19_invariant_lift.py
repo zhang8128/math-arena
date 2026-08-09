@@ -16,6 +16,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from lychrel_invariant_certificate import (  # noqa: E402
+    InvariantCertificate,
+    LayerPredicate,
+    LinearAtom,
+    evaluate_predicate,
+)
 
 _EQUATIONS_CONTENT_SHA256 = (
     "ff79f31cbc55d7c463e6a14faedaad58d880509d5769e56b9a4bd06ebacd9040"
@@ -193,6 +199,21 @@ class FrontierCertificate:
     @cached_property
     def layers_by_number(self) -> dict[int, FrontierLayer]:
         return {layer.number: layer for layer in self.layers}
+
+
+@dataclass(frozen=True)
+class ObligationResult:
+    kind: str
+    layer: int
+    status: str
+    checked_count: int
+    counterexample: dict[str, dict[str, int]] | None = None
+
+
+@dataclass(frozen=True)
+class CertificateCheckResult:
+    status: str
+    obligations: tuple[ObligationResult, ...]
 
 
 def _parse_atom(payload: object) -> Atom:
@@ -577,6 +598,318 @@ def state_table_payload(layers: tuple[FrontierLayer, ...]) -> dict[str, object]:
             for layer in layers
         ]
     }
+
+
+def _predicate_mapping(
+    layer: FrontierLayer,
+    side: str,
+    predicate: LayerPredicate,
+) -> dict[str, str]:
+    original_to_canonical = _canonical_map(layer, side)
+    canonical_variables = tuple(original_to_canonical.values())
+    if predicate.variables != canonical_variables:
+        raise EvidenceError(
+            f"predicate scope differs from layer {layer.number} {side} frontier: "
+            f"expected={canonical_variables}, actual={predicate.variables}"
+        )
+    return {
+        canonical: original
+        for original, canonical in original_to_canonical.items()
+    }
+
+
+def check_initiation(
+    layer: FrontierLayer,
+    predicate: LayerPredicate,
+) -> ObligationResult:
+    """Check that every reachable state at the first cut satisfies a predicate."""
+    _predicate_mapping(layer, "output", predicate)
+    for state in layer.output_states:
+        assignment = canonicalize_state(layer, "output", state)
+        if not evaluate_predicate(predicate, assignment):
+            return ObligationResult(
+                kind="initiation",
+                layer=layer.number,
+                status="FAIL",
+                checked_count=layer.output_state_count,
+                counterexample={"output": assignment},
+            )
+    return ObligationResult(
+        kind="initiation",
+        layer=layer.number,
+        status="PASS",
+        checked_count=layer.output_state_count,
+    )
+
+
+def _local_z3_problem(
+    manifest: EquationManifest,
+    layer: FrontierLayer,
+) -> tuple[object, object, dict[str, object]]:
+    try:
+        import z3  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise EvidenceError("certificate obligations require z3-solver") from error
+    try:
+        equations = tuple(
+            manifest.by_provenance[provenance]
+            for provenance in layer.equation_provenances
+        )
+    except KeyError as error:
+        raise EvidenceError(f"layer references an unknown equation: {error.args[0]}") from error
+    names = sorted(
+        set(layer.input_variables)
+        | set(layer.output_variables)
+        | {variable for equation in equations for variable in equation.variables}
+    )
+    variables = {
+        name: z3.Int(
+            "t27_obligation_"
+            + str(layer.number).replace("-", "neg")
+            + "_"
+            + re.sub(r"[^A-Za-z0-9_]", "_", name)
+        )
+        for name in names
+    }
+    solver = z3.Solver()
+    for name, variable in variables.items():
+        if name.startswith("c:"):
+            solver.add(variable >= 0, variable <= 1)
+        else:
+            lower = 1 if re.fullmatch(r"digit:p\d+:f0:d0", name) else 0
+            solver.add(variable >= lower, variable < manifest.base)
+    for equation in equations:
+        solver.add(_z3_residual(z3, equation, variables, manifest.base) == 0)
+    return z3, solver, variables
+
+
+def _z3_atom(
+    z3: object,
+    atom: LinearAtom,
+    canonical_to_original: dict[str, str],
+    variables: dict[str, object],
+) -> object:
+    try:
+        total = sum(
+            coefficient * variables[canonical_to_original[name]]
+            for name, coefficient in atom.terms
+        )
+    except KeyError as error:
+        raise EvidenceError(
+            f"predicate atom references unknown variable: {error.args[0]}"
+        ) from error
+    if atom.relation == "eq":
+        return total == atom.constant
+    if atom.relation == "le":
+        return total <= atom.constant
+    if atom.relation == "congruent":
+        assert atom.modulus is not None
+        return (total - atom.constant) % atom.modulus == 0
+    raise EvidenceError(f"unsupported predicate relation: {atom.relation}")
+
+
+def _z3_predicate(
+    z3: object,
+    predicate: LayerPredicate,
+    canonical_to_original: dict[str, str],
+    variables: dict[str, object],
+) -> object:
+    return z3.Or(
+        *(
+            z3.And(
+                *(
+                    _z3_atom(z3, atom, canonical_to_original, variables)
+                    for atom in clause.atoms
+                )
+            )
+            for clause in predicate.clauses
+        )
+    )
+
+
+def _domain_size(names: Iterable[str], base: int) -> int:
+    result = 1
+    for name in names:
+        result *= 2 if name.startswith("c:") else base
+    return result
+
+
+def _lexicographic_model(
+    z3: object,
+    solver: object,
+    variables: dict[str, object],
+    ordered_names: tuple[str, ...],
+    base: int,
+) -> object:
+    status = solver.check()
+    if status == z3.unknown:
+        raise EvidenceError(f"obligation solver returned UNKNOWN: {solver.reason_unknown()}")
+    if status == z3.unsat:
+        raise EvidenceError("cannot canonicalize an UNSAT obligation")
+    for name in ordered_names:
+        domain = range(2) if name.startswith("c:") else range(base)
+        for value in domain:
+            solver.push()
+            solver.add(variables[name] == value)
+            trial = solver.check()
+            solver.pop()
+            if trial == z3.unknown:
+                raise EvidenceError(
+                    f"obligation minimization returned UNKNOWN: {solver.reason_unknown()}"
+                )
+            if trial == z3.sat:
+                solver.add(variables[name] == value)
+                break
+        else:
+            raise EvidenceError(f"obligation model has no value for {name}")
+    final = solver.check()
+    if final != z3.sat:
+        raise EvidenceError("canonical obligation assignments became inconsistent")
+    return solver.model()
+
+
+def _model_assignment(
+    model: object,
+    variables: dict[str, object],
+    canonical_to_original: dict[str, str],
+) -> dict[str, int]:
+    return {
+        canonical: model.eval(variables[original], model_completion=True).as_long()
+        for canonical, original in canonical_to_original.items()
+    }
+
+
+def check_consecution(
+    manifest: EquationManifest,
+    frontier: FrontierCertificate,
+    current: LayerPredicate,
+    following: LayerPredicate,
+) -> ObligationResult:
+    """Check every bounded local transfer, not only the reachable-state table."""
+    if following.layer != current.layer + 1:
+        raise EvidenceError("consecution predicates must name consecutive layers")
+    try:
+        transfer = frontier.layers_by_number[following.layer]
+    except KeyError as error:
+        raise EvidenceError(f"frontier omits transfer layer {following.layer}") from error
+    input_mapping = _predicate_mapping(transfer, "input", current)
+    output_mapping = _predicate_mapping(transfer, "output", following)
+    z3, solver, variables = _local_z3_problem(manifest, transfer)
+    solver.add(_z3_predicate(z3, current, input_mapping, variables))
+    solver.add(z3.Not(_z3_predicate(z3, following, output_mapping, variables)))
+    status = solver.check()
+    checked_count = _domain_size(transfer.input_variables, manifest.base)
+    if status == z3.unknown:
+        raise EvidenceError(f"consecution returned UNKNOWN: {solver.reason_unknown()}")
+    if status == z3.unsat:
+        return ObligationResult(
+            kind="consecution",
+            layer=following.layer,
+            status="PASS",
+            checked_count=checked_count,
+        )
+    ordered = tuple(dict.fromkeys((*transfer.input_variables, *transfer.output_variables)))
+    model = _lexicographic_model(z3, solver, variables, ordered, manifest.base)
+    return ObligationResult(
+        kind="consecution",
+        layer=following.layer,
+        status="FAIL",
+        checked_count=checked_count,
+        counterexample={
+            "input": _model_assignment(model, variables, input_mapping),
+            "output": _model_assignment(model, variables, output_mapping),
+        },
+    )
+
+
+def check_exclusion(
+    manifest: EquationManifest,
+    frontier: FrontierCertificate,
+    predicate: LayerPredicate,
+) -> ObligationResult:
+    """Check that the final predicate has no exact terminal local model."""
+    terminal_number = predicate.layer + 1
+    try:
+        terminal = frontier.layers_by_number[terminal_number]
+    except KeyError as error:
+        raise EvidenceError(f"frontier omits terminal layer {terminal_number}") from error
+    if terminal.output_variables:
+        raise EvidenceError("exclusion layer must have an empty output frontier")
+    input_mapping = _predicate_mapping(terminal, "input", predicate)
+    z3, solver, variables = _local_z3_problem(manifest, terminal)
+    solver.add(_z3_predicate(z3, predicate, input_mapping, variables))
+    status = solver.check()
+    checked_count = _domain_size(terminal.input_variables, manifest.base)
+    if status == z3.unknown:
+        raise EvidenceError(f"exclusion returned UNKNOWN: {solver.reason_unknown()}")
+    if status == z3.unsat:
+        return ObligationResult(
+            kind="exclusion",
+            layer=terminal.number,
+            status="PASS",
+            checked_count=checked_count,
+        )
+    model = _lexicographic_model(
+        z3,
+        solver,
+        variables,
+        terminal.input_variables,
+        manifest.base,
+    )
+    return ObligationResult(
+        kind="exclusion",
+        layer=terminal.number,
+        status="FAIL",
+        checked_count=checked_count,
+        counterexample={
+            "input": _model_assignment(model, variables, input_mapping),
+        },
+    )
+
+
+def check_certificate(
+    inputs: tuple[EquationManifest, FrontierCertificate],
+    certificate: InvariantCertificate,
+) -> CertificateCheckResult:
+    """Check initiation, universal local consecution, and terminal exclusion."""
+    manifest, frontier = inputs
+    if certificate.base != manifest.base or certificate.base != frontier.base:
+        raise EvidenceError("certificate base differs from frozen inputs")
+    if certificate.removed != frontier.removed:
+        raise EvidenceError("certificate removed coordinate differs from frozen input")
+    source_digests = dict(certificate.source_digests)
+    if source_digests != {
+        "equations": manifest.content_sha256,
+        "frontier": frontier.content_sha256,
+    }:
+        raise EvidenceError("certificate source digests differ from frozen inputs")
+    if not certificate.predicates:
+        raise EvidenceError("certificate contains no layer predicates")
+    obligations = []
+    first = certificate.predicates[0]
+    try:
+        first_layer = frontier.layers_by_number[first.layer]
+    except KeyError as error:
+        raise EvidenceError(f"frontier omits initiation layer {first.layer}") from error
+    initiation = check_initiation(first_layer, first)
+    obligations.append(initiation)
+    if initiation.status != "PASS":
+        return CertificateCheckResult("FAIL", tuple(obligations))
+    for current, following in zip(
+        certificate.predicates,
+        certificate.predicates[1:],
+        strict=False,
+    ):
+        consecution = check_consecution(manifest, frontier, current, following)
+        obligations.append(consecution)
+        if consecution.status != "PASS":
+            return CertificateCheckResult("FAIL", tuple(obligations))
+    exclusion = check_exclusion(manifest, frontier, certificate.predicates[-1])
+    obligations.append(exclusion)
+    return CertificateCheckResult(
+        "PASS" if exclusion.status == "PASS" else "FAIL",
+        tuple(obligations),
+    )
 
 
 def _same_addend_key(equation: Equation) -> tuple[tuple[str, str | int], ...]:

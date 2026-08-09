@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
 
 from lychrel_invariant_certificate import (  # noqa: E402
     Conjunction,
+    InvariantCertificate,
     LayerPredicate,
     LinearAtom,
     canonical_bytes,
@@ -21,8 +23,16 @@ from lychrel_invariant_certificate import (  # noqa: E402
     parse_certificate,
 )
 from t27_base19_invariant_lift import (  # noqa: E402
+    Atom,
+    Equation,
+    EquationManifest,
     EvidenceError,
+    FrontierCertificate,
+    FrontierLayer,
+    FrontierTransition,
     canonicalize_state,
+    check_certificate,
+    check_initiation,
     load_promoted_inputs,
     reproduce_structural_baseline,
     state_table_payload,
@@ -283,3 +293,179 @@ def test_state_table_payload_has_only_canonical_mathematical_content() -> None:
     assert [item["layer"] for item in payload["layers"]] == list(range(25, 33))
     assert set(payload["layers"][0]) == {"layer", "variables", "states"}
     assert len(payload["layers"][0]["states"]) == 20
+
+
+def _three_layer_obligation_fixture() -> tuple[
+    tuple[EquationManifest, FrontierCertificate],
+    InvariantCertificate,
+]:
+    transfer = Equation(
+        provenance="phase=0,n=0,column=1",
+        left=Atom(variable="p0:f1:d0"),
+        right=Atom(literal=1),
+        target=Atom(variable="p0:f1:d1"),
+        carry_in=None,
+        carry_out=None,
+    )
+    terminal = Equation(
+        provenance="phase=0,n=0,column=2",
+        left=Atom(variable="p0:f1:d1"),
+        right=Atom(literal=0),
+        target=Atom(literal=7),
+        carry_in=None,
+        carry_out=None,
+    )
+    manifest = EquationManifest(
+        content_sha256="a" * 64,
+        file_sha256="b" * 64,
+        topology_sha256="c" * 64,
+        base=19,
+        equations=(transfer, terminal),
+        fragment_lengths=((1, 2, 1),),
+    )
+    layers = (
+        FrontierLayer(
+            number=0,
+            equation_provenances=(),
+            input_variables=(),
+            output_variables=("digit:p0:f1:d0",),
+            input_state_count=1,
+            output_state_count=1,
+            local_model_count=1,
+            output_states_sha256="",
+            output_states=((6,),),
+            transitions=(FrontierTransition((), ((6,),)),),
+        ),
+        FrontierLayer(
+            number=1,
+            equation_provenances=(transfer.provenance,),
+            input_variables=("digit:p0:f1:d0",),
+            output_variables=("digit:p0:f1:d1",),
+            input_state_count=1,
+            output_state_count=1,
+            local_model_count=1,
+            output_states_sha256="",
+            output_states=((7,),),
+            transitions=(FrontierTransition((6,), ((7,),)),),
+        ),
+        FrontierLayer(
+            number=2,
+            equation_provenances=(terminal.provenance,),
+            input_variables=("digit:p0:f1:d1",),
+            output_variables=(),
+            input_state_count=1,
+            output_state_count=1,
+            local_model_count=1,
+            output_states_sha256="",
+            output_states=((),),
+            transitions=(FrontierTransition((7,), ((),)),),
+        ),
+    )
+    frontier = FrontierCertificate(
+        content_sha256="d" * 64,
+        equations_sha256=manifest.file_sha256,
+        provenances_sha256="e" * 64,
+        removed="fixture-removed",
+        base=19,
+        layers=layers,
+    )
+    certificate = InvariantCertificate(
+        schema="t27-invariant-certificate-v1",
+        base=19,
+        removed="fixture-removed",
+        source_digests=(
+            ("equations", manifest.content_sha256),
+            ("frontier", frontier.content_sha256),
+        ),
+        predicates=(
+            LayerPredicate(
+                0,
+                ("D0",),
+                (Conjunction((LinearAtom("eq", (("D0", 1),), 6),)),),
+            ),
+            LayerPredicate(
+                1,
+                ("D0",),
+                (Conjunction((LinearAtom("le", (("D0", 1),), 6),)),),
+            ),
+        ),
+        obligations=(),
+    )
+    return (manifest, frontier), certificate
+
+
+def test_checker_reports_the_first_bad_transition() -> None:
+    inputs, certificate = _three_layer_obligation_fixture()
+
+    result = check_certificate(inputs, certificate)
+
+    assert result.status == "FAIL"
+    assert result.obligations[-1].kind == "consecution"
+    assert result.obligations[-1].layer == 1
+    assert result.obligations[-1].counterexample == {
+        "input": {"D0": 6},
+        "output": {"D0": 7},
+    }
+
+
+def test_initiation_reports_the_first_reachable_counterexample() -> None:
+    (_, frontier), _ = _three_layer_obligation_fixture()
+    predicate = LayerPredicate(
+        0,
+        ("D0",),
+        (Conjunction((LinearAtom("eq", (("D0", 1),), 5),)),),
+    )
+
+    result = check_initiation(frontier.layers_by_number[0], predicate)
+
+    assert result.status == "FAIL"
+    assert result.counterexample == {"output": {"D0": 6}}
+    assert result.checked_count == 1
+
+
+def test_checker_reports_a_terminal_model_admitted_by_the_last_predicate() -> None:
+    inputs, certificate = _three_layer_obligation_fixture()
+    admitting = replace(
+        certificate,
+        predicates=(
+            certificate.predicates[0],
+            LayerPredicate(
+                1,
+                ("D0",),
+                (Conjunction((LinearAtom("eq", (("D0", 1),), 7),)),),
+            ),
+        ),
+    )
+
+    result = check_certificate(inputs, admitting)
+
+    assert result.status == "FAIL"
+    assert result.obligations[-1].kind == "exclusion"
+    assert result.obligations[-1].counterexample == {"input": {"D0": 7}}
+
+
+def test_checker_accepts_a_complete_three_layer_certificate() -> None:
+    (manifest, frontier), certificate = _three_layer_obligation_fixture()
+    terminal = replace(manifest.equations[-1], target=Atom(literal=8))
+    passing_manifest = replace(manifest, equations=(manifest.equations[0], terminal))
+    passing = replace(
+        certificate,
+        predicates=(
+            certificate.predicates[0],
+            LayerPredicate(
+                1,
+                ("D0",),
+                (Conjunction((LinearAtom("eq", (("D0", 1),), 7),)),),
+            ),
+        ),
+    )
+
+    result = check_certificate((passing_manifest, frontier), passing)
+
+    assert result.status == "PASS"
+    assert [obligation.kind for obligation in result.obligations] == [
+        "initiation",
+        "consecution",
+        "exclusion",
+    ]
+    assert all(obligation.status == "PASS" for obligation in result.obligations)
