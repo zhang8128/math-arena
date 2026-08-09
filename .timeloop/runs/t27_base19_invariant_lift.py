@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -219,6 +220,40 @@ class ObligationResult:
 class CertificateCheckResult:
     status: str
     obligations: tuple[ObligationResult, ...]
+
+
+def decide_gate_a(
+    *,
+    milestone_check: CertificateCheckResult,
+    milestone_compression: dict[str, object],
+    derivation_replay_valid: bool = True,
+    full_check: CertificateCheckResult | None = None,
+    full_compression: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Apply the sole fail-closed transition from Gate A to Gate B."""
+    if milestone_check.status != "PASS":
+        reason = "late_certificate_obligation_failure"
+    elif not derivation_replay_valid:
+        reason = "derivation_replay_failure"
+    elif milestone_compression.get("at_least_tenfold") is not True:
+        reason = "late_certificate_below_tenfold_compression"
+    elif full_check is None or full_compression is None:
+        reason = "full_certificate_not_built"
+    elif full_check.status != "PASS":
+        reason = "full_certificate_obligation_failure"
+    elif full_compression.get("at_least_tenfold") is not True:
+        reason = "full_certificate_below_tenfold_compression"
+    else:
+        return {
+            "status": "PASS",
+            "stop_reason": None,
+            "gate_b_authorized": True,
+        }
+    return {
+        "status": "STOP",
+        "stop_reason": reason,
+        "gate_b_authorized": False,
+    }
 
 
 @dataclass(frozen=True)
@@ -1679,3 +1714,98 @@ def reproduce_structural_baseline(
         "difference_relaxation": difference_relaxation,
         "terminal_deletions": terminal_deletions,
     }
+
+
+def _obligation_payload(obligation: ObligationResult) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "kind": obligation.kind,
+        "layer": obligation.layer,
+        "status": obligation.status,
+        "checked_count": obligation.checked_count,
+    }
+    if obligation.counterexample is not None:
+        payload["counterexample"] = obligation.counterexample
+    return payload
+
+
+def build_gate_a(root: Path) -> dict[str, object]:
+    """Build the deterministic achieved-boundary Gate A STOP record."""
+    manifest, frontier = load_promoted_inputs(Path(root))
+    late = synthesize_late_certificate((manifest, frontier))
+    if late.candidate is None:
+        raise EvidenceError("late synthesis STOP omitted its verified tail lemma")
+    if late.status != "STOP" or late.stop_reason is None:
+        raise EvidenceError("Gate A builder expected the frozen late STOP")
+    counts = [
+        frontier.layers_by_number[number].output_state_count
+        for number in range(25, 33)
+    ]
+    expected_counts = [20, 12, 12, 17, 16, 18, 18, 22]
+    if counts != expected_counts:
+        raise EvidenceError(f"late reachable-state counts changed: {counts}")
+    obligations = [_obligation_payload(item) for item in late.checked_obligations]
+    if any(item["status"] != "PASS" for item in obligations):
+        raise EvidenceError("tail lemma obligation changed before Gate A output")
+    return {
+        "schema": "t27-base19-invariant-lift-v1",
+        "status": "STOP",
+        "stop_reason": late.stop_reason,
+        "gate_b_authorized": False,
+        "base": 19,
+        "removed": frontier.removed,
+        "source_digests": {
+            "equations": manifest.content_sha256,
+            "frontier": frontier.content_sha256,
+            "provenances": frontier.provenances_sha256,
+        },
+        "grammar": {
+            "coefficients": list(GrammarLimits().coefficients),
+            "moduli": list(GrammarLimits().moduli),
+            "max_atoms_per_clause": GrammarLimits().max_atoms,
+            "max_clauses": GrammarLimits().max_clauses,
+        },
+        "milestone": {
+            "status": "STOP",
+            "layers": [25, 32],
+            "reachable_state_counts": counts,
+            "compression": late.compression,
+            "stop_layer": 31,
+            "stop_reason": late.stop_reason,
+        },
+        "tail_lemma": {
+            "status": "PASS",
+            "claim": (
+                "The 22 frozen reachable layer-32 states are covered by three "
+                "closed-grammar clauses, and their union has no exact model of "
+                "the terminal 12 equations."
+            ),
+            "predicate": late.candidate.to_payload(),
+            "obligation_status": "PASS",
+            "obligations": obligations,
+            "route_provenance": list(late.route_provenance),
+        },
+        "limitations": [
+            "The tail lemma relies on the promoted frontier to establish reachability.",
+            "No predicates for layers 25 through 31 were accepted.",
+            "The failed bounded search is not proof that no human-readable invariant exists.",
+            "No claim is made about another topology, another base, or an unbounded orbit.",
+            "Prism outputs supplied hypotheses only and are not mathematical premises.",
+            "The Lean bridge was not required for this achieved boundary.",
+        ],
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument("--gate-a-milestone", action="store_true")
+    modes.add_argument("--gate-a", action="store_true")
+    modes.add_argument("--final", action="store_true")
+    parser.parse_args(argv)
+    payload = build_gate_a(ROOT.parent)
+    sys.stdout.buffer.write(_canonical_source_bytes(payload))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

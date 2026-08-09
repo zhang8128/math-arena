@@ -25,6 +25,7 @@ from lychrel_invariant_certificate import (  # noqa: E402
 from t27_base19_invariant_lift import (  # noqa: E402
     Atom,
     CegisLayer,
+    CertificateCheckResult,
     Equation,
     EquationManifest,
     EvidenceError,
@@ -32,11 +33,14 @@ from t27_base19_invariant_lift import (  # noqa: E402
     FrontierLayer,
     FrontierTransition,
     GrammarLimits,
+    ObligationResult,
     PBRow,
+    build_gate_a,
     canonicalize_state,
     check_certificate,
     check_exclusion,
     check_initiation,
+    decide_gate_a,
     derive_cut_candidates,
     enumerate_atoms,
     load_promoted_inputs,
@@ -607,3 +611,57 @@ def test_late_synthesis_stops_without_claiming_grammar_impossibility() -> None:
     ]
     assert result.compression["at_least_tenfold"] is False
     assert "no_invariant_impossibility_claim" in result.route_provenance
+
+
+def test_gate_a_stops_when_late_certificate_is_too_large() -> None:
+    passing = CertificateCheckResult(
+        "PASS",
+        (ObligationResult("initiation", 25, "PASS", 20),),
+    )
+
+    result = decide_gate_a(
+        milestone_check=passing,
+        milestone_compression={"at_least_tenfold": False},
+    )
+
+    assert result == {
+        "status": "STOP",
+        "stop_reason": "late_certificate_below_tenfold_compression",
+        "gate_b_authorized": False,
+    }
+
+
+def test_gate_a_never_authorizes_gate_b_after_an_obligation_failure() -> None:
+    failing = CertificateCheckResult(
+        "FAIL",
+        (ObligationResult("consecution", 31, "FAIL", 1),),
+    )
+
+    result = decide_gate_a(
+        milestone_check=failing,
+        milestone_compression={"at_least_tenfold": True},
+    )
+
+    assert result["status"] == "STOP"
+    assert result["stop_reason"] == "late_certificate_obligation_failure"
+    assert result["gate_b_authorized"] is False
+
+
+def test_real_gate_a_record_stops_before_symbolic_claims() -> None:
+    record = build_gate_a(ROOT)
+
+    assert record["status"] == "STOP"
+    assert record["stop_reason"] == "backward_extension_layer_31_not_found"
+    assert record["gate_b_authorized"] is False
+    assert record["milestone"]["reachable_state_counts"] == [
+        20,
+        12,
+        12,
+        17,
+        16,
+        18,
+        18,
+        22,
+    ]
+    assert "symbolic_base_claim" not in record
+    assert record["tail_lemma"]["obligation_status"] == "PASS"
