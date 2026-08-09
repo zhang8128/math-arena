@@ -42,3 +42,26 @@ def test_lean_bv_citation_discloses_native_evaluation_boundary() -> None:
     ):
         assert required_fact in row
     assert "soundness reduces to the verified checker" not in row
+
+
+def test_generated_results_are_deterministic_and_bound_to_evidence(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "generated-results.tex"
+    subprocess.run(
+        (
+            sys.executable,
+            str(ARTIFACT / "scripts" / "render_preprint_v2_data.py"),
+            "--artifact-dir",
+            str(ARTIFACT),
+            "--output",
+            str(output),
+        ),
+        check=True,
+    )
+    assert output.read_bytes() == (PREPRINT / "generated-results.tex").read_bytes()
+    source = output.read_text(encoding="utf-8")
+    assert r"\newcommand{\PackedWidth}{4914}" in source
+    assert r"\newcommand{\PackedSlotWidth}{6}" in source
+    assert r"\newcommand{\PackedConstraintCount}{1233}" in source
+    assert r"\newcommand{\PackedLeanSeconds}{51.01}" in source
