@@ -146,7 +146,7 @@ def tex_without_ignored_regions(source: str) -> str:
             visible.append("\n" if stop < len(source) else "")
             index = stop + (stop < len(source))
             continue
-        if source.startswith(r"\verb", index):
+        if not is_escaped(source, index) and source.startswith(r"\verb", index):
             delimiter_index = index + len(r"\verb")
             if delimiter_index < len(source) and source[delimiter_index] == "*":
                 delimiter_index += 1
@@ -162,7 +162,7 @@ def tex_without_ignored_regions(source: str) -> str:
                 visible.append(" ")
                 index = stop + 1
                 continue
-        if source.startswith(r"\begin{", index):
+        if not is_escaped(source, index) and source.startswith(r"\begin{", index):
             name_stop = source.find("}", index + len(r"\begin{"))
             if name_stop != -1:
                 environment = source[index + len(r"\begin{") : name_stop]
@@ -236,61 +236,69 @@ def split_markdown_table_row(line: str) -> list[str] | None:
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return None
+    code_ranges = markdown_code_span_ranges(stripped)
     cells: list[str] = []
     current: list[str] = []
-    code_ticks = 0
+    code_index = 0
     index = 1
     while index < len(stripped) - 1:
+        while code_index < len(code_ranges) and index >= code_ranges[code_index][1]:
+            code_index += 1
+        in_code = (
+            code_index < len(code_ranges)
+            and code_ranges[code_index][0] <= index < code_ranges[code_index][1]
+        )
         char = stripped[index]
         if char == "\\" and index + 1 < len(stripped) - 1:
             current.extend((char, stripped[index + 1]))
             index += 2
             continue
-        if char == "`":
-            stop = index
-            while stop < len(stripped) - 1 and stripped[stop] == "`":
-                stop += 1
-            run = stop - index
-            if code_ticks == 0:
-                code_ticks = run
-            elif run == code_ticks:
-                code_ticks = 0
-            current.extend(stripped[index:stop])
-            index = stop
-            continue
-        if char == "|" and code_ticks == 0:
+        if char == "|" and not in_code:
             cells.append("".join(current).strip())
             current = []
         else:
             current.append(char)
         index += 1
-    if code_ticks:
-        raise ValueError("unterminated Markdown code span in table row")
     cells.append("".join(current).strip())
     return cells
 
 
-def markdown_code_spans(source: str) -> tuple[str, ...]:
-    spans: list[str] = []
+def markdown_code_span_ranges(source: str) -> tuple[tuple[int, int, str], ...]:
+    """Return CommonMark-like code spans closed by an exact-length tick run."""
+    spans: list[tuple[int, int, str]] = []
     index = 0
     while index < len(source):
         if source[index] != "`" or is_escaped(source, index):
             index += 1
             continue
-        stop = index
-        while stop < len(source) and source[stop] == "`":
-            stop += 1
-        ticks = source[index:stop]
-        closing = source.find(ticks, stop)
-        if closing == -1:
-            raise ValueError("unterminated Markdown code span")
-        spans.append(source[stop:closing].strip())
-        index = closing + len(ticks)
+        opener_stop = index
+        while opener_stop < len(source) and source[opener_stop] == "`":
+            opener_stop += 1
+        run_length = opener_stop - index
+        search = opener_stop
+        while True:
+            closer = source.find("`", search)
+            if closer == -1:
+                index = opener_stop
+                break
+            closer_stop = closer
+            while closer_stop < len(source) and source[closer_stop] == "`":
+                closer_stop += 1
+            if closer_stop - closer == run_length:
+                spans.append((index, closer_stop, source[opener_stop:closer]))
+                index = closer_stop
+                break
+            search = closer_stop
     return tuple(spans)
+
+
+def markdown_code_spans(source: str) -> tuple[str, ...]:
+    return tuple(content.strip() for _, _, content in markdown_code_span_ranges(source))
 
 
 def matrix_citation_keys(source: str) -> set[str]:
     keys: set[str] = set()
+    source = markdown_without_fenced_code(source)
     lines = source.splitlines()
     index = 0
     while index + 1 < len(lines):
@@ -350,23 +358,10 @@ def markdown_without_fenced_code(source: str) -> str:
 def markdown_without_code(source: str) -> str:
     source = markdown_without_fenced_code(source)
     visible = list(source)
-    index = 0
-    while index < len(source):
-        if source[index] != "`" or is_escaped(source, index):
-            index += 1
-            continue
-        stop = index
-        while stop < len(source) and source[stop] == "`":
-            stop += 1
-        ticks = source[index:stop]
-        closing = source.find(ticks, stop)
-        if closing == -1:
-            index = stop
-            continue
-        for masked in range(index, closing + len(ticks)):
+    for start, stop, _ in markdown_code_span_ranges(source):
+        for masked in range(start, stop):
             if visible[masked] != "\n":
                 visible[masked] = " "
-        index = closing + len(ticks)
     return "".join(visible)
 
 
@@ -443,25 +438,24 @@ def markdown_destination(target: str) -> str:
     return destination
 
 
-def repository_relative_matrix_paths(source: str) -> tuple[Path, ...]:
-    source = markdown_without_code(source)
-    if re.search(r"(?m)^ {0,3}\[[^\]\n]+\]:\s*\S+", source):
-        raise ValueError("reference-style Markdown links are unsupported")
-
+def markdown_local_paths(source: str) -> list[Path]:
     paths: list[Path] = []
     index = 0
     while index < len(source):
-        label_opener = index + 1 if source.startswith("![", index) else index
-        if source[label_opener : label_opener + 1] != "[":
+        if source.startswith("![", index) and not is_escaped(source, index):
+            label_opener = index + 1
+        elif source[index : index + 1] == "[" and not is_escaped(source, index):
+            label_opener = index
+        else:
             index += 1
             continue
         label_stop = consume_markdown_label(source, label_opener)
+        paths.extend(markdown_local_paths(source[label_opener + 1 : label_stop]))
         target_start = label_stop + 1
         if target_start < len(source) and source[target_start] == "[":
             raise ValueError("reference-style Markdown links are unsupported")
         if target_start >= len(source) or source[target_start] != "(":
-            index = label_stop + 1
-            continue
+            raise ValueError("reference-style Markdown links are unsupported")
         raw_target, index = consume_markdown_target(source, target_start)
         destination = markdown_destination(raw_target)
         parsed = urlsplit(destination)
@@ -473,7 +467,15 @@ def repository_relative_matrix_paths(source: str) -> tuple[Path, ...]:
         ):
             continue
         paths.append(Path(unquote(parsed.path)))
-    return tuple(paths)
+    return paths
+
+
+def repository_relative_matrix_paths(source: str) -> tuple[Path, ...]:
+    source = markdown_without_code(source)
+    container_prefix = r"(?: {0,3}>[ \t]?)* {0,3}"
+    if re.search(rf"(?m)^{container_prefix}\[[^\]\n]+\]:[ \t]*\S+", source):
+        raise ValueError("reference-style Markdown links are unsupported")
+    return tuple(markdown_local_paths(source))
 
 
 def render_preprint_data(
@@ -613,6 +615,16 @@ An escaped percent \% does not start a comment, so \cite{thirdKey} is real.
     assert tex_citation_keys(source) == {"firstKey", "secondKey", "thirdKey"}
 
 
+def test_tex_citation_parser_keeps_cites_after_escaped_verbatim_initiators() -> None:
+    source = r"""
+\\verb|literal text \cite{actuallyUsed}|
+\\begin{verbatim}
+\cite{alsoActuallyUsed}
+\\end{verbatim}
+"""
+    assert tex_citation_keys(source) == {"actuallyUsed", "alsoActuallyUsed"}
+
+
 def test_matrix_parser_uses_each_exact_citation_key_column_independently() -> None:
     matrix = r"""
 | Claim \| detail | Citation key | Notes |
@@ -630,6 +642,30 @@ This paragraph ends the first table.
 | `thirdKey` | A second audited source table |
 """
     assert matrix_citation_keys(matrix) == {"firstKey", "secondKey", "thirdKey"}
+
+
+def test_matrix_parser_ignores_fenced_fake_citation_tables() -> None:
+    matrix = """\
+```markdown
+| Claim | Citation key |
+| --- | --- |
+| Fenced fake table | `fencedGhost` |
+```
+
+| Claim | Citation key |
+| --- | --- |
+| Real table | `realKey` |
+"""
+    assert matrix_citation_keys(matrix) == {"realKey"}
+
+
+def test_matrix_parser_closes_code_spans_only_on_exact_tick_runs() -> None:
+    matrix = """\
+| Claim | Citation key |
+| --- | --- |
+| Mixed runs | `a `` still a` and `b` |
+"""
+    assert matrix_citation_keys(matrix) == {"b"}
 
 
 def test_every_repository_relative_matrix_artifact_path_resolves() -> None:
@@ -668,6 +704,18 @@ def test_matrix_path_audit_parses_links_and_images_only_outside_code() -> None:
     )
 
 
+def test_matrix_path_audit_handles_escaped_nested_and_mixed_tick_links() -> None:
+    matrix = r"""
+\[literal](../scripts/missing-escaped-label.py)
+[![alt](../missing-image.png)](https://example.test/outer)
+`a `` still a` [Artifact](../scripts/build_manifest.py) and `b`
+"""
+    assert repository_relative_matrix_paths(matrix) == (
+        Path("../missing-image.png"),
+        Path("../scripts/build_manifest.py"),
+    )
+
+
 @pytest.mark.parametrize(
     "matrix",
     (
@@ -676,6 +724,19 @@ def test_matrix_path_audit_parses_links_and_images_only_outside_code() -> None:
     ),
 )
 def test_matrix_path_audit_rejects_reference_style_links(matrix: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match="reference-style Markdown links are unsupported",
+    ):
+        repository_relative_matrix_paths(matrix)
+
+
+def test_matrix_path_audit_rejects_blockquoted_definitions_and_shortcuts() -> None:
+    matrix = """\
+> [build-script]: ../scripts/build_manifest.py "Builder"
+>
+> [build-script]
+"""
     with pytest.raises(
         ValueError,
         match="reference-style Markdown links are unsupported",
