@@ -67,6 +67,12 @@ for a \CoreEquationCount-equation subset.  A complete one-equation-deletion
 audit makes the latter computationally deletion-minimal.  Lean separately
 proves the generic implication from a closed empty frontier to
 unsatisfiability; the concrete frontier replays remain computational claims.
+For the exact \,\PackedWidth-bit packed encoding of the
+\CoreEquationCount-equation core, Lean also proves
+\PackedTheorem{} through \texttt{bv\_decide} and LRAT certificate checking.
+That concrete theorem uses a disclosed native certificate-evaluation axiom,
+and the integer-to-packed correspondence remains a paper proof rather than a
+formal Lean bridge.
 This bounded obstruction is not a theorem about the unbounded reverse-and-add
 process and does not establish a base-19 Lychrel number.
 \end{abstract}
@@ -621,16 +627,181 @@ formalizes the frontier certificates.
 
 \section{Reproducibility and limitations}
 \label{sec:reproducibility}
-The generated evidence macros are loaded from \texttt{generated-results.tex}.
+The evidence package follows the disclosure principle that computer-aided
+arguments should identify the role of computation and make the supporting
+code and data available for scrutiny \cite{lmsComputerAidedProofs}.  Here the
+roles are separated deliberately.  Python regenerates the finite instance,
+replays the exact frontiers and satisfying assignments, and audits the packed
+translation.  Lean~4.32.2 checks the generic frontier implication, one
+concrete satisfying neighbor, and the exact packed UNSAT proposition.  The
+generated values used in the paper are loaded from
+\texttt{preprint-v2/generated-results.tex}; its renderer rejects drift in the
+promoted hashes and in the generated packed source.
+
+The compact command record in \cref{app:reproducibility} gives two routes.
+The first regenerates both generated files and directly runs Lean on the
+packed theorem.  The second builds this PDF in the digest-pinned TeX Live
+image with an AMD64 platform and networking disabled.  The artifact-level
+commands \texttt{./publication/base19-radial/reproduce.sh quick} and
+\texttt{... reproduce.sh full} respectively perform the promoted replay and
+the substantially longer complete regeneration; the repository README
+describes their scope and prerequisites.
+
+The reported \PackedLeanSeconds-second time and \PackedLeanMaxRSS{} maximum
+resident set size describe one recorded run on the development machine.  They
+are not bounds, benchmarks, or promises for another host.  The full LRAT
+certificate and the generated \PackedWidth-bit proposition are intentionally
+not printed here: both are machine-oriented evidence, while their identities,
+generator, checker route, theorem name, and relevant hashes are recorded
+below.
+
+The limitations are logical as well as practical.  Concrete frontier closure
+and the full deletion audit are exact computational replays, not individual
+Lean proof terms.  Proposition~\ref{prop:packed-equivalence} is the
+unformalized integer-to-packed bridge.  The packed theorem contains the native
+certificate-evaluation axiom shown in \cref{sec:lean-lrat}.  Deletion
+minimality is relative to one frozen candidate and does not imply minimum
+cardinality, uniqueness, or any statement about indefinite iteration.
 
 \section{Related work and conclusion}
 \label{sec:conclusion}
-Related-work discussion and the conservative conclusion are deferred.
+Seal's reported base-17 construction and OEIS A060382 place this calculation
+within the historical study of reverse-and-add behavior
+\cite{brownSeal,oeisA060382}.  Brown's page is a transcription, and the OEIS
+entry itself labels the general sequence conjecturally and says only the
+base-two term is proved.  They are therefore provenance and motivation, never
+evidence for an equation, certificate, or theorem in this artifact.
+
+The radial computation belongs methodologically to bounded-interface
+constraint processing.  Freuder's width analysis exhibits the familiar
+linear dependence on problem size with exponential dependence on fixed
+width, while Dechter and Pearl describe clustering a constraint network into
+an acyclic structure for backtrack-free processing
+\cite{Freuder1990,DechterPearl1989}.  The present layers and transitions are
+defined directly and replayed from the frozen instance; those general results
+explain the tractability mechanism but do not certify this computation.
+
+The two computational routes also use different solver interfaces.  Z3's
+integer sort has mathematical-integer semantics, and its linear-integer
+arithmetic machinery uses cuts and branch-and-bound \cite{z3Arithmetic}; this
+route supplies exact replay but no solver proof object here.  In the SAT
+certificate lineage, DRAT-trim checks and trims expressive clausal proofs
+\cite{WetzlerHeuleHunt2014}; LRAT adds explicit hints intended to support a
+small efficient certified checker \cite{CruzFilipeEtAl2017}; and FRAT lets a
+solver communicate additional information to a later elaborator
+\cite{BaekCarneiroHeule2022}.  The achieved packed route is specifically
+CaDiCaL certificate search followed by Lean's LRAT checker, not a claim that
+this artifact emits every one of those formats \cite{cadical301}.
+
+Lean combines an interactive theorem prover with an extensible functional
+programming language \cite{deMouraUllrich2021}.  At the frozen Lean~4.32.2
+commit, its \texttt{bv\_decide} implementation reflects and bit-blasts the
+finite proposition, processes the LRAT result with a proved-sound checker,
+and uses native evaluation to construct the accepted equality proof
+\cite{leanBVDecide432}.  This explains both the gain over accepting a bare
+UNSAT answer and the explicitly larger trust boundary of the concrete
+theorem.
+
+In conclusion, exact replay establishes that the frozen
+\CoreEquationCount-equation bounded-integer core is computationally
+deletion-minimal within its \CandidateEquationCount-equation candidate.  For
+the separately generated exact six-bit encoding, Lean proves
+\PackedTheorem{}, namely that no \PackedWidth-bit assignment satisfies its
+\PackedConstraintCount{} constraints.  The final bounded result is therefore
+the UNSAT theorem for that exact packed proposition, qualified by the
+paper-level integer-to-packed bridge and by the disclosed native
+certificate-evaluation axiom; it is not a kernel-reduction-only theorem.
 
 \appendix
 \section{Reproducibility record}
 \label{app:reproducibility}
-This compact appendix will record theorem names, hashes, and commands.
+
+\subsection{Immutable identifiers}
+
+The three Lean declarations used in the assurance discussion are:
+\begin{itemize}[leftmargin=*,itemsep=1pt,topsep=3pt]
+  \item \nolinkurl{Base19Radial.unsat_of_closed_empty_frontier}
+        (generic frontier soundness);
+  \item \ConcreteSatTheorem{} (one promoted satisfying neighbor); and
+  \item \PackedTheorem{} (UNSAT for the packed core).
+\end{itemize}
+The checked satisfying neighbor removes
+\begin{center}
+  \KnownSatRemovedEquation.
+\end{center}
+The frozen equation-manifest SHA-256 is
+\begin{center}
+  \PackedManifestSha.
+\end{center}
+The promoted candidate-frontier, core-frontier, and complete deletion-audit
+SHA-256 values are, respectively,
+\begin{center}
+  \CandidateCertificateSha,\\[3pt]
+  \CoreCertificateSha,\\[3pt]
+  \DeletionAuditSha.
+\end{center}
+They identify:
+\begin{itemize}[leftmargin=*,itemsep=1pt,topsep=3pt]
+  \item \texttt{certificates/frontier.json};
+  \item \texttt{certificates/minimal-core-frontier.json}; and
+  \item \texttt{certificates/deletions.jsonl}.
+\end{itemize}
+The authoritative inventory is
+\begin{center}
+  \texttt{publication/base19-radial/SHA256SUMS}.
+\end{center}
+
+\subsection{Data generation and Lean check}
+
+From the repository root, regenerate the manuscript macros and the packed
+Lean source, then check the packed theorem under the toolchain pinned to
+Lean~4.32.2:
+{\small
+\begin{verbatim}
+uv run --frozen python \
+  publication/base19-radial/scripts/render_preprint_v2_data.py \
+  --artifact-dir publication/base19-radial \
+  --output publication/base19-radial/preprint-v2/generated-results.tex
+
+uv run --frozen python \
+  publication/base19-radial/scripts/render_lean_bv_core.py \
+  publication/base19-radial/instance/equations.json \
+  publication/base19-radial/lean/Base19Radial/Generated/CoreBV.lean
+
+cd publication/base19-radial/lean
+lake env lean Base19Radial/Generated/CoreBV.lean
+\end{verbatim}
+}
+The final command prints the exact native axiom dependency discussed in
+\cref{sec:lean-lrat}.  Regeneration emits the full \PackedWidth-bit
+conjunction to \texttt{CoreBV.lean}; this appendix records the command and
+identity instead of reproducing that source or its LRAT certificate.
+
+\subsection{Pinned offline PDF build}
+
+The Dockerfile pins the TeX Live image
+\begin{center}
+  \nolinkurl{ghcr.io/xu-cheng/texlive-full}
+\end{center}
+at the digest
+\begin{center}
+  \nolinkurl{sha256:1a2027fd03aa64455cf36c927c1dfccffc8fc8a3cb11012333be815f8b33e956}.
+\end{center}
+After that image is present locally, the exact AMD64, network-disabled build
+is:
+{\small
+\begin{verbatim}
+docker build --platform linux/amd64 --network none \
+  -f publication/base19-radial/Dockerfile.paper \
+  -t base19-radial-paper publication/base19-radial
+docker run --rm --platform linux/amd64 --network none \
+  -v "$PWD/publication/base19-radial/preprint-v2:/paper" \
+  base19-radial-paper
+\end{verbatim}
+}
+The container invokes \texttt{build.sh}, fixes the build epoch and timezone,
+and rejects unresolved citations, unresolved references, overfull boxes, or
+an empty PDF.
 
 \bibliographystyle{alpha}
 \bibliography{references}

@@ -86,6 +86,27 @@ def test_bibliography_contains_every_required_primary_source() -> None:
         assert f"{{{key}," in source
 
 
+def test_every_citation_key_is_defined_and_every_required_key_is_used() -> None:
+    tex = (PREPRINT / "main.tex").read_text(encoding="utf-8")
+    bib = (PREPRINT / "references.bib").read_text(encoding="utf-8")
+    defined = set(re.findall(r"@[A-Za-z]+\{([^,]+),", bib))
+    used = {
+        key.strip()
+        for group in re.findall(r"\\cite\{([^}]+)\}", tex)
+        for key in group.split(",")
+    }
+    assert used <= defined
+    assert {
+        "brownSeal",
+        "oeisA060382",
+        "deMouraUllrich2021",
+        "CruzFilipeEtAl2017",
+        "cadical301",
+        "z3Arithmetic",
+        "leanBVDecide432",
+    } <= used
+
+
 def test_lean_bv_citation_discloses_native_evaluation_boundary() -> None:
     source = (PREPRINT / "citation-matrix.md").read_text(encoding="utf-8")
     match = re.search(r"^\|.*\| `leanBVDecide432` \|$", source, flags=re.MULTILINE)
@@ -302,3 +323,17 @@ def test_preprint_explains_word_orientation_and_growth_boundary(
         "both source atoms are literal zero",
     ):
         assert phrase in text
+
+
+def test_preprint_reader_visible_reproducibility_identifiers(tmp_path: Path) -> None:
+    text = extracted_pdf_text(tmp_path)
+    for identifier in (
+        "Base19Radial.unsat_of_closed_empty_frontier",
+        "Base19Radial.deleteP0C0Sat",
+        "Base19Radial.packedMinimalCoreUnsat",
+        "18ca75da64c84859d2373ae3e61da81e3ac75a68a33af448b57220e23dfbfa9e",
+        "1ce1b3c59bd95264e5338f7fba5bdffa15fb7635917964980057615395cf138c",
+        "7635e7188197021cfc15cbad6d087f6fdbfa7a8bbfe4e4ed9b91a15a89498c67",
+        "0566f6e2025aec28fe0d2f824f1f6b343cf912e9191a9036629a2a1d4ef03325",
+    ):
+        assert identifier in text

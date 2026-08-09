@@ -4,7 +4,39 @@ This directory contains the unreleased candidate preprint.  It consumes the
 tracked `generated-results.tex` evidence macros and `references.bib`; it does
 not replace `../paper/main.pdf` or the released paper sources.
 
-## Rebuild
+The candidate reports the exact packed theorem
+`Base19Radial.packedMinimalCoreUnsat` under Lean 4.32.2.  Its frozen equation
+manifest is SHA-256
+`18ca75da64c84859d2373ae3e61da81e3ac75a68a33af448b57220e23dfbfa9e`.
+The theorem uses the native certificate-evaluation axiom recorded in
+`../LEAN-BV-CHECK.md`; the integer-to-packed bridge is generated and audited
+but not formalized in Lean.
+
+## Regenerate evidence-bound sources
+
+From the repository root:
+
+```sh
+uv run --frozen python \
+  publication/base19-radial/scripts/render_preprint_v2_data.py \
+  --artifact-dir publication/base19-radial \
+  --output publication/base19-radial/preprint-v2/generated-results.tex
+
+uv run --frozen python \
+  publication/base19-radial/scripts/render_lean_bv_core.py \
+  publication/base19-radial/instance/equations.json \
+  publication/base19-radial/lean/Base19Radial/Generated/CoreBV.lean
+
+cd publication/base19-radial/lean
+lake env lean Base19Radial/Generated/CoreBV.lean
+```
+
+The last command checks the packed theorem and prints its exact axiom report.
+The 51.01-second, 1,280,688,128-byte maximum-RSS record is one development-
+machine run, not a performance guarantee.  The broader artifact replay is
+documented in `../README.md`.
+
+## Build the PDF
 
 After the digest-pinned TeX base image is available in the local Docker cache,
 build the image and then the candidate without network access:
@@ -29,6 +61,18 @@ docker run --rm --platform linux/amd64 --network none --entrypoint bash \
   base19-radial-paper:latest -c \
   'kpsewhich newtxtext.sty && kpsewhich tcolorbox.sty && kpsewhich tikz.sty'
 ```
+
+Inspect the result from the repository root with:
+
+```sh
+pdfinfo publication/base19-radial/preprint-v2/main.pdf
+pdffonts publication/base19-radial/preprint-v2/main.pdf
+pdftotext publication/base19-radial/preprint-v2/main.pdf -
+```
+
+`citation-matrix.md` maps every external methodological or historical claim
+to a verified source and maps artifact-specific results to frozen repository
+paths.  `../SHA256SUMS` is the authoritative promoted-evidence inventory.
 
 The PDF is a candidate for review only.  Do not promote it over the released
 paper without explicit acceptance.
