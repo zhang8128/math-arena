@@ -23,59 +23,447 @@ CANDIDATE_CHECKSUM_PATHS = (
     "main.pdf",
 )
 
-BIBTEX_ENTRY = re.compile(
-    r"^[ \t]*@(?P<entry_type>[A-Za-z]+)[ \t\r\n]*[({][ \t\r\n]*"
-    r"(?P<key>[^,\s{}()]+)[ \t\r\n]*,",
-    flags=re.MULTILINE,
-)
 NON_ENTRY_BIBTEX_TYPES = {"comment", "preamble", "string"}
-MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]\n]*\]\(([^)\n]+)\)")
+VERBATIM_ENVIRONMENTS = {"Verbatim", "lstlisting", "minted", "verbatim", "verbatim*"}
+
+
+def is_escaped(source: str, index: int) -> bool:
+    backslashes = 0
+    index -= 1
+    while index >= 0 and source[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1
+
+
+def skip_percent_comment(source: str, index: int) -> int:
+    newline = source.find("\n", index)
+    return len(source) if newline == -1 else newline
+
+
+def skip_bibtex_space_and_comments(source: str, index: int, stop: int) -> int:
+    while index < stop:
+        if source[index].isspace():
+            index += 1
+        elif source[index] == "%" and not is_escaped(source, index):
+            index = skip_percent_comment(source, index)
+        else:
+            break
+    return index
+
+
+def consume_bibtex_directive(source: str, opener: int) -> int:
+    matching = {"(": ")", "{": "}"}
+    stack = [matching[source[opener]]]
+    index = opener + 1
+    quoted = False
+    while index < len(source):
+        char = source[index]
+        if char == "\\":
+            index += 2
+            continue
+        if quoted:
+            if char == '"':
+                quoted = False
+            index += 1
+            continue
+        if char == "%":
+            index = skip_percent_comment(source, index)
+            continue
+        if char == '"':
+            quoted = True
+            index += 1
+            continue
+        if char in matching:
+            stack.append(matching[char])
+        elif char == stack[-1]:
+            stack.pop()
+            if not stack:
+                return index + 1
+        index += 1
+    raise ValueError("unterminated BibTeX directive")
+
+
+def bibtex_key(source: str, body_start: int, body_stop: int) -> str:
+    index = skip_bibtex_space_and_comments(source, body_start, body_stop)
+    characters: list[str] = []
+    while index < body_stop:
+        char = source[index]
+        if char == "%" and not is_escaped(source, index):
+            index = skip_percent_comment(source, index)
+            continue
+        if char == ",":
+            break
+        characters.append(char)
+        index += 1
+    else:
+        raise ValueError("BibTeX entry has no key terminator")
+    key = "".join(characters).strip()
+    if re.fullmatch(r"[^,\s{}()]+", key) is None:
+        raise ValueError("BibTeX entry key is malformed")
+    return key
 
 
 def bibtex_entry_keys(source: str) -> tuple[str, ...]:
-    keys = tuple(
-        match.group("key")
-        for match in BIBTEX_ENTRY.finditer(source)
-        if match.group("entry_type").lower() not in NON_ENTRY_BIBTEX_TYPES
-    )
+    keys: list[str] = []
+    index = 0
+    while index < len(source):
+        if source[index] == "%" and not is_escaped(source, index):
+            index = skip_percent_comment(source, index)
+            continue
+        if source[index] != "@":
+            index += 1
+            continue
+        name_start = index + 1
+        name_stop = name_start
+        while name_stop < len(source) and source[name_stop].isalpha():
+            name_stop += 1
+        if name_stop == name_start:
+            index += 1
+            continue
+        opener = skip_bibtex_space_and_comments(source, name_stop, len(source))
+        if opener >= len(source) or source[opener] not in "({":
+            index += 1
+            continue
+        directive_stop = consume_bibtex_directive(source, opener)
+        entry_type = source[name_start:name_stop].lower()
+        if entry_type not in NON_ENTRY_BIBTEX_TYPES:
+            keys.append(bibtex_key(source, opener + 1, directive_stop - 1))
+        index = directive_stop
+
     duplicates = sorted(key for key, count in Counter(keys).items() if count > 1)
     if duplicates:
         raise ValueError(f"duplicate BibTeX entry keys: {', '.join(duplicates)}")
-    return keys
+    return tuple(keys)
+
+
+def tex_without_ignored_regions(source: str) -> str:
+    visible: list[str] = []
+    index = 0
+    while index < len(source):
+        if source[index] == "%" and not is_escaped(source, index):
+            stop = skip_percent_comment(source, index)
+            visible.append("\n" if stop < len(source) else "")
+            index = stop + (stop < len(source))
+            continue
+        if source.startswith(r"\verb", index):
+            delimiter_index = index + len(r"\verb")
+            if delimiter_index < len(source) and source[delimiter_index] == "*":
+                delimiter_index += 1
+            if (
+                delimiter_index < len(source)
+                and not source[delimiter_index].isspace()
+                and not source[delimiter_index].isalpha()
+            ):
+                delimiter = source[delimiter_index]
+                stop = source.find(delimiter, delimiter_index + 1)
+                if stop == -1:
+                    raise ValueError("unterminated TeX verb command")
+                visible.append(" ")
+                index = stop + 1
+                continue
+        if source.startswith(r"\begin{", index):
+            name_stop = source.find("}", index + len(r"\begin{"))
+            if name_stop != -1:
+                environment = source[index + len(r"\begin{") : name_stop]
+                if environment in VERBATIM_ENVIRONMENTS:
+                    closing = rf"\end{{{environment}}}"
+                    stop = source.find(closing, name_stop + 1)
+                    if stop == -1:
+                        raise ValueError(f"unterminated TeX {environment} environment")
+                    visible.append(" ")
+                    index = stop + len(closing)
+                    continue
+        visible.append(source[index])
+        index += 1
+    return "".join(visible)
+
+
+def consume_tex_group(source: str, index: int, opener: str, closer: str) -> tuple[str, int]:
+    if index >= len(source) or source[index] != opener:
+        raise ValueError(f"expected TeX {opener} group")
+    depth = 1
+    start = index + 1
+    index = start
+    while index < len(source):
+        if source[index] == "\\":
+            index += 2
+            continue
+        if source[index] == opener:
+            depth += 1
+        elif source[index] == closer:
+            depth -= 1
+            if depth == 0:
+                return source[start:index], index + 1
+        index += 1
+    raise ValueError(f"unterminated TeX {opener} group")
 
 
 def tex_citation_keys(source: str) -> set[str]:
-    groups = re.findall(
-        r"\\cite(?:\s*\[[^\]]*\]){0,2}\s*\{([^{}]+)\}",
-        source,
-    )
+    visible = tex_without_ignored_regions(source)
+    groups: list[str] = []
+    index = 0
+    while index < len(visible):
+        if visible[index] != "\\":
+            index += 1
+            continue
+        command_start = index + 1
+        if command_start >= len(visible) or not visible[command_start].isalpha():
+            index += 2
+            continue
+        command_stop = command_start
+        while command_stop < len(visible) and visible[command_stop].isalpha():
+            command_stop += 1
+        command = visible[command_start:command_stop]
+        index = command_stop
+        if command != "cite":
+            continue
+        while index < len(visible) and visible[index].isspace():
+            index += 1
+        for _ in range(2):
+            if index >= len(visible) or visible[index] != "[":
+                break
+            _, index = consume_tex_group(visible, index, "[", "]")
+            while index < len(visible) and visible[index].isspace():
+                index += 1
+        if index < len(visible) and visible[index] == "{":
+            group, index = consume_tex_group(visible, index, "{", "}")
+            groups.append(group)
     return {key.strip() for group in groups for key in group.split(",") if key.strip()}
+
+
+def split_markdown_table_row(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    cells: list[str] = []
+    current: list[str] = []
+    code_ticks = 0
+    index = 1
+    while index < len(stripped) - 1:
+        char = stripped[index]
+        if char == "\\" and index + 1 < len(stripped) - 1:
+            current.extend((char, stripped[index + 1]))
+            index += 2
+            continue
+        if char == "`":
+            stop = index
+            while stop < len(stripped) - 1 and stripped[stop] == "`":
+                stop += 1
+            run = stop - index
+            if code_ticks == 0:
+                code_ticks = run
+            elif run == code_ticks:
+                code_ticks = 0
+            current.extend(stripped[index:stop])
+            index = stop
+            continue
+        if char == "|" and code_ticks == 0:
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    if code_ticks:
+        raise ValueError("unterminated Markdown code span in table row")
+    cells.append("".join(current).strip())
+    return cells
+
+
+def markdown_code_spans(source: str) -> tuple[str, ...]:
+    spans: list[str] = []
+    index = 0
+    while index < len(source):
+        if source[index] != "`" or is_escaped(source, index):
+            index += 1
+            continue
+        stop = index
+        while stop < len(source) and source[stop] == "`":
+            stop += 1
+        ticks = source[index:stop]
+        closing = source.find(ticks, stop)
+        if closing == -1:
+            raise ValueError("unterminated Markdown code span")
+        spans.append(source[stop:closing].strip())
+        index = closing + len(ticks)
+    return tuple(spans)
 
 
 def matrix_citation_keys(source: str) -> set[str]:
     keys: set[str] = set()
-    in_citation_table = False
-    for line in source.splitlines():
-        if not line.startswith("|"):
+    lines = source.splitlines()
+    index = 0
+    while index + 1 < len(lines):
+        header = split_markdown_table_row(lines[index])
+        separator = split_markdown_table_row(lines[index + 1])
+        if (
+            header is None
+            or separator is None
+            or len(header) != len(separator)
+            or not all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator)
+        ):
+            index += 1
             continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if cells[-1] in {"Citation key", "Citation"}:
-            in_citation_table = True
-            continue
-        if not in_citation_table or re.fullmatch(r":?-+:?", cells[-1]):
-            continue
-        keys.update(
-            key
-            for key in re.findall(r"`([^`]+)`", cells[-1])
-            if re.fullmatch(r"[A-Za-z][A-Za-z0-9:._-]*", key)
-        )
+        citation_columns = [column for column, name in enumerate(header) if name == "Citation key"]
+        if len(citation_columns) > 1:
+            raise ValueError("Markdown table has duplicate Citation key columns")
+        citation_column = citation_columns[0] if citation_columns else None
+        index += 2
+        while index < len(lines):
+            row = split_markdown_table_row(lines[index])
+            if row is None or len(row) != len(header):
+                break
+            if citation_column is not None:
+                keys.update(
+                    key
+                    for key in markdown_code_spans(row[citation_column])
+                    if re.fullmatch(r"[A-Za-z][A-Za-z0-9:._-]*", key)
+                )
+            index += 1
     return keys
 
 
+def markdown_without_fenced_code(source: str) -> str:
+    visible: list[str] = []
+    fence_char: str | None = None
+    fence_length = 0
+    for line in source.splitlines(keepends=True):
+        match = re.match(r" {0,3}(`{3,}|~{3,})", line)
+        if fence_char is None and match is not None:
+            fence_char = match.group(1)[0]
+            fence_length = len(match.group(1))
+            visible.append("\n" if line.endswith("\n") else "")
+            continue
+        if fence_char is not None:
+            closing = re.match(rf" {{0,3}}{re.escape(fence_char)}{{{fence_length},}}\s*$", line)
+            if closing is not None:
+                fence_char = None
+                fence_length = 0
+            visible.append("\n" if line.endswith("\n") else "")
+            continue
+        visible.append(line)
+    if fence_char is not None:
+        raise ValueError("unterminated Markdown fenced code block")
+    return "".join(visible)
+
+
+def markdown_without_code(source: str) -> str:
+    source = markdown_without_fenced_code(source)
+    visible = list(source)
+    index = 0
+    while index < len(source):
+        if source[index] != "`" or is_escaped(source, index):
+            index += 1
+            continue
+        stop = index
+        while stop < len(source) and source[stop] == "`":
+            stop += 1
+        ticks = source[index:stop]
+        closing = source.find(ticks, stop)
+        if closing == -1:
+            index = stop
+            continue
+        for masked in range(index, closing + len(ticks)):
+            if visible[masked] != "\n":
+                visible[masked] = " "
+        index = closing + len(ticks)
+    return "".join(visible)
+
+
+def consume_markdown_label(source: str, opener: int) -> int:
+    depth = 1
+    index = opener + 1
+    while index < len(source):
+        if source[index] == "\\":
+            index += 2
+            continue
+        if source[index] == "[":
+            depth += 1
+        elif source[index] == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise ValueError("unterminated Markdown link label")
+
+
+def consume_markdown_target(source: str, opener: int) -> tuple[str, int]:
+    depth = 1
+    quoted: str | None = None
+    angled = False
+    index = opener + 1
+    while index < len(source):
+        char = source[index]
+        if char == "\\":
+            index += 2
+            continue
+        if angled:
+            if char == ">":
+                angled = False
+        elif quoted is not None:
+            if char == quoted:
+                quoted = None
+        elif char == "<":
+            angled = True
+        elif char in "\"'" and (index == opener + 1 or source[index - 1].isspace()):
+            quoted = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return source[opener + 1 : index], index + 1
+        index += 1
+    raise ValueError("unterminated Markdown inline link")
+
+
+def markdown_destination(target: str) -> str:
+    target = target.strip()
+    if not target:
+        raise ValueError("Markdown inline link has no destination")
+    if target.startswith("<"):
+        stop = target.find(">", 1)
+        if stop == -1:
+            raise ValueError("unterminated angle-bracket Markdown destination")
+        destination = target[1:stop]
+        remainder = target[stop + 1 :].strip()
+    else:
+        match = re.match(r"\S+", target)
+        assert match is not None
+        destination = match.group(0)
+        remainder = target[match.end() :].strip()
+    if remainder and not (
+        len(remainder) >= 2
+        and (
+            (remainder[0] == remainder[-1] and remainder[0] in "\"'")
+            or (remainder[0] == "(" and remainder[-1] == ")")
+        )
+    ):
+        raise ValueError("unsupported Markdown inline-link title")
+    return destination
+
+
 def repository_relative_matrix_paths(source: str) -> tuple[Path, ...]:
+    source = markdown_without_code(source)
+    if re.search(r"(?m)^ {0,3}\[[^\]\n]+\]:\s*\S+", source):
+        raise ValueError("reference-style Markdown links are unsupported")
+
     paths: list[Path] = []
-    for raw_destination in MARKDOWN_LINK.findall(source):
-        destination = raw_destination.split(maxsplit=1)[0]
+    index = 0
+    while index < len(source):
+        label_opener = index + 1 if source.startswith("![", index) else index
+        if source[label_opener : label_opener + 1] != "[":
+            index += 1
+            continue
+        label_stop = consume_markdown_label(source, label_opener)
+        target_start = label_stop + 1
+        if target_start < len(source) and source[target_start] == "[":
+            raise ValueError("reference-style Markdown links are unsupported")
+        if target_start >= len(source) or source[target_start] != "(":
+            index = label_stop + 1
+            continue
+        raw_target, index = consume_markdown_target(source, target_start)
+        destination = markdown_destination(raw_target)
         parsed = urlsplit(destination)
         if (
             parsed.scheme
@@ -125,9 +513,7 @@ def redigest(payload: dict[str, object]) -> dict[str, object]:
     unsigned = dict(payload)
     unsigned.pop("content_sha256", None)
     payload["content_sha256"] = hashlib.sha256(
-        (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode(
-            "utf-8"
-        )
+        (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     ).hexdigest()
     return payload
 
@@ -165,6 +551,28 @@ This prose mentions `incidentalKey`, but it is not a bibliography entry.
         bibtex_entry_keys(source + "\n@book{firstKey, title = {Duplicate}}\n")
 
 
+def test_bibtex_parser_consumes_directives_comments_quotes_and_escapes() -> None:
+    source = r"""
+% @article{percentCommentGhost, title = {Not an entry}}
+@comment{
+  This entire balanced body is ignored, including nested {braces},
+  a quoted "closing ) delimiter", and an entry-looking line:
+  @article{nestedDirectiveGhost, title = {Not an entry}}
+}
+@string{journalName = "A value with an escaped quote \" and a } character"}
+@preamble("A parenthesized value with an escaped quote \" and ) character")
+@article{firstKey,
+  title = {A {nested} title with an escaped brace \} and 100\% coverage},
+  note = "A quoted comma, brace }, and escaped quote \" stay in the body"
+}
+@misc(
+  secondKey,
+  title = {A parenthesized entry with (nested parentheses)}
+)
+"""
+    assert bibtex_entry_keys(source) == ("firstKey", "secondKey")
+
+
 def test_defined_used_and_matrix_citation_key_sets_are_exactly_equal() -> None:
     tex = (PREPRINT / "main.tex").read_text(encoding="utf-8")
     bib = (PREPRINT / "references.bib").read_text(encoding="utf-8")
@@ -182,11 +590,46 @@ def test_citation_parsers_handle_groups_without_incidental_code_spans() -> None:
         "secondKey",
     }
     matrix = """\
-| Claim with `incidentalKey` and `scripts/not-a-citation.py` | Citation |
+| Claim with `incidentalKey` and `scripts/not-a-citation.py` | Citation key |
 | --- | --- |
 | Supported by two sources | `firstKey`, `secondKey` plus artifact evidence |
 """
     assert matrix_citation_keys(matrix) == {"firstKey", "secondKey"}
+
+
+def test_tex_citation_parser_ignores_comments_verbs_and_verbatim_environments() -> None:
+    source = r"""
+Real citations \cite{firstKey, secondKey}.
+% \cite{percentCommentGhost}
+An escaped percent \% does not start a comment, so \cite{thirdKey} is real.
+\verb|\cite{verbGhost}| and \verb*+\cite{starVerbGhost}+ are code.
+\begin{verbatim}
+\cite{verbatimGhost}
+\end{verbatim}
+\begin{lstlisting}
+\cite{listingGhost}
+\end{lstlisting}
+"""
+    assert tex_citation_keys(source) == {"firstKey", "secondKey", "thirdKey"}
+
+
+def test_matrix_parser_uses_each_exact_citation_key_column_independently() -> None:
+    matrix = r"""
+| Claim \| detail | Citation key | Notes |
+| --- | :---: | --- |
+| Claim with `code | pipe` | `firstKey`, `secondKey` | `notesGhost` |
+
+This paragraph ends the first table.
+
+| Citation | Other |
+| --- | --- |
+| `laterTableGhost` | `otherGhost` |
+
+| Citation key | Claim |
+| --- | --- |
+| `thirdKey` | A second audited source table |
+"""
+    assert matrix_citation_keys(matrix) == {"firstKey", "secondKey", "thirdKey"}
 
 
 def test_every_repository_relative_matrix_artifact_path_resolves() -> None:
@@ -206,9 +649,38 @@ def test_matrix_path_audit_ignores_nonlinks_and_external_links() -> None:
 [External source](https://example.test/source) and [section](#scope) are not artifacts.
 [Artifact](../scripts/build_manifest.py) is repository-relative.
 """
+    assert repository_relative_matrix_paths(matrix) == (Path("../scripts/build_manifest.py"),)
+
+
+def test_matrix_path_audit_parses_links_and_images_only_outside_code() -> None:
+    matrix = """\
+`[inline-code fake](../scripts/missing-inline.py)`
+```markdown
+[fenced-code fake](../scripts/missing-fenced.py)
+```
+[Artifact](../scripts/build_manifest.py#entry "Builder")
+![Artifact image](../scripts/build_manifest.py "Builder image")
+[External](https://example.test/path#fragment "External title")
+"""
     assert repository_relative_matrix_paths(matrix) == (
         Path("../scripts/build_manifest.py"),
+        Path("../scripts/build_manifest.py"),
     )
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    (
+        "[Builder][build-script]\n",
+        '[build-script]: ../scripts/build_manifest.py "Builder"\n',
+    ),
+)
+def test_matrix_path_audit_rejects_reference_style_links(matrix: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match="reference-style Markdown links are unsupported",
+    ):
+        repository_relative_matrix_paths(matrix)
 
 
 def test_cadical_citation_matches_the_pinned_lean_binary(tmp_path: Path) -> None:
@@ -485,9 +957,11 @@ def test_assurance_figure_follows_section_intro_in_pdf_page_order(
     figure_pages = [page for page in pages if "Exact Z3 frontier replay" in page]
     assert len(figure_pages) == 1
     page = figure_pages[0]
-    assert page.index("7 Assurance ladder") < page.index(
-        "The preceding distinctions can be arranged"
-    ) < page.index("Exact Z3 frontier replay")
+    assert (
+        page.index("7 Assurance ladder")
+        < page.index("The preceding distinctions can be arranged")
+        < page.index("Exact Z3 frontier replay")
+    )
 
 
 def test_preprint_explains_word_orientation_and_growth_boundary(
@@ -533,10 +1007,7 @@ def test_candidate_pdf_and_local_checksums_are_current() -> None:
 
 
 def test_offline_build_lead_in_stays_with_command_block(tmp_path: Path) -> None:
-    pages = [
-        " ".join(page.split())
-        for page in extracted_pdf_text(tmp_path).split("\f")
-    ]
+    pages = [" ".join(page.split()) for page in extracted_pdf_text(tmp_path).split("\f")]
     assert any(
         "the exact AMD64, network-disabled build is:" in page
         and "docker build --platform linux/amd64 --network none" in page
