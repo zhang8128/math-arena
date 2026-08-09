@@ -168,9 +168,14 @@ def tex_without_ignored_regions(source: str) -> str:
                 environment = source[index + len(r"\begin{") : name_stop]
                 if environment in VERBATIM_ENVIRONMENTS:
                     closing = rf"\end{{{environment}}}"
-                    stop = source.find(closing, name_stop + 1)
-                    if stop == -1:
-                        raise ValueError(f"unterminated TeX {environment} environment")
+                    search_from = name_stop + 1
+                    while True:
+                        stop = source.find(closing, search_from)
+                        if stop == -1:
+                            raise ValueError(f"unterminated TeX {environment} environment")
+                        if not is_escaped(source, stop):
+                            break
+                        search_from = stop + 1
                     visible.append(" ")
                     index = stop + len(closing)
                     continue
@@ -623,6 +628,17 @@ def test_tex_citation_parser_keeps_cites_after_escaped_verbatim_initiators() -> 
 \\end{verbatim}
 """
     assert tex_citation_keys(source) == {"actuallyUsed", "alsoActuallyUsed"}
+
+
+def test_tex_citation_parser_ignores_escaped_verbatim_terminators() -> None:
+    source = r"""
+\begin{verbatim}
+\\end{verbatim}
+\cite{stillInside}
+\end{verbatim}
+\cite{after}
+"""
+    assert tex_citation_keys(source) == {"after"}
 
 
 def test_matrix_parser_uses_each_exact_citation_key_column_independently() -> None:
