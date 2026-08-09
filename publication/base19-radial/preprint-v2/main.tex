@@ -11,6 +11,7 @@
 \usepackage{xcolor}
 \usepackage{tcolorbox}
 \usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
 \usepackage[colorlinks=true,linkcolor=InkNavy,citecolor=MutedTeal,urlcolor=MutedTeal]{hyperref}
 \usepackage[nameinlink,capitalise]{cleveref}
 
@@ -48,6 +49,9 @@
 
 \input{generated-results.tex}
 
+\newcommand{\Candidate}{\ensuremath{\mathcal{C}}}
+\newcommand{\Core}{\ensuremath{\mathcal{C}^{\circ}}}
+
 \title{A Proof-Producing Base-19 Obstruction in a Reverse-and-Add Constraint System}
 \author{8128}
 \date{August 2026}
@@ -56,10 +60,15 @@
 \maketitle
 
 \begin{abstract}
-This is a buildable preprint shell for a bounded base-19 constraint-system
-study.  The mathematical narrative, diagrams, and detailed assurance analysis
-are intentionally deferred to subsequent drafting tasks.  This candidate does
-not make a claim about an unbounded reverse-and-add process.
+We study one frozen, finite constraint system extracted from a six-phase
+reverse-and-add topology in base~\BaseValue.  Exact radial-frontier replay
+ends in the empty set for a \CandidateEquationCount-equation candidate and
+for a \CoreEquationCount-equation subset.  A complete one-equation-deletion
+audit makes the latter computationally deletion-minimal.  Lean separately
+proves the generic implication from a closed empty frontier to
+unsatisfiability; the concrete frontier replays remain computational claims.
+This bounded obstruction is not a theorem about the unbounded reverse-and-add
+process and does not establish a base-19 Lychrel number.
 \end{abstract}
 
 \tableofcontents
@@ -67,21 +76,283 @@ not make a claim about an unbounded reverse-and-add process.
 
 \section{Orientation}
 \label{sec:orientation}
-This section will introduce the bounded problem and its finite scope.
+
+For a base-$b$ numeral, a \emph{reverse-and-add step} adds the represented
+integer to the integer represented by the reversed digit word.  Reversal
+couples digits at opposite ends, whereas carrying couples adjacent columns.
+The elementary operation therefore becomes a globally coupled system when
+several steps are required to have a prescribed repeating shape.
+
+\begin{example}[A decimal step]
+Take the two-digit decimal word $47$.  Reversing and adding gives
+\[
+  \begin{array}{r}
+      47\\[-2pt]
+    + 74\\ \hline
+     121
+  \end{array}
+  \qquad\text{since}\qquad
+  \begin{aligned}
+    7+4+0 &= 1+10\cdot 1,\\
+    4+7+1 &= 2+10\cdot 1,\\
+    0+0+1 &= 1+10\cdot 0.
+  \end{aligned}
+\]
+The three equalities are the units, tens, and new leading column.  They also
+show why zero boundary atoms and explicit carry variables are convenient:
+the same equation describes every column.
+\end{example}
+
+The topology studied here was prompted by David Seal's reported period-six,
+self-similar base-17 construction, preserved in Brown's account
+\cite{brownSeal}.  OEIS A060382 records conjectural least starts of
+palindrome-free reverse-and-add sequences by base and cautions that only its
+base-two entry is proved \cite{oeisA060382}.  These sources provide motivation
+and provenance only.  Neither supplies a premise for the finite base-19
+calculation below, and no claim of novelty or resolution of the OEIS entry is
+made.
+
+\begin{keyidea}
+The question answered here is deliberately finite: does one explicitly
+listed family of bounded digit-and-carry equations have a solution?  Opposite
+columns are processed together, leaving only a small radial frontier between
+the processed exterior and the unprocessed center.
+\end{keyidea}
 
 \section{The frozen base-19 system}
 \label{sec:frozen-system}
-This section will define the frozen candidate and its retained core.
+
+Set $b=\BaseValue$.  Every digit variable has domain
+$D=\{0,1,\ldots,18\}$, every carry variable has domain $K=\{0,1\}$, and
+the leading digit of each phase is restricted to $D\setminus\{0\}$.  Literal
+atoms are fixed integers, not variables.  At phase $p$ and column $k$, write
+$\ell_{p,k}$ and $r_{p,k}$ for the source atoms met from the two ends,
+$t_{p,k}$ for the target atom, and $c_{p,k-1},c_{p,k}$ for the incoming and
+outgoing carries.  A missing end atom or boundary carry is the literal zero.
+The exact column constraint is
+\begin{equation}
+  \ell_{p,k}+r_{p,k}+c_{p,k-1}
+  =t_{p,k}+19c_{p,k}.
+  \label{eq:base19-column}
+\end{equation}
+Thus every symbol and every domain in \cref{eq:base19-column} is an ordinary
+bounded integer; modular arithmetic enters only in the later packed encoding.
+
+There are six phases $p\in\{0,1,\ldots,5\}$.  Each phase word has three
+variable blocks.  Their lengths are
+\[
+  (26,25,31) \quad\text{for }p=0,
+  \qquad
+  (29,23,31) \quad\text{for }p=1,\ldots,5.
+\]
+For $n\geq 0$, insert a constant run of length $n$ between consecutive
+blocks.  The two inserted digits are $(0,18)$ for phases $0,2,3,4,5$ and
+$(18,0)$ for phase $1$.  Denote the resulting word by $W_p(n)$.  For
+$p<5$, phase $p$ imposes the column equations taking $W_p(0)$ to
+$W_{p+1}(0)$.  Phase $5$ takes $W_5(0)$ to $W_0(1)$; this is the single
+growth step that closes the six-phase cycle.
+
+Only two exterior coordinate bands from each full addition are retained.
+They are
+\begin{align*}
+  p=0 &: \quad 0\text{--}33 \ \text{and}\ 48\text{--}82,\\
+  p=1,2,3,4 &: \quad 0\text{--}33 \ \text{and}\ 49\text{--}82,\\
+  p=5 &: \quad 0\text{--}33 \ \text{and}\ 49\text{--}83.
+\end{align*}
+The builder then omits \texttt{phase=5,n=0,column=82}.  The remaining
+equations, in their canonical manifest order, form the frozen candidate
+$\Candidate$.  It has exactly \CandidateEquationCount{} equations over
+\ActiveDigitCount{} active digit variables and \ActiveCarryCount{} active
+carry variables.  Each equation carries a provenance label of the form
+\texttt{phase=p,n=0,column=k}; the manifest also fixes every literal,
+variable name, and carry endpoint.
+
+Finally let
+\[
+  e_\star=\text{\RemovedCoreEquation},
+  \qquad
+  \Core=\Candidate\setminus\{e_\star\}.
+\]
+Consequently $\Core$ contains \CoreEquationCount{} equations.  This removal
+must not be confused with the earlier phase-5 omission used to define the
+candidate itself.  The three objects used below are therefore: the
+\CandidateEquationCount-equation candidate $\Candidate$, its
+\CoreEquationCount-equation subset $\Core$, and the complete audit of every
+single-equation deletion of $\Candidate$.
 
 \section{Radial decomposition}
 \label{sec:radial-decomposition}
-This section will describe frontier states and the generic soundness result.
+
+The retained columns are paired from the outside toward the center across all
+six phases.  The promoted certificate stores \RadialLayerCount{} atomic
+layers, labeled $-1,0,\ldots,\TerminalLayer$.  The label $-1$ is a
+one-equation bootstrap layer.  For cleaner notation here, merge that
+bootstrap with stored layer $0$ and call the result $L_0$; for
+$1\leq i\leq 33$, let $L_i$ be stored layer $i$.  This harmless coarsening
+gives the 34 transfers shown in \cref{fig:radial-frontier}.
+
+For a set of equations $E$, let $\operatorname{Var}(E)$ be its variables.
+After processing through $L_i$, the live interface is the canonically sorted
+list
+\begin{equation}
+  I_i = \operatorname{Var}(L_0\cup\cdots\cup L_i)
+  \cap \operatorname{Var}(L_{i+1}\cup\cdots\cup L_{33}),
+  \qquad I_{-1}=().
+  \label{eq:live-interface}
+\end{equation}
+A state on $I_i$ is a domain-respecting tuple in that fixed order.  Put
+$H_i=\operatorname{Var}(L_i)\setminus(I_{i-1}\cup I_i)$.  For a state $s$
+on $I_{i-1}$, the exact local transfer is
+\begin{equation}
+  T_i(s)=\left\{u\text{ on }I_i:\
+    \begin{array}{l}
+      \text{there is a domain-respecting assignment }h\text{ on }H_i,\\[-2pt]
+      s,u,h\text{ agree on overlaps and together satisfy every equation in }L_i
+    \end{array}
+  \right\}.
+  \label{eq:local-transfer}
+\end{equation}
+Starting from the one empty tuple, define the reachable frontiers by
+\begin{equation}
+  F_{-1}=\{()\},
+  \qquad
+  F_i=\bigcup_{s\in F_{i-1}}T_i(s)
+  \quad(0\leq i\leq 33).
+  \label{eq:frontier-recurrence}
+\end{equation}
+This is exact variable elimination: variables that do not cross the cut are
+composed locally and then forgotten.  Its usefulness comes from the bounded
+live interface, the same general phenomenon behind path-structured and
+bounded-width constraint algorithms \cite{Freuder1990,DechterPearl1989}.
+Those references provide methodological context only; they do not verify a
+transition or a numerical claim in this artifact.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      >=Latex,
+      frontier/.style={draw=InkNavy,rounded corners=2pt,minimum width=1.55cm,
+        minimum height=0.72cm,fill=white,thick},
+      emptyfrontier/.style={frontier,double,fill=black!4},
+      note/.style={draw=black!55,rounded corners=2pt,fill=BoxTint,
+        font=\footnotesize,align=center,inner sep=4pt},
+      node distance=1.25cm
+    ]
+    \node[frontier] (start) {$F_{-1}=\{()\}$};
+    \node[frontier,right=of start] (l0) {$F_0$};
+    \node[right=of l0] (mid) {$\cdots$};
+    \node[emptyfrontier,right=of mid] (l33) {$F_{33}=\varnothing$};
+
+    \draw[->,thick,MutedTeal] (start) -- node[above] {$T_0$} (l0);
+    \draw[->,thick,MutedTeal] (l0) -- (mid);
+    \draw[->,thick,MutedTeal] (mid) -- node[above] {$T_{33}$} (l33);
+
+    \node[note,below=1.05cm of l0,xshift=1.0cm] (interface)
+      {$\leq\MaximumFrontierDigits$ live digits\\
+       $\leq\MaximumFrontierCarries$ live carries};
+    \node[note,right=0.55cm of interface] (states)
+      {$\PeakReachableStates$ reachable states\\at the peak};
+    \draw[dashed,black!60] (mid.south) -- (interface.north);
+    \draw[dashed,black!60] (mid.south) -- (states.north);
+  \end{tikzpicture}
+  \caption{The radial frontier computation for $\Core$.  The double outline,
+  not color alone, marks the empty terminal frontier.  The callouts are
+  generated from the frozen core certificate; the drawing is schematic and
+  is not itself proof evidence.}
+  \label{fig:radial-frontier}
+\end{figure}
+
+For $\Core$, the independently replayed transfers satisfy
+$F_{33}=\varnothing$.  At every stored cut there are at most
+\MaximumFrontierDigits{} live digit variables and
+\MaximumFrontierCarries{} live carry variables, and the largest serialized
+reachable frontier contains \PeakReachableStates{} states.  These values are
+loaded from \texttt{generated-results.tex}, whose renderer checks the frozen
+certificate rather than duplicating them as manuscript literals.
+
+Exact equality in \cref{eq:frontier-recurrence} is more than soundness needs.
+Call a sequence $G_{-1},G_0,\ldots,G_{33}$ \emph{closed} when
+$()\in G_{-1}$ and
+\[
+  s\in G_{i-1}\ \text{and}\ u\in T_i(s)
+  \quad\Longrightarrow\quad u\in G_i
+  \qquad(0\leq i\leq 33).
+\]
+
+\begin{theorem}[Closed empty frontier]
+\label{thm:closed-empty-frontier}
+Suppose the layers cover every equation of a bounded constraint problem and
+their adjacent interfaces agree.  If $G_{-1},\ldots,G_{33}$ is closed and
+$G_{33}=\varnothing$, then the problem has no satisfying assignment.
+\end{theorem}
+
+\begin{proof}
+If $a$ were a global satisfying assignment, its restriction to the empty
+initial interface would lie in $G_{-1}$.  Assume inductively that
+$a|_{I_{i-1}}\in G_{i-1}$.  The restriction of $a$ to the variables of
+$L_i$ witnesses
+$a|_{I_i}\in T_i(a|_{I_{i-1}})$; closure therefore gives
+$a|_{I_i}\in G_i$.  At $i=33$ this puts a state in the empty set, a
+contradiction.
+\end{proof}
+
+Lean proves precisely this generic implication as
+\GenericSoundnessTheorem: from layer coverage, an aligned closed chain, an
+initial state, and an empty final frontier, it concludes
+$\neg\exists a,\,\texttt{Problem.Satisfies}\ a$.  This theorem does not by
+itself check the concrete serialized transitions for either $\Candidate$ or
+$\Core$.  Nor is there presently a Lean theorem bridging
+\texttt{Problem.Satisfies} to the separate packed proposition discussed
+later; that integer-to-packed correspondence remains a paper-level boundary.
 
 \section{Deletion-minimal obstruction}
 \label{sec:deletion-minimality}
+
+Three computations must be kept distinct.
+\begin{enumerate}[leftmargin=*,itemsep=3pt]
+  \item The promoted frontier for the full candidate $\Candidate$ covers all
+        \CandidateEquationCount{} equations and ends empty.
+  \item Removing $e_\star=\RemovedCoreEquation$ gives $\Core$.  Its separate
+        promoted frontier covers \CoreEquationCount{} equations and also ends
+        empty after exact replay.
+  \item The deletion audit has \DeletionAuditCount{} records, one for each
+        equation $e\in\Candidate$.  It records \SatDeletionCount{} complete
+        satisfying assignments for $\Candidate\setminus\{e\}$ and
+        \UnsatDeletionCount{} UNSAT outcome, occurring exactly when
+        $e=e_\star$.
+\end{enumerate}
+
+For every $e\in\Core$, the audit's assignment for
+$\Candidate\setminus\{e\}$ also satisfies the smaller system
+$\Core\setminus\{e\}$.  The audit replays each stored digit and carry bound,
+leading-digit condition, and retained integer equality.  Combined with the
+separate empty-frontier replay for $\Core$, this establishes the following
+carefully qualified result.
+
+\begin{proposition}[Computational deletion minimality]
+\label{prop:deletion-minimality}
+Under the correctness of the frozen manifest parser, the bounded-integer
+encoding, and the exact solver answers replayed by the independent checker,
+$\Core$ is unsatisfiable and $\Core\setminus\{e\}$ is satisfiable for every
+$e\in\Core$.  Thus $\Core$ is deletion-minimal within the frozen candidate.
+\end{proposition}
+
+The qualifier ``computational'' is essential here.  The
+\CandidateEquationCount-equation empty frontier, the
+\CoreEquationCount-equation core replay, and the
+\DeletionAuditCount-way deletion audit are frozen and independently rechecked
+computational artifacts.  The generic Lean theorem in
+Theorem~\ref{thm:closed-empty-frontier} validates the implication from
+suitable closure hypotheses, but this section does not claim that Lean
+discharges every concrete frontier transition or all deletion witnesses.
+
 \begin{nonclaim}
-The later deletion audit will distinguish deletion minimality from a
-minimum-cardinality claim.
+Deletion-minimal means that no single remaining equation can be removed from
+this core while preserving unsatisfiability.  It is \emph{not
+minimum-cardinality}: a different, smaller unsatisfiable subset has not been
+excluded.  The result gives no uniqueness or all-base theorem, says nothing
+about the unbounded reverse-and-add process, and does not establish a base-19
+Lychrel number.
 \end{nonclaim}
 
 \section{Packed finite encoding}

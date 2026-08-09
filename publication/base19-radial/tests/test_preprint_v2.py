@@ -29,6 +29,15 @@ def render_preprint_data(
     )
 
 
+def extracted_pdf_text(tmp_path: Path) -> str:
+    output = tmp_path / "preprint.txt"
+    subprocess.run(
+        ("pdftotext", str(PREPRINT / "main.pdf"), str(output)),
+        check=True,
+    )
+    return output.read_text(encoding="utf-8")
+
+
 def copied_artifact(tmp_path: Path) -> Path:
     destination = tmp_path / "base19-radial"
     shutil.copytree(ARTIFACT, destination)
@@ -243,3 +252,19 @@ def test_preprint_source_has_submission_metadata_and_trust_boxes() -> None:
 def test_preprint_build_script_rejects_overfull_hboxes_and_vboxes() -> None:
     source = (PREPRINT / "build.sh").read_text(encoding="utf-8")
     assert r"Overfull \\[hv]box" in source
+
+
+def test_preprint_reader_visible_claims_and_radial_figure(tmp_path: Path) -> None:
+    text = extracted_pdf_text(tmp_path)
+    for phrase in (
+        "deletion-minimal",
+        "not minimum-cardinality",
+        "does not establish a base-19 Lychrel number",
+        "closed empty frontier",
+        "radial frontier",
+    ):
+        assert phrase in text
+
+    source = (PREPRINT / "main.tex").read_text(encoding="utf-8")
+    assert r"\begin{tikzpicture}" in source
+    assert r"\label{fig:radial-frontier}" in source
