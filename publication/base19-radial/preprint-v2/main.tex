@@ -407,21 +407,217 @@ Lychrel number.
 
 \section{Packed finite encoding}
 \label{sec:packed-encoding}
-This section will explain the evidence-bound packed encoding.
+
+The generated check replaces a tuple of small integers by one bit-vector.
+The active variables of $\Core$ occur in the generator's fixed manifest order:
+first the \ActiveDigitCount{} digit variables, then the \ActiveCarryCount{}
+carry variables.  Thus there are
+\[
+  \ActiveDigitCount+\ActiveCarryCount=819
+\]
+slots.  Each slot has width \PackedSlotWidth{}, so the complete assignment is
+a word
+\[
+  A\in\operatorname{BitVec}(819\cdot\PackedSlotWidth)
+    =\operatorname{BitVec}(\PackedWidth).
+\]
+For $0\leq j<819$, slot $j$ is the unsigned six-bit value extracted from
+the bit interval beginning at least-significant-bit offset $6j$.  In the
+generated Lean source this operation is
+\texttt{assignment.extractLsb' (index * 6) 6}.  The 819 intervals are
+disjoint and exhaust all \PackedWidth{} bits; there are no padding bits.
+
+Write $s_j(A)\in\{0,\ldots,63\}$ for the ordinary representative of the
+$j$th slot.  Let $\mathsf{PackedCore}_{408}(A)$ be the conjunction emitted by
+the deterministic renderer.  Its \PackedConstraintCount{} conjuncts divide
+into four audited categories:
+\begin{center}
+  \begin{tabular}{@{}lr@{}}
+    \toprule
+    Constraint category & Count \\
+    \midrule
+    Unsigned digit bounds $s_j(A)<19$ & 409 \\
+    Unsigned carry bounds $s_j(A)<2$ & 410 \\
+    Nonzero leading digits $s_j(A)\neq0$ & 6 \\
+    Retained column equations & 408 \\
+    \midrule
+    Total & $409+410+6+408=\PackedConstraintCount$ \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+The six extra inequalities select the variables
+\texttt{p0:f0:d0},\ldots,\texttt{p5:f0:d0}; each already has a digit-bound
+conjunct.  Literal atoms and boundary carries remain six-bit constants rather
+than occupying slots.  Every retained instance of
+\cref{eq:base19-column} is translated literally, with six-bit addition and
+multiplication, and hence is initially an equality modulo $64$.
+
+\begin{proposition}[Paper equivalence; unformalized bridge]
+\label{prop:packed-equivalence}
+The bounded integer assignments satisfying $\Core$ are in bijection with the
+words $A:\operatorname{BitVec}(\PackedWidth)$ satisfying
+$\mathsf{PackedCore}_{408}(A)$.
+\end{proposition}
+
+\begin{proof}
+This is a paper proof, not a theorem currently present in Lean.  Consider one
+column and take the ordinary representatives of its five atoms.  The bounds
+give
+\[
+  0\leq \ell,r,t\leq18,
+  \qquad c_{\rm in},c_{\rm out}\in\{0,1\}.
+\]
+Consequently
+\[
+  0\leq\ell+r+c_{\rm in}\leq18+18+1=37,
+  \qquad
+  0\leq t+19c_{\rm out}\leq18+19=37.
+\]
+Both sides therefore lie in $[0,37]$.  Since \texttt{37<64}, two such
+representatives are equal in $\mathbb Z/64\mathbb Z$ exactly when they are
+equal as ordinary integers: their difference is a multiple of $64$ with
+absolute value strictly below $64$, and hence is zero.  This proves the
+slotwise equivalence of each bit-vector column equation and
+\cref{eq:base19-column}; it also shows explicitly that no six-bit operation
+in a satisfied column can wrap.
+
+For completeness, let $(v_0,\ldots,v_{818})$ be a tuple of slot values in
+$\{0,\ldots,63\}$ and pack it as the \PackedWidth-bit word represented by
+\[
+  \operatorname{pack}(v)=\sum_{j=0}^{818}v_j2^{6j}.
+\]
+Six-bit extraction gives
+$s_j(\operatorname{pack}(v))=v_j$.  Conversely, because the extracted blocks
+partition the entire word,
+$\operatorname{pack}(s_0(A),\ldots,s_{818}(A))=A$ for every $A$.  Thus
+packing and unpacking are inverse operations.  An integer model supplies
+slot values in the required ranges, its six leading digits remain nonzero,
+and its integer equations imply the modular ones.  In the other direction,
+the unsigned slot bounds recover digits in $\{0,\ldots,18\}$ and carries in
+$\{0,1\}$; the nonzero clauses recover the six leading conditions; and the
+no-wrap argument recovers every integer equation.  The two constructions
+therefore restrict to the claimed bijection of satisfying assignments.
+\end{proof}
+
+The renderer constructs and audits this correspondence against the frozen
+manifest and records its digest as \PackedManifestSha.  The proposition above
+is nevertheless an \emph{unformalized bridge}: no existing Lean declaration
+maps the earlier \texttt{Problem.Satisfies} predicate to
+$\mathsf{PackedCore}_{408}$.  The generic frontier theorem, this generated
+and audited bridge, and the packed theorem below are separate statements.
 
 \section{Proof-producing Lean/LRAT check}
 \label{sec:lean-lrat}
+Abbreviating the generated conjunction just defined, the exact conclusion of
+the generated Lean declaration is as follows.
+
+\begin{tcolorbox}[colback=BoxTint,colframe=MutedTeal,title={Lean theorem:
+packed core UNSAT}]
+\PackedTheorem{} has type
+\[
+  \forall A:\operatorname{BitVec}(\PackedWidth),
+  \qquad \neg\mathsf{PackedCore}_{408}(A).
+\]
+Equivalently, no \PackedWidth-bit word satisfies the exact inline conjunction
+of \PackedConstraintCount{} generated constraints.
+\end{tcolorbox}
+
+At the frozen Lean 4.32.2 source commit, \texttt{bv\_decide} reflects and
+bit-blasts the proposition, CaDiCaL performs certificate search, and Lean
+passes the resulting LRAT certificate to its proved-sound LRAT checker.  The
+Lean implementation, the primary LRAT account, and official CaDiCaL
+source/release are cited here at the point of use
+\cite{leanBVDecide432,CruzFilipeEtAl2017,cadical301}.  In particular, it is
+CaDiCaL in this route---not Z3---that searches for the certificate.
+
+There is a second, essential layer to the checking story.  Lean's checker has
+a proved soundness theorem, but the frozen implementation's
+\texttt{LratCert.toReflectionProof} uses \texttt{nativeEqTrue} to evaluate the
+checker result.  That evaluation contributes an additional dependency to the
+accepted theorem term.  The artifact's \texttt{\#print axioms} output reports
+the ordinary axiom dependencies
+\[
+  \texttt{propext},\qquad
+  \texttt{Classical.choice},\qquad
+  \texttt{Quot.sound},
+\]
+and the artifact-specific native certificate-evaluation axiom
+\begin{center}
+  \small\nolinkurl{packedMinimalCoreUnsat._native.bv_decide.ax_1_5}.
+\end{center}
+Accordingly, the concrete certificate evaluation trusts Lean's native
+compiler, code generator, and runtime in addition to the proved checker and
+kernel.  The result is proof-producing and substantially narrows the trusted
+solver boundary, but it is \emph{not kernel-reduction-only}, not fully
+axiom-free, and not an end-to-end formalization of the bounded integer model.
+
+One recorded development-machine run of the generated module took
+\PackedLeanSeconds{} seconds and reached \PackedLeanMaxRSS{} maximum resident
+set size.  These are measurements of that one run, not a performance
+guarantee.  Regeneration compares the source byte-for-byte, checks the
+digest binding against the frozen equation manifest, and reruns the
+declaration under Lean 4.32.2.  The exact digest is supplied by the generated
+results file rather than manually transcribed.
+
 \begin{trustboundary}
-The subsequent account will state the exact native certificate-evaluation
-boundary and the separate paper-level encoding bridge.
+Four boundaries must not be collapsed.  Lean proves the generic theorem that
+a suitably closed empty frontier implies \texttt{Problem.Satisfies} is
+impossible.  The concrete frontier files are instead replayed by exact
+computation.  The frozen integer-to-packed translation is generated and
+audited but remains the unformalized bridge proved only on paper in
+Proposition~\ref{prop:packed-equivalence}.  Finally, \PackedTheorem{} proves
+UNSAT for the exact packed proposition, with the native evaluation dependency
+listed above.  Therefore the paper does not claim a single end-to-end Lean
+theorem from the frozen integer problem to the packed conclusion.
 \end{trustboundary}
 
 \section{Assurance ladder}
 \label{sec:assurance-ladder}
-\begin{keyidea}
-The final exposition will separate computational replay, Lean/LRAT checking,
-and the unclaimed kernel-reduction-only endpoint.
-\end{keyidea}
+
+The preceding distinctions can be arranged by the scope of their trusted
+base.  The bottom level re-executes the concrete frontier computation using
+Z3's mathematical integers and exact finite comparisons
+\cite{z3Arithmetic}; it does not attribute a proof object to Z3.  The middle
+level is the achieved packed theorem whose CaDiCaL LRAT certificate is checked
+in Lean with native evaluation.  A strict concrete proof checked only by
+kernel reduction would be a further endpoint, not a property of the present
+artifact.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      level/.style={draw=InkNavy,thick,rounded corners=2pt,
+        minimum width=0.82\textwidth,minimum height=0.8cm,
+        align=center,fill=white},
+      unclaimed/.style={level,dashed,fill=black!3},
+      node distance=0.62cm
+    ]
+    \node[level] (replay)
+      {\textbf{Exact Z3 frontier replay}\\[-1pt]
+       \footnotesize achieved computational replay; no solver proof claimed};
+    \node[level,above=of replay] (native)
+      {\textbf{Lean/LRAT with native certificate evaluation}\\[-1pt]
+       \footnotesize achieved packed theorem; native axiom disclosed};
+    \node[unclaimed,above=of native] (kernel)
+      {\textbf{Kernel-reduction-only concrete proof}\\[-1pt]
+       \footnotesize not claimed};
+
+    \draw[->,thick,black!65] (replay.north) -- (native.south);
+    \draw[->,thick,dashed,black!65] (native.north) -- (kernel.south);
+  \end{tikzpicture}
+  \caption{Assurance ladder for the concrete checks.  Solid outlines mark
+  achieved levels; the dashed outline marks the unclaimed endpoint.  Height
+  indicates assurance scope, not mathematical generality.  The diagram is
+  explanatory and is not itself proof evidence.}
+  \label{fig:assurance-ladder}
+\end{figure}
+
+In particular, moving upward in \cref{fig:assurance-ladder} must not be read
+as enlarging the theorem's domain.  The frontier replay concerns the frozen
+bounded integer instance, while the Lean result concerns its separately
+generated packed proposition.  Their correspondence is supplied by the paper
+proof and audited renderer, not by a hidden claim that the packed theorem also
+formalizes the frontier certificates.
 
 \section{Reproducibility and limitations}
 \label{sec:reproducibility}

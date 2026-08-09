@@ -270,6 +270,26 @@ def test_preprint_reader_visible_claims_and_radial_figure(tmp_path: Path) -> Non
     assert r"\label{fig:radial-frontier}" in source
 
 
+def test_preprint_reader_visible_packed_trust_boundary_and_assurance_figure(
+    tmp_path: Path,
+) -> None:
+    text = extracted_pdf_text(tmp_path)
+    for phrase in (
+        "packedMinimalCoreUnsat",
+        "packedMinimalCoreUnsat._native.bv_decide.ax_1_5",
+        "native certificate-evaluation axiom",
+        "not kernel-reduction-only",
+        "Classical.choice",
+        "Quot.sound",
+        "37<64",
+        "unformalized bridge",
+    ):
+        assert phrase in text
+
+    source = (PREPRINT / "main.tex").read_text(encoding="utf-8")
+    assert r"\label{fig:assurance-ladder}" in source
+
+
 def test_preprint_explains_word_orientation_and_growth_boundary(
     tmp_path: Path,
 ) -> None:
