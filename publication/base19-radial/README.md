@@ -6,15 +6,20 @@ system and the evidence currently justified for it.
 The strongest concrete result is a 408-equation deletion-minimal UNSAT core
 inside the fixed 409-equation candidate.  Exact frontier enumeration proves
 the core UNSAT, and 408 explicit assignments prove that deleting any remaining
-equation makes it SAT.  Both concrete UNSAT results are independently replayed
-from the frozen equation JSON, but they are **not Lean kernel-checked** and do
-not include a proof-producing SMT trace.  This is not a minimum-cardinality claim.
+equation makes it SAT. Both concrete UNSAT results are independently replayed
+from the frozen equation JSON. A generated Lean theorem now also checks an
+exact finite encoding of the 408-equation core with a proof-producing LRAT
+path, but it uses `bv_decide`'s native certificate-evaluation axiom and is
+therefore **not a kernel-reduction-only proof**.
+This is not a minimum-cardinality claim.
 
 Lean 4.32.2 checks the generic radial soundness theorem
 `Base19Radial.unsat_of_closed_empty_frontier`, a tiny worked UNSAT instance,
 and the concrete satisfying-neighbor theorem `Base19Radial.deleteP0C0Sat`.
-The last theorem uses ordinary `decide`; no artifact theorem uses
-`native_decide`, `sorry`, `unsafe`, or a declared axiom.
+The last theorem uses ordinary `decide`. The additional theorem
+`Base19Radial.packedMinimalCoreUnsat` uses `bv_decide`; its larger trust base
+and exact axiom report are recorded in `LEAN-BV-CHECK.md`. No artifact source
+uses `sorry`, `unsafe`, or `native_decide`.
 
 ## Reproduce
 
@@ -53,12 +58,15 @@ changing it does not change canonical output order.
 - `certificates/deletions.jsonl` contains all 409 deletion outcomes; 408 lines
   carry complete SAT assignments and exact arithmetic replay metadata.
 - `lean/` contains the transparent model, generic soundness theorem, generated
-  statement data, and kernel-checked phase-0-column-0 SAT witness.
+  statement data, kernel-checked phase-0-column-0 SAT witness, and the
+  proof-producing packed-core check with its explicit native-evaluation
+  boundary.
 - `artifact-manifest.json` maps every promoted claim and quantitative value to
   JSON or a Lean theorem. `SHA256SUMS` binds the promoted evidence.
 
 The scope and failed concrete-Lean feasibility experiments are recorded in
-`LEAN-FEASIBILITY.md`.
+`LEAN-FEASIBILITY.md`; the successful bounded bit-vector check and its trust
+boundary are recorded in `LEAN-BV-CHECK.md`.
 
 ## Preprint
 
@@ -77,9 +85,10 @@ docker run --rm --network none \
   base19-radial-paper
 ```
 
-The paper deliberately labels the concrete UNSAT results as exact
-computational replays, not Lean theorems.  No DOI or repository URL is claimed
-before an external deposit exists.
+The released paper deliberately labels the concrete UNSAT results as exact
+computational replays rather than kernel-reduction-only Lean theorems. The new
+bit-vector theorem does not silently change that published assurance label.
+No DOI or repository URL is claimed before an external deposit exists.
 
 `RELEASE_CHECKLIST.md` records the fresh publication gates, measured resource
 use, immutable certificate and PDF identities, clean-clone result, and every

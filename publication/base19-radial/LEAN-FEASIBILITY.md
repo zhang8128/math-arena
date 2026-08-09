@@ -80,3 +80,26 @@ The neighboring instance obtained by deleting
 variable-ID order and ordinary `by decide`; it does not use `native_decide`.
 A clean sequential module build checked the theorem in 37.60 seconds with
 7,507,558,400 bytes peak RSS. `#print axioms` reports only `propext`.
+
+## Proof-producing bit-vector endpoint
+
+A later bounded experiment found a practical intermediate endpoint. The
+renderer `scripts/render_lean_bv_core.py` converts the exact 408-equation core
+to 819 six-bit slots and 1,233 constraints. The generated theorem
+`Base19Radial.packedMinimalCoreUnsat` was accepted by Lean 4.32.2 in 51.0
+seconds with about 1.28 GB maximum RSS.
+
+The encoding is exact at the mathematical level: digit slots are below 19,
+carry slots are below 2, the six leading digits are nonzero, and bounded
+column sums are at most 37, below the six-bit modulus 64. The source records
+the SHA-256 of the frozen equation manifest and is regenerated and compared
+byte-for-byte by the artifact test.
+
+This route uses `bv_decide`, which asks CaDiCaL for an LRAT certificate and
+passes that certificate through Lean's proved-sound LRAT checker. It is not a
+strict kernel-reduction-only result because Lean evaluates the checker through
+native code. The exact axiom report is
+`[propext, Classical.choice, Quot.sound,
+packedMinimalCoreUnsat._native.bv_decide.ax_1_5]`. See
+`LEAN-BV-CHECK.md` for the command and trust boundary. The original failed
+`omega` gate and the conservative paper claim therefore remain unchanged.

@@ -66,6 +66,12 @@ cmp publication/base19-radial/instance/equations.json "$task_tmp/equations.json"
 cmp publication/base19-radial/lean/Base19Radial/Generated/InstanceData.lean \
   "$task_tmp/InstanceData.lean"
 
+"${python_run[@]}" publication/base19-radial/scripts/render_lean_bv_core.py \
+  publication/base19-radial/instance/equations.json \
+  "$task_tmp/CoreBV.lean"
+cmp publication/base19-radial/lean/Base19Radial/Generated/CoreBV.lean \
+  "$task_tmp/CoreBV.lean"
+
 "${python_run[@]}" publication/base19-radial/scripts/render_lean_data.py \
   --frontier publication/base19-radial/certificates/frontier.json \
   --witness publication/base19-radial/certificates/delete-p0-c0.json \
@@ -96,7 +102,7 @@ done
 (
   cd publication/base19-radial/lean
   lake clean
-  lake build
+  lake build | tee "$task_tmp/lean-build.txt"
   lake exe export_manifest > "$task_tmp/lean-equations.json"
   grep -F '#print axioms' Base19Radial/RadialTests.lean >/dev/null
   grep -F '#print axioms' Base19Radial/Generated/Witness.lean >/dev/null
@@ -110,6 +116,8 @@ grep -F "'Base19Radial.radialTinyProblemUnsat' depends on axioms: [propext]" \
   "$task_tmp/radial-axioms.txt" >/dev/null
 grep -F "'Base19Radial.deleteP0C0Sat' depends on axioms: [propext]" \
   "$task_tmp/witness-axioms.txt" >/dev/null
+grep -F "packedMinimalCoreUnsat._native.bv_decide.ax_1_5" \
+  "$task_tmp/lean-build.txt" >/dev/null
 
 if [ "$mode" = "full" ]; then
   workers="${BASE19_WORKERS:-6}"

@@ -85,6 +85,22 @@
           "locator": "replay_completed_witness"
         }
       ]
+    },
+    {
+      "id": "minimal_core_408_packed_bv",
+      "statement": "The exact six-bit encoding of the frozen 408-equation core has no satisfying packed assignment.",
+      "assurance": "lean-lrat-native-evaluation",
+      "lean_theorem": "Base19Radial.packedMinimalCoreUnsat",
+      "evidence": [
+        {
+          "path": "lean/Base19Radial/Generated/CoreBV.lean",
+          "locator": "theorem packedMinimalCoreUnsat"
+        },
+        {
+          "path": "LEAN-BV-CHECK.md",
+          "locator": "Concrete bit-vector Lean check"
+        }
+      ]
     }
   ],
   "quantities": [
@@ -217,6 +233,20 @@
       "exit_code": 0,
       "wall_seconds": 37.60,
       "peak_rss_bytes": 7507558400
+    },
+    "lean_packed_core_bv": {
+      "command": "lake env lean Base19Radial/Generated/CoreBV.lean",
+      "lean_version": "4.32.2",
+      "theorem": "Base19Radial.packedMinimalCoreUnsat",
+      "manifest_sha256": "18ca75da64c84859d2373ae3e61da81e3ac75a68a33af448b57220e23dfbfa9e",
+      "wall_seconds": 51.01,
+      "max_rss_bytes": 1280688128,
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound",
+        "packedMinimalCoreUnsat._native.bv_decide.ax_1_5"
+      ]
     },
     "final_core_test_matrix": {
       "exit_code": 0,

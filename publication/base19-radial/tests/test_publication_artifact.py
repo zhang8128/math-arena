@@ -15,7 +15,9 @@ TOPOLOGY = ARTIFACT / "instance" / "topology.json"
 BUILDER = ARTIFACT / "scripts" / "build_manifest.py"
 COMPARATOR = ARTIFACT / "scripts" / "compare_manifests.py"
 INSTANCE_RENDERER = ARTIFACT / "scripts" / "render_lean_instance.py"
+BV_CORE_RENDERER = ARTIFACT / "scripts" / "render_lean_bv_core.py"
 LEAN = ARTIFACT / "lean"
+GENERATED_BV_CORE = LEAN / "Base19Radial" / "Generated" / "CoreBV.lean"
 FRONTIER = ARTIFACT / "certificates" / "frontier.json"
 KNOWN_WITNESS = ARTIFACT / "certificates" / "delete-p0-c0.json"
 DELETIONS = ARTIFACT / "certificates" / "deletions.jsonl"
@@ -240,6 +242,36 @@ def test_lean_instance_renderer_is_deterministic_and_transparent(tmp_path: Path)
     assert "List.replicate 409 .digit" in source
     assert "List.replicate 410 .carry" in source
     assert all(token not in source for token in ("sorry", "native_decide", "axiom"))
+
+
+def test_bv_core_renderer_produces_a_lean_checked_unsat_certificate(
+    tmp_path: Path,
+) -> None:
+    rendered = tmp_path / "CoreBV.lean"
+    subprocess.run(
+        (
+            sys.executable,
+            str(BV_CORE_RENDERER),
+            str(ARTIFACT / "instance" / "equations.json"),
+            str(rendered),
+        ),
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert rendered.read_bytes() == GENERATED_BV_CORE.read_bytes()
+
+    completed = subprocess.run(
+        ("lake", "env", "lean", str(rendered)),
+        cwd=LEAN,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert "Base19Radial.packedMinimalCoreUnsat" in completed.stdout
+    assert "packedMinimalCoreUnsat._native.bv_decide.ax_1_5" in completed.stdout
 
 
 def test_lean_builder_exports_the_canonical_manifest() -> None:
@@ -610,8 +642,29 @@ def test_artifact_manifest_maps_claims_and_quantities_to_evidence() -> None:
     assert claims["delete_p0_c0_sat"]["assurance"] == "lean-kernel-checked"
     assert claims["candidate_409_unsat"]["assurance"] == "exact-computational-replay"
     assert claims["minimal_core_408"]["assurance"] == "exact-computational-replay"
+    assert claims["minimal_core_408_packed_bv"]["assurance"] == (
+        "lean-lrat-native-evaluation"
+    )
+    assert claims["minimal_core_408_packed_bv"]["lean_theorem"] == (
+        "Base19Radial.packedMinimalCoreUnsat"
+    )
     assert claims["candidate_409_unsat"]["lean_theorem"] is None
     assert claims["minimal_core_408"]["lean_theorem"] is None
+
+    run = manifest["measured_runs"]["lean_packed_core_bv"]
+    assert run["wall_seconds"] == 51.01
+    assert run["max_rss_bytes"] == 1_280_688_128
+    assert run["lean_version"] == "4.32.2"
+    assert run["theorem"] == "Base19Radial.packedMinimalCoreUnsat"
+    assert run["manifest_sha256"] == hashlib.sha256(
+        (ARTIFACT / "instance" / "equations.json").read_bytes()
+    ).hexdigest()
+    assert run["axioms"] == [
+        "propext",
+        "Classical.choice",
+        "Quot.sound",
+        "packedMinimalCoreUnsat._native.bv_decide.ax_1_5",
+    ]
 
     for claim in claims.values():
         for evidence in claim["evidence"]:
@@ -645,6 +698,7 @@ def test_checksum_inventory_covers_promoted_evidence_and_is_exact() -> None:
         "certificates/delete-p0-c0.json",
         "certificates/deletions.jsonl",
         "certificates/minimal-core-frontier.json",
+        "lean/Base19Radial/Generated/CoreBV.lean",
         "lean/Base19Radial/Generated/FrontierData.lean",
         "lean/Base19Radial/Generated/InstanceData.lean",
         "lean/Base19Radial/Generated/Witness.lean",
@@ -719,7 +773,8 @@ def test_readme_states_the_concrete_proof_boundary() -> None:
     source = README.read_text(encoding="utf-8")
 
     assert "408-equation deletion-minimal UNSAT core" in source
-    assert "not Lean kernel-checked" in source
+    assert "not a kernel-reduction-only proof" in source
+    assert "bv_decide`'s native certificate-evaluation axiom" in source
     assert "not a minimum-cardinality claim" in source
     assert "./publication/base19-radial/reproduce.sh quick" in source
     assert "./publication/base19-radial/reproduce.sh full" in source
