@@ -73,10 +73,16 @@ boundary are recorded in `LEAN-BV-CHECK.md`.
 
 ## Preprint
 
-The conservative manuscript is `paper/main.tex`; the tracked PDF is built
-from a digest-pinned TeX Live image using `Dockerfile.paper`.  Quantitative
-claims in the manuscript are generated from promoted evidence into
-`paper/generated-results.tex`, and `reproduce.sh quick` rejects any drift.
+The released conservative manuscript remains `paper/main.tex`; its tracked
+PDF is `paper/main.pdf`, built from a digest-pinned TeX Live image using
+`Dockerfile.paper`.  Quantitative claims in that manuscript are generated from
+promoted evidence into `paper/generated-results.tex`, and `reproduce.sh quick`
+rejects any drift.
+
+An unreleased textbook-style review candidate is available separately at
+`preprint-v2/main.pdf`, with sources and candidate-local checksums in
+`preprint-v2/`.  It is provided for explicit review and does not replace or
+rename the released paper.
 
 After the pinned image is available locally, build without network access:
 

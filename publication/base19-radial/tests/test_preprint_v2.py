@@ -9,6 +9,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 ARTIFACT = ROOT / "publication" / "base19-radial"
 PREPRINT = ARTIFACT / "preprint-v2"
+CANDIDATE_CHECKSUM_PATHS = (
+    "main.tex",
+    "references.bib",
+    "citation-matrix.md",
+    "generated-results.tex",
+    "build.sh",
+    "README.md",
+    "main.pdf",
+)
 
 
 def render_preprint_data(
@@ -369,3 +378,29 @@ def test_preprint_reader_visible_reproducibility_identifiers(tmp_path: Path) -> 
         "0566f6e2025aec28fe0d2f824f1f6b343cf912e9191a9036629a2a1d4ef03325",
     ):
         assert identifier in text
+
+
+def test_candidate_pdf_and_local_checksums_are_current() -> None:
+    pdf = PREPRINT / "main.pdf"
+    assert pdf.stat().st_size > 100_000
+
+    entries = [
+        line.split("  ", 1)
+        for line in (PREPRINT / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+    ]
+    assert tuple(relative for _, relative in entries) == CANDIDATE_CHECKSUM_PATHS
+    for expected, relative in entries:
+        actual = hashlib.sha256((PREPRINT / relative).read_bytes()).hexdigest()
+        assert actual == expected
+
+
+def test_offline_build_lead_in_stays_with_command_block(tmp_path: Path) -> None:
+    pages = [
+        " ".join(page.split())
+        for page in extracted_pdf_text(tmp_path).split("\f")
+    ]
+    assert any(
+        "the exact AMD64, network-disabled build is:" in page
+        and "docker build --platform linux/amd64 --network none" in page
+        for page in pages
+    )

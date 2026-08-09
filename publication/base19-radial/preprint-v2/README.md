@@ -1,8 +1,9 @@
-# Base-19 textbook-style preprint candidate
+# Base-19 textbook-style preprint review candidate
 
-This directory contains the unreleased candidate preprint.  It consumes the
+This directory contains the unreleased review candidate.  It consumes the
 tracked `generated-results.tex` evidence macros and `references.bib`; it does
-not replace `../paper/main.pdf` or the released paper sources.
+not replace `../paper/main.pdf`, the released paper sources, or the released
+paper's identity.
 
 The candidate reports the exact packed theorem
 `Base19Radial.packedMinimalCoreUnsat` under Lean 4.32.2.  Its frozen equation
@@ -76,9 +77,18 @@ pdffonts publication/base19-radial/preprint-v2/main.pdf
 pdftotext publication/base19-radial/preprint-v2/main.pdf -
 ```
 
+Verify the candidate-local source and PDF inventory with:
+
+```sh
+(cd publication/base19-radial/preprint-v2 && shasum -a 256 -c SHA256SUMS)
+```
+
+`SHA256SUMS` is local to this review candidate.  It is not part of the
+authoritative promoted-evidence inventory in `../SHA256SUMS`.
+
 `citation-matrix.md` maps every external methodological or historical claim
 to a verified source and maps artifact-specific results to frozen repository
 paths.  `../SHA256SUMS` is the authoritative promoted-evidence inventory.
 
-The PDF is a candidate for review only.  Do not promote it over the released
-paper without explicit acceptance.
+The PDF is an unreleased candidate for review only.  Do not promote it over
+the released paper without explicit acceptance.

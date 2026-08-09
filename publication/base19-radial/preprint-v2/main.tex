@@ -787,6 +787,7 @@ at the digest
 \begin{center}
   \nolinkurl{sha256:1a2027fd03aa64455cf36c927c1dfccffc8fc8a3cb11012333be815f8b33e956}.
 \end{center}
+\begin{samepage}
 Run the Docker commands from the repository root.  After that image is present
 locally, the exact AMD64, network-disabled build is:
 {\small
@@ -799,11 +800,14 @@ docker run --rm --platform linux/amd64 --network none \
   base19-radial-paper
 \end{verbatim}
 }
+\end{samepage}
 The container invokes \texttt{build.sh}, fixes the build epoch and timezone,
 and rejects unresolved citations, unresolved references, overfull boxes, or
 an empty PDF.
 
+{\small
 \bibliographystyle{alpha}
 \bibliography{references}
+}
 
 \end{document}
