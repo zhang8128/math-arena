@@ -97,6 +97,10 @@
           "locator": "theorem packedMinimalCoreUnsat"
         },
         {
+          "path": "scripts/render_lean_bv_core.py",
+          "locator": "render: generated and audited computational bridge"
+        },
+        {
           "path": "LEAN-BV-CHECK.md",
           "locator": "Concrete bit-vector Lean check"
         }

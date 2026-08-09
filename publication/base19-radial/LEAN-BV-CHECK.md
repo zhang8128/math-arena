@@ -13,6 +13,13 @@ these bounds every side of a column equation is at most 37, so six-bit
 addition does not wrap; the finite equations therefore have their ordinary
 integer meaning.
 
+The bridge from the frozen `Problem.Satisfies` equations to this packed
+bit-vector proposition is **generated and audited computationally, not
+formalized in Lean**. `CoreBV.lean` contains the resulting numeric constraints
+and manifest-digest metadata, but no Lean theorem proves that correspondence.
+The generated theorem consequently proves unsatisfiability of the emitted
+packed proposition, conditional on that external bridge.
+
 Lean 4.32.2 checks the generated theorem with `bv_decide`. One
 development-machine run took 51.01 seconds and reached 1,280,688,128 bytes
 maximum RSS; those exact measurements are recorded as `lean_packed_core_bv` in

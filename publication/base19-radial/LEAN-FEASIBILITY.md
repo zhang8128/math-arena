@@ -95,6 +95,12 @@ column sums are at most 37, below the six-bit modulus 64. The source records
 the SHA-256 of the frozen equation manifest and is regenerated and compared
 byte-for-byte by the artifact test.
 
+The bridge from `Problem.Satisfies` for the frozen equations to these packed
+constraints is **generated and audited computationally, not formalized in
+Lean**. The generated source carries numeric constraints and a manifest digest,
+but it does not contain a Lean theorem proving the correspondence; the packed
+UNSAT theorem is therefore conditional on that external bridge.
+
 This route uses `bv_decide`, which asks CaDiCaL for an LRAT certificate and
 passes that certificate through Lean's proved-sound LRAT checker. It is not a
 strict kernel-reduction-only result because Lean evaluates the checker through

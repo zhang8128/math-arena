@@ -11,6 +11,9 @@ from the frozen equation JSON. A generated Lean theorem now also checks an
 exact finite encoding of the 408-equation core with a proof-producing LRAT
 path, but it uses `bv_decide`'s native certificate-evaluation axiom and is
 therefore **not a kernel-reduction-only proof**.
+The bridge from the frozen `Problem.Satisfies` equations to that packed
+proposition is **generated and audited computationally, not formalized in
+Lean**.
 This is not a minimum-cardinality claim.
 
 Lean 4.32.2 checks the generic radial soundness theorem

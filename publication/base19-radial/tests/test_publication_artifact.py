@@ -690,6 +690,21 @@ def test_artifact_manifest_maps_claims_and_quantities_to_evidence() -> None:
         assert actual == quantity["value"]
 
 
+def test_packed_bv_evidence_discloses_the_unformalized_problem_bridge() -> None:
+    manifest = json.loads(ARTIFACT_MANIFEST.read_text(encoding="utf-8"))
+    claims = {claim["id"]: claim for claim in manifest["claims"]}
+    packed_bv = claims["minimal_core_408_packed_bv"]
+
+    assert {
+        evidence["path"] for evidence in packed_bv["evidence"]
+    } >= {"scripts/render_lean_bv_core.py"}
+
+    disclosure = "generated and audited computationally, not formalized in Lean"
+    for relative in ("README.md", "LEAN-BV-CHECK.md", "LEAN-FEASIBILITY.md"):
+        source = (ARTIFACT / relative).read_text(encoding="utf-8")
+        assert disclosure in " ".join(source.split())
+
+
 def test_checksum_inventory_covers_promoted_evidence_and_is_exact() -> None:
     required = {
         "instance/topology.json",
