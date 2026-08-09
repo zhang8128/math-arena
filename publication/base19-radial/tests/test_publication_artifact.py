@@ -37,6 +37,7 @@ PAPER_BUILD = PAPER / "build.sh"
 REFERENCES = PAPER / "references.bib"
 LITERATURE_MATRIX = PAPER / "literature-matrix.md"
 PAPER_DOCKERFILE = ARTIFACT / "Dockerfile.paper"
+RELEASE_CHECKLIST = ARTIFACT / "RELEASE_CHECKLIST.md"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -823,6 +824,21 @@ def test_paper_build_fixes_the_source_epoch_for_deterministic_pdf() -> None:
     assert "SOURCE_DATE_EPOCH=" in source
     assert "FORCE_SOURCE_DATE=1" in source
     assert "TZ=UTC" in source
+
+
+def test_release_checklist_records_required_and_optional_gate_statuses() -> None:
+    source = RELEASE_CHECKLIST.read_text(encoding="utf-8")
+
+    for token in (
+        "62 passed",
+        "reproduce.sh quick | PASS",
+        "Forbidden-proof source scan | PASS",
+        "Offline PDF rebuild | PASS",
+        "Claim-to-evidence audit | PASS",
+        "NOT REQUIRED — not part of the trusted proof",
+        "e56dd14235a72821d407d106c259902c267be6f7ed5a2abaa5ccffeac61ac47e",
+    ):
+        assert token in source
 
 
 def test_lean_data_renderer_is_deterministic(tmp_path: Path) -> None:

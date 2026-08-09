@@ -1,7 +1,7 @@
 {
   "schema": "base19-radial-artifact-manifest-v1",
   "certificate_revision": "f1f92230fd11e55b396fd664d5129c9e8aa5b005",
-  "clean_clone_tested_revision": "ad0e0cd41c1897281aefc8c90a22e9f08ead61a7",
+  "clean_clone_tested_revision": "34d06b006ba4879d5aa1a9c0d58f021c2bbd253a",
   "platform": {
     "operating_system": "macOS 26.5.2",
     "architecture": "arm64"
@@ -194,8 +194,8 @@
     },
     "quick_reproduction": {
       "exit_code": 0,
-      "wall_seconds": 240.14,
-      "peak_rss_bytes": 7525007360
+      "wall_seconds": 244.95,
+      "peak_rss_bytes": 7542259712
     },
     "three_certificate_regeneration": {
       "exit_code": 0,
@@ -220,10 +220,26 @@
     },
     "final_core_test_matrix": {
       "exit_code": 0,
-      "tests_passed": 50,
-      "wall_seconds": 566.09,
-      "peak_rss_bytes": 738213888
+      "tests_passed": 62,
+      "wall_seconds": 594.43,
+      "peak_rss_bytes": 738361344
     }
+  },
+  "release_acceptance": {
+    "observed_at_utc": "2026-08-08T23:52:55Z",
+    "preprint_commit": "34d06b006ba4879d5aa1a9c0d58f021c2bbd253a",
+    "pytest_matrix": "PASS",
+    "quick_reproduction": "PASS",
+    "forbidden_proof_scan": "PASS",
+    "offline_pdf_build": "PASS",
+    "claim_audit": "PASS",
+    "clean_clone_quick": {
+      "status": "PASS",
+      "revision": "34d06b006ba4879d5aa1a9c0d58f021c2bbd253a",
+      "wall_seconds": 246.82,
+      "peak_rss_bytes": 7492141056
+    },
+    "optional_sat_trace": "NOT REQUIRED — not part of the trusted proof"
   },
   "preprint": {
     "title": "An Exact Radial Obstruction in a Base-19 Reverse-and-Add Constraint System",

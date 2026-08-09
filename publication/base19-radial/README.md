@@ -80,3 +80,7 @@ docker run --rm --network none \
 The paper deliberately labels the concrete UNSAT results as exact
 computational replays, not Lean theorems.  No DOI or repository URL is claimed
 before an external deposit exists.
+
+`RELEASE_CHECKLIST.md` records the fresh publication gates, measured resource
+use, immutable certificate and PDF identities, clean-clone result, and every
+deliberately omitted optional assurance layer.
