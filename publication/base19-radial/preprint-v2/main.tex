@@ -1,0 +1,121 @@
+\documentclass[11pt,twoside]{article}
+
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{newtxtext}
+\usepackage[amsthm]{newtxmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{tikz}
+\usepackage[colorlinks=true,linkcolor=InkNavy,citecolor=MutedTeal,urlcolor=MutedTeal]{hyperref}
+\usepackage[nameinlink,capitalise]{cleveref}
+
+\definecolor{InkNavy}{HTML}{18324A}
+\definecolor{MutedTeal}{HTML}{2F6F73}
+\definecolor{WarmPaper}{HTML}{FBFAF6}
+\definecolor{BoxTint}{HTML}{EDF4F2}
+\pagecolor{WarmPaper}
+\color{InkNavy!92!black}
+
+\newtcolorbox{keyidea}{colback=BoxTint,colframe=MutedTeal,title=Key idea}
+\newtcolorbox{trustboundary}{colback=InkNavy!4,colframe=InkNavy,title=Trust boundary}
+\newtcolorbox{nonclaim}{colback=black!3,colframe=black!55,title=What this does not prove}
+
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}[definition]{Theorem}
+\newtheorem{lemma}[definition]{Lemma}
+\newtheorem{proposition}[definition]{Proposition}
+\newtheorem{example}[definition]{Example}
+\theoremstyle{remark}
+\newtheorem{remark}[definition]{Remark}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\small\textsc{Proof-Producing Base-19 Obstruction}}
+\fancyhead[RO]{\small\textsc{8128}}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+
+\hypersetup{
+  pdftitle={A Proof-Producing Base-19 Obstruction in a Reverse-and-Add Constraint System},
+  pdfauthor={8128},
+  pdfsubject={Preprint candidate}
+}
+
+\input{generated-results.tex}
+
+\title{A Proof-Producing Base-19 Obstruction in a Reverse-and-Add Constraint System}
+\author{8128}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This is a buildable preprint shell for a bounded base-19 constraint-system
+study.  The mathematical narrative, diagrams, and detailed assurance analysis
+are intentionally deferred to subsequent drafting tasks.  This candidate does
+not make a claim about an unbounded reverse-and-add process.
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+\section{Orientation}
+\label{sec:orientation}
+This section will introduce the bounded problem and its finite scope.
+
+\section{The frozen base-19 system}
+\label{sec:frozen-system}
+This section will define the frozen candidate and its retained core.
+
+\section{Radial decomposition}
+\label{sec:radial-decomposition}
+This section will describe frontier states and the generic soundness result.
+
+\section{Deletion-minimal obstruction}
+\label{sec:deletion-minimality}
+\begin{nonclaim}
+The later deletion audit will distinguish deletion minimality from a
+minimum-cardinality claim.
+\end{nonclaim}
+
+\section{Packed finite encoding}
+\label{sec:packed-encoding}
+This section will explain the evidence-bound packed encoding.
+
+\section{Proof-producing Lean/LRAT check}
+\label{sec:lean-lrat}
+\begin{trustboundary}
+The subsequent account will state the exact native certificate-evaluation
+boundary and the separate paper-level encoding bridge.
+\end{trustboundary}
+
+\section{Assurance ladder}
+\label{sec:assurance-ladder}
+\begin{keyidea}
+The final exposition will separate computational replay, Lean/LRAT checking,
+and the unclaimed kernel-reduction-only endpoint.
+\end{keyidea}
+
+\section{Reproducibility and limitations}
+\label{sec:reproducibility}
+The generated evidence macros are loaded from \texttt{generated-results.tex}.
+
+\section{Related work and conclusion}
+\label{sec:conclusion}
+Related-work discussion and the conservative conclusion are deferred.
+
+\appendix
+\section{Reproducibility record}
+\label{app:reproducibility}
+This compact appendix will record theorem names, hashes, and commands.
+
+\bibliographystyle{alpha}
+\bibliography{references}
+
+\end{document}

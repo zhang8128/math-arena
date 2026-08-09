@@ -227,3 +227,14 @@ def test_generated_results_reject_redigested_witness_relabelled_to_p0c1(
     completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
     assert completed.returncode != 0
     assert "known deletion witness does not satisfy retained equations" in completed.stderr
+
+
+def test_preprint_source_has_submission_metadata_and_trust_boxes() -> None:
+    source = (PREPRINT / "main.tex").read_text(encoding="utf-8")
+    assert r"\author{8128}" in source
+    assert "A Proof-Producing Base-19 Obstruction" in source
+    assert r"\newtcolorbox{keyidea}" in source
+    assert r"\newtcolorbox{trustboundary}" in source
+    assert r"\newtcolorbox{nonclaim}" in source
+    assert r"\hypersetup" in source
+    assert "pdfauthor={8128}" in source
