@@ -268,3 +268,17 @@ def test_preprint_reader_visible_claims_and_radial_figure(tmp_path: Path) -> Non
     source = (PREPRINT / "main.tex").read_text(encoding="utf-8")
     assert r"\begin{tikzpicture}" in source
     assert r"\label{fig:radial-frontier}" in source
+
+
+def test_preprint_explains_word_orientation_and_growth_boundary(
+    tmp_path: Path,
+) -> None:
+    text = " ".join(extracted_pdf_text(tmp_path).split())
+    for phrase in (
+        "most-significant digit first",
+        "least-significant target column",
+        "initial and final boundary carries are zero",
+        "phase-5 column 83",
+        "both source atoms are literal zero",
+    ):
+        assert phrase in text

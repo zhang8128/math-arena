@@ -147,10 +147,60 @@ variable blocks.  Their lengths are
 \]
 For $n\geq 0$, insert a constant run of length $n$ between consecutive
 blocks.  The two inserted digits are $(0,18)$ for phases $0,2,3,4,5$ and
-$(18,0)$ for phase $1$.  Denote the resulting word by $W_p(n)$.  For
-$p<5$, phase $p$ imposes the column equations taking $W_p(0)$ to
-$W_{p+1}(0)$.  Phase $5$ takes $W_5(0)$ to $W_0(1)$; this is the single
-growth step that closes the six-phase cycle.
+$(18,0)$ for phase $1$.  Denote the resulting word by $W_p(n)$.
+
+Words are written most-significant digit first.  More formally, let
+$s_p=|W_p(0)|$, set $V_p=W_{p+1}(0)$ when $0\leq p<5$ and
+$V_5=W_0(1)$, and let $m_p=|V_p|$.  Write these source and target words as
+\[
+  W_p(0)=x_{p,0}x_{p,1}\cdots x_{p,s_p-1},
+  \qquad
+  V_p=y_{p,0}y_{p,1}\cdots y_{p,m_p-1}.
+\]
+The source and target lengths are $s_0=82$, $s_p=83$ for
+$1\leq p\leq5$, $m_p=83$ for
+$0\leq p<5$, and $m_5=84$.  Arithmetic column $k=0$ is the
+least-significant target column.  For $0\leq k<m_p$, the written-index map is
+\begin{align}
+  \ell_{p,k}
+    &=\begin{cases}
+        x_{p,k}, & k<s_p,\\
+        0, & k\geq s_p,
+      \end{cases}
+  &
+  r_{p,k}
+    &=\begin{cases}
+        x_{p,s_p-1-k}, & k<s_p,\\
+        0, & k\geq s_p,
+      \end{cases}
+  \label{eq:source-index-map}\\
+  t_{p,k}&=y_{p,m_p-1-k}.&&
+  \label{eq:target-index-map}
+\end{align}
+In particular, $\ell_{p,k}$ advances from the written left (most-significant)
+end, while $r_{p,k}$ advances from the written right (least-significant) end;
+missing source positions are literal zero.  The initial and final boundary
+carries are zero:
+\begin{equation}
+  c_{p,-1}=0,
+  \qquad
+  c_{p,m_p-1}=0.
+  \label{eq:carry-boundaries}
+\end{equation}
+
+For $p<5$, phase $p$ therefore imposes the column equations taking $W_p(0)$
+to $W_{p+1}(0)$.  Phase $5$ takes $W_5(0)$ to $W_0(1)$; this is the single
+growth step that closes the six-phase cycle.  In particular, phase-5 column
+83 has target index $m_5-1-83=0$.  Since $83=s_5$, both source atoms are
+literal zero, the target is the leading atom \texttt{p0:f0:d0}, and the final
+outgoing carry is $c_{5,83}=0$.  Its retained equation is therefore
+\begin{equation}
+  0+0+c_{5,82}=\texttt{p0:f0:d0}+19\cdot0.
+  \label{eq:phase5-growth-column}
+\end{equation}
+The omitted phase-5 column 82 removes that column equation, but its named
+outgoing carry $c_{5,82}$ remains the incoming carry in
+\cref{eq:phase5-growth-column}.
 
 Only two exterior coordinate bands from each full addition are retained.
 They are
