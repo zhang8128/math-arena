@@ -5,21 +5,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sys
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cached_property
+from itertools import combinations, product
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from lychrel_invariant_certificate import (  # noqa: E402
+    Conjunction,
     InvariantCertificate,
     LayerPredicate,
     LinearAtom,
+    canonical_bytes,
+    compression_record,
     evaluate_predicate,
 )
 
@@ -214,6 +219,558 @@ class ObligationResult:
 class CertificateCheckResult:
     status: str
     obligations: tuple[ObligationResult, ...]
+
+
+@dataclass(frozen=True)
+class GrammarLimits:
+    """The deliberately closed T27 invariant grammar."""
+
+    coefficients: tuple[int, ...] = (-3, -2, -1, 0, 1, 2, 3)
+    moduli: tuple[int, ...] = tuple(range(2, 21))
+    max_atoms: int = 12
+    max_clauses: int = 3
+
+    def __post_init__(self) -> None:
+        if self.coefficients != (-3, -2, -1, 0, 1, 2, 3):
+            raise ValueError("T27 coefficients are frozen at -3..3")
+        if self.moduli != tuple(range(2, 21)):
+            raise ValueError("T27 congruence moduli are frozen at 2..20")
+        if self.max_atoms != 12 or self.max_clauses != 3:
+            raise ValueError("T27 certificate size is frozen at 12 atoms and 3 clauses")
+
+
+@dataclass(frozen=True)
+class PBRow:
+    """One exact pseudo-Boolean row retained with its source label."""
+
+    relation: str
+    terms: tuple[tuple[str, int], ...]
+    constant: int
+    source: str
+
+    def __post_init__(self) -> None:
+        if self.relation not in {"eq", "le"}:
+            raise ValueError("a PB row relation must be eq or le")
+        if not _is_int(self.constant):
+            raise ValueError("a PB row constant must be an integer")
+        if not isinstance(self.source, str) or not self.source:
+            raise ValueError("a PB row source must be nonempty")
+        if not self.terms:
+            raise ValueError("a PB row must contain at least one term")
+        names: set[str] = set()
+        normalized = []
+        for name, coefficient in self.terms:
+            if not isinstance(name, str) or not name or name in names:
+                raise ValueError("PB row variables must be nonempty and unique")
+            if not _is_int(coefficient) or coefficient == 0:
+                raise ValueError("PB row coefficients must be nonzero integers")
+            names.add(name)
+            normalized.append((name, coefficient))
+        object.__setattr__(self, "terms", tuple(sorted(normalized)))
+
+
+@dataclass(frozen=True)
+class DerivedCandidate:
+    """A grammar atom together with an independently replayable derivation."""
+
+    atom: LinearAtom
+    route: str
+    parent_sources: tuple[str, ...]
+    multipliers: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CegisLayer:
+    """A complete finite positive/bad-state problem used by state CEGIS."""
+
+    variables: tuple[str, ...]
+    positive_states: tuple[dict[str, int], ...]
+    bad_states: tuple[dict[str, int], ...]
+
+    def __post_init__(self) -> None:
+        if not self.variables or len(set(self.variables)) != len(self.variables):
+            raise ValueError("CEGIS variables must be nonempty and unique")
+        scope = set(self.variables)
+        for state in (*self.positive_states, *self.bad_states):
+            if set(state) != scope or any(not _is_int(value) for value in state.values()):
+                raise ValueError("CEGIS states must be integral and match their scope")
+
+
+@dataclass(frozen=True)
+class SynthesisResult:
+    status: str
+    route_provenance: tuple[str, ...]
+    candidate: LayerPredicate | None
+    checked_obligations: tuple[ObligationResult, ...]
+    compression: dict[str, int | bool]
+    stop_reason: str | None = None
+
+
+def _atom_holds(atom: LinearAtom, state: dict[str, int]) -> bool:
+    total = sum(coefficient * state[name] for name, coefficient in atom.terms)
+    if atom.relation == "eq":
+        return total == atom.constant
+    if atom.relation == "le":
+        return total <= atom.constant
+    assert atom.modulus is not None
+    return (total - atom.constant) % atom.modulus == 0
+
+
+def enumerate_atoms(
+    states: Iterable[dict[str, int]],
+    variables: tuple[str, ...],
+    limits: GrammarLimits,
+) -> tuple[LinearAtom, ...]:
+    """Enumerate grammar atoms true on every supplied state.
+
+    This exhaustive helper is intentionally restricted to small explicit cuts;
+    the real 14-variable synthesis path uses solver-guided counterexamples.
+    """
+    rows = tuple(states)
+    if not rows:
+        raise ValueError("atom enumeration requires at least one state")
+    if not variables or len(set(variables)) != len(variables):
+        raise ValueError("atom variables must be nonempty and unique")
+    if len(variables) > 6:
+        raise ValueError("exhaustive atom enumeration is limited to six variables")
+    for row in rows:
+        if set(row) != set(variables) or any(not _is_int(value) for value in row.values()):
+            raise ValueError("each atom-enumeration state must match the variable scope")
+
+    atoms: set[LinearAtom] = set()
+    for coefficients in product(limits.coefficients, repeat=len(variables)):
+        if not any(coefficients):
+            continue
+        terms = tuple(
+            (name, coefficient)
+            for name, coefficient in zip(variables, coefficients, strict=True)
+            if coefficient
+        )
+        totals = tuple(
+            sum(coefficient * row[name] for name, coefficient in terms)
+            for row in rows
+        )
+        if len(set(totals)) == 1:
+            atoms.add(LinearAtom("eq", terms, totals[0]))
+        atoms.add(LinearAtom("le", terms, max(totals)))
+        for modulus in limits.moduli:
+            residues = {total % modulus for total in totals}
+            if len(residues) == 1:
+                atoms.add(
+                    LinearAtom(
+                        "congruent",
+                        terms,
+                        residues.pop(),
+                        modulus=modulus,
+                    )
+                )
+    return tuple(sorted(atoms, key=canonical_bytes))
+
+
+def synthesize_cegis(
+    layers: Iterable[CegisLayer],
+    limits: GrammarLimits,
+) -> tuple[DerivedCandidate, ...]:
+    """Greedily separate complete small bad-state sets within the grammar."""
+    result = []
+    relation_rank = {"eq": 0, "le": 1, "congruent": 2}
+    for number, layer in enumerate(layers):
+        atoms = enumerate_atoms(layer.positive_states, layer.variables, limits)
+        remaining = list(layer.bad_states)
+        for _ in range(limits.max_atoms):
+            ranked = sorted(
+                (
+                    (
+                        sum(not _atom_holds(atom, state) for state in remaining),
+                        atom,
+                    )
+                    for atom in atoms
+                ),
+                key=lambda item: (
+                    -item[0],
+                    relation_rank[item[1].relation],
+                    canonical_bytes(item[1]),
+                ),
+            )
+            if not ranked or ranked[0][0] == 0:
+                break
+            atom = ranked[0][1]
+            result.append(
+                DerivedCandidate(
+                    atom=atom,
+                    route="state_cegis",
+                    parent_sources=(
+                        f"layer:{number}:complete-positive-and-bad-states",
+                    ),
+                    multipliers=(),
+                )
+            )
+            remaining = [state for state in remaining if _atom_holds(atom, state)]
+            if not remaining:
+                break
+    return tuple(result)
+
+
+def _separator_for_relation(
+    positive_states: tuple[dict[str, int], ...],
+    bad_state: dict[str, int],
+    variables: tuple[str, ...],
+    relation: str,
+    modulus: int | None,
+    limits: GrammarLimits,
+) -> LinearAtom | None:
+    try:
+        import z3  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise EvidenceError("solver-guided synthesis requires z3-solver") from error
+    coefficients = {
+        name: z3.Int(f"t27_separator_{index}")
+        for index, name in enumerate(variables)
+    }
+    solver = z3.Optimize()
+    for coefficient in coefficients.values():
+        solver.add(
+            coefficient >= min(limits.coefficients),
+            coefficient <= max(limits.coefficients),
+        )
+    solver.add(z3.Or(*(coefficient != 0 for coefficient in coefficients.values())))
+
+    def total(state: dict[str, int]) -> object:
+        return sum(coefficients[name] * state[name] for name in variables)
+
+    positive_totals = tuple(total(state) for state in positive_states)
+    bad_total = total(bad_state)
+    if relation == "eq":
+        reference = positive_totals[0]
+        solver.add(*(value == reference for value in positive_totals[1:]))
+        solver.add(bad_total != reference)
+    elif relation == "le":
+        boundary = z3.Int("t27_separator_boundary")
+        solver.add(*(value <= boundary for value in positive_totals))
+        solver.add(z3.Or(*(boundary == value for value in positive_totals)))
+        solver.add(bad_total > boundary)
+    elif relation == "congruent":
+        assert modulus is not None
+        reference = positive_totals[0]
+        solver.add(*((value - reference) % modulus == 0 for value in positive_totals[1:]))
+        solver.add((bad_total - reference) % modulus != 0)
+    else:  # pragma: no cover - private caller fixes the relation set
+        raise AssertionError(f"unknown separator relation: {relation}")
+
+    support = z3.Sum(
+        *(z3.If(coefficient == 0, 0, 1) for coefficient in coefficients.values())
+    )
+    absolute_sum = z3.Sum(*(z3.Abs(value) for value in coefficients.values()))
+    coefficient_order = (0, 1, -1, 2, -2, 3, -3)
+    lexical_code = 0
+    for index, name in enumerate(variables):
+        rank = z3.Sum(
+            *(
+                z3.If(coefficients[name] == value, position, 0)
+                for position, value in enumerate(coefficient_order)
+            )
+        )
+        lexical_code += rank * (len(coefficient_order) ** (len(variables) - index - 1))
+    solver.minimize(support)
+    solver.minimize(absolute_sum)
+    solver.minimize(lexical_code)
+    status = solver.check()
+    if status == z3.unknown:
+        raise EvidenceError(
+            f"separator synthesis returned UNKNOWN: {solver.reason_unknown()}"
+        )
+    if status == z3.unsat:
+        return None
+    model = solver.model()
+    terms = tuple(
+        (name, model.eval(coefficients[name]).as_long())
+        for name in variables
+        if model.eval(coefficients[name]).as_long()
+    )
+    totals = tuple(
+        sum(coefficient * state[name] for name, coefficient in terms)
+        for state in positive_states
+    )
+    if relation == "eq":
+        atom = LinearAtom("eq", terms, totals[0])
+    elif relation == "le":
+        atom = LinearAtom("le", terms, max(totals))
+    else:
+        assert modulus is not None
+        atom = LinearAtom("congruent", terms, totals[0] % modulus, modulus=modulus)
+    if not all(_atom_holds(atom, state) for state in positive_states):
+        raise EvidenceError("solver-derived atom fails a positive-state replay")
+    if _atom_holds(atom, bad_state):
+        raise EvidenceError("solver-derived atom fails to separate its counterexample")
+    return atom
+
+
+def separate_counterexample(
+    positive_states: Iterable[dict[str, int]],
+    bad_state: dict[str, int],
+    variables: tuple[str, ...],
+    limits: GrammarLimits,
+) -> DerivedCandidate | None:
+    """Find the cheapest bounded atom covering positives but rejecting one model."""
+    positives = tuple(positive_states)
+    if not positives:
+        raise ValueError("separator synthesis requires a positive component")
+    scope = set(variables)
+    if not variables or len(scope) != len(variables):
+        raise ValueError("separator variables must be nonempty and unique")
+    for state in (*positives, bad_state):
+        if set(state) != scope or any(not _is_int(value) for value in state.values()):
+            raise ValueError("separator states must be integral and match their scope")
+    candidates = []
+    for relation, modulus in (("eq", None), ("le", None)):
+        atom = _separator_for_relation(
+            positives,
+            bad_state,
+            variables,
+            relation,
+            modulus,
+            limits,
+        )
+        if atom is not None:
+            candidates.append(atom)
+    if not candidates:
+        for modulus in limits.moduli:
+            atom = _separator_for_relation(
+                positives,
+                bad_state,
+                variables,
+                "congruent",
+                modulus,
+                limits,
+            )
+            if atom is not None:
+                candidates.append(atom)
+    if not candidates:
+        return None
+    relation_rank = {"eq": 0, "le": 1, "congruent": 2}
+    atom = min(
+        candidates,
+        key=lambda item: (
+            len(item.terms),
+            sum(abs(coefficient) for _, coefficient in item.terms),
+            relation_rank[item.relation],
+            item.modulus or 0,
+            canonical_bytes(item),
+        ),
+    )
+    return DerivedCandidate(
+        atom=atom,
+        route="state_cegis",
+        parent_sources=("complete-positive-component", "exact-counterexample"),
+        multipliers=(),
+    )
+
+
+def _unit_equality(variable: str, constant: int) -> LinearAtom:
+    return LinearAtom("eq", ((variable, 1),), constant)
+
+
+def synthesize_terminal_predicate(
+    inputs: tuple[EquationManifest, FrontierCertificate],
+    limits: GrammarLimits,
+) -> LayerPredicate:
+    """Construct and replay the three discovered layer-32 structural families."""
+    manifest, frontier = inputs
+    layer = frontier.layers_by_number[32]
+    variables = tuple(_canonical_map(layer, "output").values())
+    expected_variables = (
+        "L0",
+        "R0",
+        "L1",
+        "R1",
+        "L2",
+        "R2",
+        "L3",
+        "R3",
+        "L4",
+        "R4",
+        "L5",
+        "R5",
+        "D0",
+        "D1",
+    )
+    if variables != expected_variables:
+        raise EvidenceError("layer-32 canonical frontier changed")
+
+    phase_zero_family = Conjunction(
+        (
+            _unit_equality("L0", 0),
+            _unit_equality("L1", 1),
+            _unit_equality("L2", 1),
+            _unit_equality("L5", 0),
+            _unit_equality("R5", 1),
+            LinearAtom("eq", (("D0", 1), ("D1", -1), ("R0", 1)), 0),
+            LinearAtom(
+                "eq",
+                (("D1", 1), ("R0", -1), ("R2", -1), ("R1", 3)),
+                13,
+            ),
+            LinearAtom("eq", (("L3", 1), ("R3", 1)), 1),
+            LinearAtom("eq", (("L4", 1), ("R4", 1)), 1),
+            LinearAtom("eq", (("R2", 1), ("R4", -1)), 0),
+            LinearAtom("eq", (("R1", 1), ("L3", 1), ("L4", 1)), 1),
+        )
+    )
+    high_digit_family = Conjunction(
+        (
+            _unit_equality("L0", 1),
+            _unit_equality("L1", 0),
+            _unit_equality("R1", 1),
+            _unit_equality("L2", 0),
+            _unit_equality("R2", 1),
+            _unit_equality("L3", 1),
+            _unit_equality("L4", 1),
+            _unit_equality("R4", 0),
+            LinearAtom("eq", (("D0", 1), ("R3", -2), ("R5", 1)), 14),
+            LinearAtom("eq", (("D1", 1), ("R0", -1), ("R3", -1)), 0),
+            LinearAtom("eq", (("L5", 1), ("R3", -1)), 0),
+        )
+    )
+    residue_family = Conjunction(
+        (
+            _unit_equality("L0", 1),
+            _unit_equality("R1", 0),
+            _unit_equality("L2", 1),
+            _unit_equality("L3", 0),
+            _unit_equality("L4", 1),
+            LinearAtom("eq", (("R2", 1), ("R4", -1)), 0),
+            LinearAtom("eq", (("L1", 1), ("R4", 1)), 1),
+            LinearAtom("eq", (("D0", 1), ("R5", 1), ("L5", -1)), 5),
+            LinearAtom(
+                "congruent",
+                (("R0", 1), ("R2", -3), ("D1", -1)),
+                17,
+                modulus=19,
+            ),
+            LinearAtom("eq", (("L5", 1), ("R4", 1), ("R3", -1)), 1),
+        )
+    )
+    predicate = LayerPredicate(
+        32,
+        variables,
+        (phase_zero_family, high_digit_family, residue_family),
+    )
+    if any(len(clause.atoms) > limits.max_atoms for clause in predicate.clauses):
+        raise EvidenceError("terminal family exceeds the closed atom budget")
+    if len(predicate.clauses) > limits.max_clauses:
+        raise EvidenceError("terminal predicate exceeds the closed clause budget")
+    reachable = tuple(
+        canonicalize_state(layer, "output", state)
+        for state in layer.output_states
+    )
+    coverage = tuple(
+        sum(
+            all(_atom_holds(atom, state) for atom in clause.atoms)
+            for state in reachable
+        )
+        for clause in predicate.clauses
+    )
+    if sorted(coverage) != [6, 8, 8]:
+        raise EvidenceError(f"terminal structural-family coverage changed: {coverage}")
+    if check_initiation(layer, predicate).status != "PASS":
+        raise EvidenceError("terminal structural families miss a reachable state")
+    if check_exclusion(manifest, frontier, predicate).status != "PASS":
+        raise EvidenceError("terminal structural families admit a terminal model")
+    return predicate
+
+
+def synthesize_late_certificate(
+    inputs: tuple[EquationManifest, FrontierCertificate],
+) -> SynthesisResult:
+    """Return the exact achieved tail lemma and the bounded backward stop."""
+    manifest, frontier = inputs
+    predicate = synthesize_terminal_predicate(inputs, GrammarLimits())
+    initiation = check_initiation(frontier.layers_by_number[32], predicate)
+    exclusion = check_exclusion(manifest, frontier, predicate)
+    if initiation.status != "PASS" or exclusion.status != "PASS":
+        raise EvidenceError("verified terminal predicate changed before late synthesis")
+    compression = compression_record(
+        predicate.to_payload(),
+        state_table_payload(
+            tuple(frontier.layers_by_number[number] for number in range(25, 33))
+        ),
+    )
+    return SynthesisResult(
+        status="STOP",
+        route_provenance=(
+            "state_cegis_terminal_counterexamples",
+            "pb_elimination_structural_families",
+            "layer_31_single_component_12_atom_cap_reached",
+            "layer_31_three_component_trials_not_found",
+            "no_invariant_impossibility_claim",
+        ),
+        candidate=predicate,
+        checked_obligations=(initiation, exclusion),
+        compression=compression,
+        stop_reason="backward_extension_layer_31_not_found",
+    )
+
+
+def derive_cut_candidates(
+    rows: Iterable[PBRow],
+    shared_variables: tuple[str, ...],
+    limits: GrammarLimits,
+) -> tuple[DerivedCandidate, ...]:
+    """Eliminate one local variable from pairs of exact PB equalities."""
+    parents = tuple(rows)
+    shared = set(shared_variables)
+    if not shared_variables or len(shared) != len(shared_variables):
+        raise ValueError("shared variables must be nonempty and unique")
+    derived: dict[LinearAtom, DerivedCandidate] = {}
+    for left, right in combinations(parents, 2):
+        if left.relation != "eq" or right.relation != "eq":
+            continue
+        left_terms = dict(left.terms)
+        right_terms = dict(right.terms)
+        locals_to_eliminate = sorted((set(left_terms) | set(right_terms)) - shared)
+        for local in locals_to_eliminate:
+            left_coefficient = left_terms.get(local, 0)
+            right_coefficient = right_terms.get(local, 0)
+            if not left_coefficient or not right_coefficient:
+                continue
+            divisor = math.gcd(abs(left_coefficient), abs(right_coefficient))
+            multipliers = (
+                right_coefficient // divisor,
+                -left_coefficient // divisor,
+            )
+            if multipliers[0] < 0:
+                multipliers = (-multipliers[0], -multipliers[1])
+            combined = {
+                name: multipliers[0] * left_terms.get(name, 0)
+                + multipliers[1] * right_terms.get(name, 0)
+                for name in set(left_terms) | set(right_terms)
+            }
+            combined = {
+                name: coefficient
+                for name, coefficient in combined.items()
+                if coefficient
+            }
+            if not combined or set(combined) - shared:
+                continue
+            if max(abs(coefficient) for coefficient in combined.values()) > max(
+                limits.coefficients
+            ):
+                continue
+            constant = (
+                multipliers[0] * left.constant
+                + multipliers[1] * right.constant
+            )
+            atom = LinearAtom("eq", tuple(combined.items()), constant)
+            candidate = DerivedCandidate(
+                atom=atom,
+                route="pb_elimination",
+                parent_sources=(left.source, right.source),
+                multipliers=multipliers,
+            )
+            prior = derived.get(atom)
+            if prior is None or canonical_bytes(candidate) < canonical_bytes(prior):
+                derived[atom] = candidate
+    return tuple(sorted(derived.values(), key=canonical_bytes))
 
 
 def _parse_atom(payload: object) -> Atom:

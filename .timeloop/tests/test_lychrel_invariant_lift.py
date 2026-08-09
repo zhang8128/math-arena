@@ -24,19 +24,38 @@ from lychrel_invariant_certificate import (  # noqa: E402
 )
 from t27_base19_invariant_lift import (  # noqa: E402
     Atom,
+    CegisLayer,
     Equation,
     EquationManifest,
     EvidenceError,
     FrontierCertificate,
     FrontierLayer,
     FrontierTransition,
+    GrammarLimits,
+    PBRow,
     canonicalize_state,
     check_certificate,
+    check_exclusion,
     check_initiation,
+    derive_cut_candidates,
+    enumerate_atoms,
     load_promoted_inputs,
     reproduce_structural_baseline,
+    separate_counterexample,
     state_table_payload,
+    synthesize_cegis,
+    synthesize_late_certificate,
+    synthesize_terminal_predicate,
 )
+
+
+def _atom_value(atom: LinearAtom, state: dict[str, int]) -> bool:
+    predicate = LayerPredicate(
+        0,
+        tuple(state),
+        (Conjunction((atom,)),),
+    )
+    return evaluate_predicate(predicate, state)
 
 
 def test_linear_congruence_and_carry_literal_evaluation() -> None:
@@ -469,3 +488,122 @@ def test_checker_accepts_a_complete_three_layer_certificate() -> None:
         "exclusion",
     ]
     assert all(obligation.status == "PASS" for obligation in result.obligations)
+
+
+def test_atom_enumerator_respects_the_closed_grammar() -> None:
+    atoms = tuple(
+        enumerate_atoms(
+            states=({"L0": 0, "R0": 1, "D0": 5},),
+            variables=("L0", "R0", "D0"),
+            limits=GrammarLimits(),
+        )
+    )
+
+    assert atoms == tuple(sorted(set(atoms), key=canonical_bytes))
+    assert atoms
+    assert all(max(abs(coefficient) for _, coefficient in atom.terms) <= 3 for atom in atoms)
+    assert all(atom.modulus is None or 2 <= atom.modulus <= 20 for atom in atoms)
+
+
+def test_pb_elimination_derives_a_shared_frontier_equality() -> None:
+    rows = (
+        PBRow("eq", (("L0", 1), ("x", 1), ("D0", -1)), 0, source="left"),
+        PBRow("eq", (("R0", 1), ("x", -1)), 0, source="right"),
+    )
+
+    candidates = derive_cut_candidates(
+        rows,
+        shared_variables=("L0", "R0", "D0"),
+        limits=GrammarLimits(),
+    )
+
+    expected = LinearAtom(
+        "eq",
+        (("L0", 1), ("R0", 1), ("D0", -1)),
+        0,
+    )
+    candidate = next(item for item in candidates if item.atom == expected)
+    assert candidate.route == "pb_elimination"
+    assert candidate.parent_sources == ("left", "right")
+    assert candidate.multipliers == (1, 1)
+
+
+def test_state_cegis_discovers_a_single_shared_equality() -> None:
+    variables = ("L0", "R0", "D0")
+    positives = (
+        {"L0": 0, "R0": 0, "D0": 0},
+        {"L0": 0, "R0": 1, "D0": 1},
+        {"L0": 1, "R0": 0, "D0": 1},
+        {"L0": 1, "R0": 1, "D0": 2},
+    )
+    bad_states = tuple(
+        {"L0": left, "R0": right, "D0": digit}
+        for left in range(2)
+        for right in range(2)
+        for digit in range(3)
+        if left + right != digit
+    )
+
+    candidates = synthesize_cegis(
+        (CegisLayer(variables, positives, bad_states),),
+        GrammarLimits(),
+    )
+
+    expected = LinearAtom(
+        "eq",
+        (("L0", 1), ("R0", 1), ("D0", -1)),
+        0,
+    )
+    candidate = next(item for item in candidates if item.atom == expected)
+    assert candidate.route == "state_cegis"
+    assert candidate.parent_sources == ("layer:0:complete-positive-and-bad-states",)
+
+
+def test_solver_guided_separator_does_not_expand_the_closed_grammar() -> None:
+    variables = ("L0", "R0", "L1", "R1", "L2", "R2", "D0")
+    positives = (
+        {"L0": 0, "R0": 0, "L1": 0, "R1": 0, "L2": 0, "R2": 0, "D0": 0},
+        {"L0": 0, "R0": 1, "L1": 1, "R1": 0, "L2": 1, "R2": 0, "D0": 1},
+        {"L0": 1, "R0": 0, "L1": 0, "R1": 1, "L2": 0, "R2": 1, "D0": 1},
+    )
+    bad = {"L0": 0, "R0": 0, "L1": 0, "R1": 0, "L2": 0, "R2": 0, "D0": 1}
+
+    candidate = separate_counterexample(positives, bad, variables, GrammarLimits())
+
+    assert candidate is not None
+    assert candidate.route == "state_cegis"
+    assert all(_atom_value(candidate.atom, state) for state in positives)
+    assert not _atom_value(candidate.atom, bad)
+    assert max(abs(coefficient) for _, coefficient in candidate.atom.terms) <= 3
+
+
+def test_terminal_family_predicate_covers_and_excludes_exactly() -> None:
+    inputs = load_promoted_inputs(ROOT)
+    manifest, frontier = inputs
+
+    predicate = synthesize_terminal_predicate(inputs, GrammarLimits())
+
+    assert predicate.layer == 32
+    assert len(predicate.clauses) == 3
+    assert sorted(len(clause.atoms) for clause in predicate.clauses) == [10, 11, 11]
+    assert check_initiation(frontier.layers_by_number[32], predicate).status == "PASS"
+    assert check_exclusion(manifest, frontier, predicate).status == "PASS"
+    assert any(
+        atom.relation == "congruent" and atom.modulus == 19
+        for clause in predicate.clauses
+        for atom in clause.atoms
+    )
+
+
+def test_late_synthesis_stops_without_claiming_grammar_impossibility() -> None:
+    result = synthesize_late_certificate(load_promoted_inputs(ROOT))
+
+    assert result.status == "STOP"
+    assert result.stop_reason == "backward_extension_layer_31_not_found"
+    assert result.candidate is not None and result.candidate.layer == 32
+    assert [obligation.status for obligation in result.checked_obligations] == [
+        "PASS",
+        "PASS",
+    ]
+    assert result.compression["at_least_tenfold"] is False
+    assert "no_invariant_impossibility_claim" in result.route_provenance
