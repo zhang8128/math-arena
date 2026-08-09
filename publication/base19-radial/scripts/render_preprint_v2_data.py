@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,27 @@ FRONTIER_SCHEMA = "base19-radial-frontier-v1"
 CORE_SCHEMA = "base19-radial-minimal-core-frontier-v1"
 WITNESS_SCHEMA = "base19-radial-witness-v1"
 DELETION_SCHEMA = "base19-radial-deletion-v1"
+PACKED_THEOREM = "Base19Radial.packedMinimalCoreUnsat"
+PACKED_COMMAND = "lake env lean Base19Radial/Generated/CoreBV.lean"
+PACKED_LEAN_VERSION = "4.32.2"
+PACKED_AXIOMS = [
+    "propext",
+    "Classical.choice",
+    "Quot.sound",
+    "packedMinimalCoreUnsat._native.bv_decide.ax_1_5",
+]
+LATEX_TEXT_ESCAPES = {
+    "\\": r"\textbackslash{}",
+    "{": r"\{",
+    "}": r"\}",
+    "#": r"\#",
+    "$": r"\$",
+    "%": r"\%",
+    "&": r"\&",
+    "_": r"\_",
+    "^": r"\^{}",
+    "~": r"\~{}",
+}
 
 
 def canonical_bytes(payload: object) -> bytes:
@@ -44,6 +66,12 @@ def command(name: str, value: object) -> str:
     return rf"\newcommand{{\{name}}}{{{value}}}"
 
 
+def latex_texttt(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("LaTeX text value must be a string")
+    return r"\texttt{" + "".join(LATEX_TEXT_ESCAPES.get(char, char) for char in value) + "}"
+
+
 def require_int(value: object, label: str) -> int:
     if type(value) is not int:
         raise ValueError(f"{label} must be an integer")
@@ -54,6 +82,24 @@ def require_number(value: object, label: str) -> float:
     if type(value) not in (int, float):
         raise ValueError(f"{label} must be a number")
     return float(value)
+
+
+def validate_promoted_checksum(artifact_dir: Path, relative_path: str) -> None:
+    checksum_path = artifact_dir / "SHA256SUMS"
+    expected: str | None = None
+    for line in checksum_path.read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+        if match is None:
+            raise ValueError("SHA256SUMS has an invalid entry")
+        digest, path = match.groups()
+        if path == relative_path:
+            if expected is not None:
+                raise ValueError(f"SHA256SUMS has duplicate {relative_path} entries")
+            expected = digest
+    if expected is None:
+        raise ValueError(f"SHA256SUMS does not bind {relative_path}")
+    if file_sha(artifact_dir / relative_path) != expected:
+        raise ValueError(f"{Path(relative_path).name} checksum mismatch")
 
 
 def atom_variable(atom: object, base: int) -> str | None:
@@ -137,11 +183,13 @@ def packed_shape(
     return packed_width, slot_width, constraint_count
 
 
-def validated_deletions(path: Path, equations: list[dict[str, Any]]) -> tuple[int, int]:
+def validated_deletions(
+    path: Path, equations: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
     records = path.read_bytes().splitlines()
     if len(records) != len(equations):
         raise ValueError("deletion audit record count changed")
-    statuses: list[str] = []
+    records_by_removal: dict[str, dict[str, Any]] = {}
     for index, (line, equation) in enumerate(zip(records, equations, strict=True)):
         try:
             record = json.loads(line)
@@ -160,8 +208,11 @@ def validated_deletions(path: Path, equations: list[dict[str, Any]]) -> tuple[in
         status = record.get("status")
         if status not in {"SAT", "UNSAT"}:
             raise ValueError("deletion audit status is not exact")
-        statuses.append(status)
-    return statuses.count("SAT"), statuses.count("UNSAT")
+        removed = record["removed"]
+        if not isinstance(removed, str) or removed in records_by_removal:
+            raise ValueError("deletion audit removal records are invalid")
+        records_by_removal[removed] = record
+    return records_by_removal
 
 
 def measured_run(manifest: dict[str, Any], name: str) -> dict[str, Any]:
@@ -174,6 +225,44 @@ def measured_run(manifest: dict[str, Any], name: str) -> dict[str, Any]:
 def formatted_run_seconds(manifest: dict[str, Any], name: str, label: str) -> str:
     run = measured_run(manifest, name)
     return f"{require_number(run.get('wall_seconds'), label):.2f}"
+
+
+def validate_packed_run(run: dict[str, Any], equation_sha: str) -> None:
+    if (
+        run.get("command") != PACKED_COMMAND
+        or run.get("lean_version") != PACKED_LEAN_VERSION
+        or run.get("theorem") != PACKED_THEOREM
+        or run.get("manifest_sha256") != equation_sha
+        or run.get("axioms") != PACKED_AXIOMS
+    ):
+        raise ValueError("packed Lean run context changed")
+    if not math.isfinite(require_number(run.get("wall_seconds"), "packed Lean wall seconds")) or (
+        require_number(run.get("wall_seconds"), "packed Lean wall seconds") <= 0
+    ):
+        raise ValueError("packed Lean wall seconds must be positive and finite")
+    if require_int(run.get("max_rss_bytes"), "packed Lean maximum RSS") <= 0:
+        raise ValueError("packed Lean maximum RSS must be positive")
+
+
+def validate_certificate_summary(payload: dict[str, Any], base: int, label: str) -> None:
+    if require_int(payload.get("base"), f"{label} base") != base:
+        raise ValueError(f"{label} base changed")
+    layers = payload.get("layers")
+    if not isinstance(layers, list) or not layers:
+        raise ValueError(f"{label} layers are missing")
+    if not all(isinstance(layer, dict) for layer in layers):
+        raise ValueError(f"{label} layer is malformed")
+    maximums = {
+        "max_reachable_state_count": "output_state_count",
+        "max_frontier_digit_count": "output_frontier_digit_count",
+        "max_frontier_carry_count": "output_frontier_carry_count",
+    }
+    for summary_key, layer_key in maximums.items():
+        if require_int(payload.get(summary_key), f"{label} {summary_key}") != max(
+            require_int(layer.get(layer_key), f"{label} layer {layer_key}")
+            for layer in layers
+        ):
+            raise ValueError(f"{label} {summary_key} disagrees with its layers")
 
 
 def claim_theorem(manifest: dict[str, Any], identifier: str) -> str:
@@ -227,6 +316,7 @@ def render(artifact_dir: Path) -> str:
         or frontier.get("equations_sha256") != equation_sha
     ):
         raise ValueError("candidate frontier is not bound to the equation manifest")
+    validate_certificate_summary(frontier, base, "candidate frontier")
     if (
         core.get("schema") != CORE_SCHEMA
         or core.get("status") != "UNSAT"
@@ -234,6 +324,7 @@ def render(artifact_dir: Path) -> str:
         or core.get("deletions_sha256") != file_sha(deletion_path)
     ):
         raise ValueError("minimal-core certificate is not bound to frozen evidence")
+    validate_certificate_summary(core, base, "minimal-core certificate")
     if (
         witness.get("schema") != WITNESS_SCHEMA
         or witness.get("status") != "SAT"
@@ -241,17 +332,47 @@ def render(artifact_dir: Path) -> str:
         or witness.get("equation_count") != core.get("equation_count")
     ):
         raise ValueError("known deletion witness is not bound to frozen evidence")
+    validate_certificate_summary(witness, base, "known deletion witness")
+    if (
+        witness.get("active_digit_count") != core.get("active_digit_count")
+        or witness.get("active_carry_count") != core.get("active_carry_count")
+    ):
+        raise ValueError("known deletion witness variable counts changed")
+    replay = witness.get("witness_replay")
+    expected_replay = {
+        "status": "valid",
+        "equation_count": core["equation_count"],
+        "digit_count": core["active_digit_count"],
+        "carry_count": core["active_carry_count"],
+    }
+    if replay != expected_replay:
+        raise ValueError("known deletion witness replay metadata changed")
 
-    sat_deletions, unsat_deletions = validated_deletions(deletion_path, all_equations)
+    deletion_records = validated_deletions(deletion_path, all_equations)
+    sat_deletions = sum(record["status"] == "SAT" for record in deletion_records.values())
+    unsat_deletions = sum(
+        record["status"] == "UNSAT" for record in deletion_records.values()
+    )
     if (sat_deletions, unsat_deletions) != (core["equation_count"], 1):
         raise ValueError("deletion audit status counts changed")
+    core_removal = core.get("removed")
+    if (
+        not isinstance(core_removal, str)
+        or deletion_records.get(core_removal, {}).get("status") != "UNSAT"
+    ):
+        raise ValueError("core removal is not the audit's unique UNSAT deletion")
+    witness_removal = witness.get("removed")
+    if (
+        not isinstance(witness_removal, str)
+        or deletion_records.get(witness_removal, {}).get("status") != "SAT"
+    ):
+        raise ValueError("known deletion witness removal is not SAT in the audit")
 
     packed_run = measured_run(manifest, "lean_packed_core_bv")
-    if (
-        packed_run.get("manifest_sha256") != equation_sha
-        or packed_run.get("theorem") != "Base19Radial.packedMinimalCoreUnsat"
-    ):
-        raise ValueError("packed Lean run is not bound to the equation manifest")
+    validate_packed_run(packed_run, equation_sha)
+    validate_promoted_checksum(
+        artifact_dir, "lean/Base19Radial/Generated/CoreBV.lean"
+    )
     core_source = core_bv_path.read_text(encoding="utf-8")
     packed_theorem_name = packed_run["theorem"].rsplit(".", maxsplit=1)[-1]
     if (
@@ -278,8 +399,8 @@ def render(artifact_dir: Path) -> str:
         ("DeletionAuditCount", sat_deletions + unsat_deletions),
         ("SatDeletionCount", sat_deletions),
         ("UnsatDeletionCount", unsat_deletions),
-        ("RemovedCoreEquation", r"\texttt{" + core["removed"] + "}"),
-        ("KnownSatRemovedEquation", r"\texttt{" + witness["removed"] + "}"),
+        ("RemovedCoreEquation", latex_texttt(core["removed"])),
+        ("KnownSatRemovedEquation", latex_texttt(witness["removed"])),
         (
             "CoreReplaySeconds",
             formatted_run_seconds(
@@ -318,19 +439,19 @@ def render(artifact_dir: Path) -> str:
                 "Lean witness wall seconds",
             ),
         ),
-        ("CandidateCertificateSha", r"\texttt{" + file_sha(certificates / "frontier.json") + "}"),
+        ("CandidateCertificateSha", latex_texttt(file_sha(certificates / "frontier.json"))),
         (
             "CoreCertificateSha",
-            r"\texttt{" + file_sha(certificates / "minimal-core-frontier.json") + "}",
+            latex_texttt(file_sha(certificates / "minimal-core-frontier.json")),
         ),
-        ("DeletionAuditSha", r"\texttt{" + file_sha(deletion_path) + "}"),
+        ("DeletionAuditSha", latex_texttt(file_sha(deletion_path))),
         (
             "GenericSoundnessTheorem",
-            r"\texttt{" + claim_theorem(manifest, "generic_radial_soundness") + "}",
+            latex_texttt(claim_theorem(manifest, "generic_radial_soundness")),
         ),
         (
             "ConcreteSatTheorem",
-            r"\texttt{" + claim_theorem(manifest, "delete_p0_c0_sat") + "}",
+            latex_texttt(claim_theorem(manifest, "delete_p0_c0_sat")),
         ),
         ("PackedWidth", packed_width),
         ("PackedSlotWidth", slot_width),
@@ -340,8 +461,8 @@ def render(artifact_dir: Path) -> str:
             f"{require_number(packed_run.get('wall_seconds'), 'packed Lean wall seconds'):.2f}",
         ),
         ("PackedLeanMaxRSS", f"{packed_max_rss / 1_000_000_000:.2f}\\,GB"),
-        ("PackedTheorem", r"\texttt{" + packed_run["theorem"] + "}"),
-        ("PackedManifestSha", r"\texttt{" + packed_run["manifest_sha256"] + "}"),
+        ("PackedTheorem", latex_texttt(packed_run["theorem"])),
+        ("PackedManifestSha", latex_texttt(packed_run["manifest_sha256"])),
     ]
     return (
         "% Generated; do not edit.\n"

@@ -1,5 +1,7 @@
 import hashlib
+import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +9,41 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 ARTIFACT = ROOT / "publication" / "base19-radial"
 PREPRINT = ARTIFACT / "preprint-v2"
+
+
+def render_preprint_data(
+    artifact_dir: Path, output: Path, *, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        (
+            sys.executable,
+            str(ARTIFACT / "scripts" / "render_preprint_v2_data.py"),
+            "--artifact-dir",
+            str(artifact_dir),
+            "--output",
+            str(output),
+        ),
+        check=check,
+        text=True,
+        capture_output=not check,
+    )
+
+
+def copied_artifact(tmp_path: Path) -> Path:
+    destination = tmp_path / "base19-radial"
+    shutil.copytree(ARTIFACT, destination)
+    return destination
+
+
+def redigest(payload: dict[str, object]) -> dict[str, object]:
+    unsigned = dict(payload)
+    unsigned.pop("content_sha256", None)
+    payload["content_sha256"] = hashlib.sha256(
+        (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return payload
 
 
 def test_bibliography_contains_every_required_primary_source() -> None:
@@ -48,20 +85,84 @@ def test_generated_results_are_deterministic_and_bound_to_evidence(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "generated-results.tex"
-    subprocess.run(
-        (
-            sys.executable,
-            str(ARTIFACT / "scripts" / "render_preprint_v2_data.py"),
-            "--artifact-dir",
-            str(ARTIFACT),
-            "--output",
-            str(output),
-        ),
-        check=True,
-    )
+    render_preprint_data(ARTIFACT, output)
     assert output.read_bytes() == (PREPRINT / "generated-results.tex").read_bytes()
     source = output.read_text(encoding="utf-8")
     assert r"\newcommand{\PackedWidth}{4914}" in source
     assert r"\newcommand{\PackedSlotWidth}{6}" in source
     assert r"\newcommand{\PackedConstraintCount}{1233}" in source
     assert r"\newcommand{\PackedLeanSeconds}{51.01}" in source
+
+
+def test_generated_results_escape_evidence_derived_latex_strings(tmp_path: Path) -> None:
+    output = tmp_path / "generated-results.tex"
+    render_preprint_data(ARTIFACT, output)
+
+    source = output.read_text(encoding="utf-8")
+    assert (
+        r"\newcommand{\GenericSoundnessTheorem}"
+        r"{\texttt{Base19Radial.unsat\_of\_closed\_empty\_frontier}}"
+    ) in source
+    assert (
+        r"\newcommand{\PackedTheorem}"
+        r"{\texttt{Base19Radial.packedMinimalCoreUnsat}}"
+    ) in source
+
+
+def test_generated_results_reject_packed_source_not_matching_promoted_checksum(
+    tmp_path: Path,
+) -> None:
+    artifact = copied_artifact(tmp_path)
+    source_path = artifact / "lean" / "Base19Radial" / "Generated" / "CoreBV.lean"
+    source = source_path.read_text(encoding="utf-8")
+    source_path.write_text(
+        source.replace(
+            "packedSlot assignment 0 < (19 : BitVec 6)",
+            "packedSlot assignment 1 < (19 : BitVec 6)",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
+    assert completed.returncode != 0
+    assert "CoreBV.lean checksum mismatch" in completed.stderr
+
+
+def test_generated_results_reject_altered_packed_run_context(tmp_path: Path) -> None:
+    artifact = copied_artifact(tmp_path)
+    manifest_path = artifact / "artifact-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    run = manifest["measured_runs"]["lean_packed_core_bv"]
+    run["command"] = "lake env lean altered.lean"
+    run["axioms"][-1] = "packedMinimalCoreUnsat._native.bv_decide.ax_9_9"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
+    assert completed.returncode != 0
+    assert "packed Lean run context changed" in completed.stderr
+
+
+def test_generated_results_reject_redigested_core_relabelled_as_known_sat_removal(
+    tmp_path: Path,
+) -> None:
+    artifact = copied_artifact(tmp_path)
+    witness = json.loads(
+        (artifact / "certificates" / "delete-p0-c0.json").read_text(encoding="utf-8")
+    )
+    core_path = artifact / "certificates" / "minimal-core-frontier.json"
+    core = json.loads(core_path.read_text(encoding="utf-8"))
+    core["removed"] = witness["removed"]
+    core_path.write_text(json.dumps(redigest(core)), encoding="utf-8")
+    source_path = artifact / "lean" / "Base19Radial" / "Generated" / "CoreBV.lean"
+    source_path.write_text(
+        source_path.read_text(encoding="utf-8").replace(
+            'def packedCoreRemovedProvenance : String := "phase=0,n=0,column=82"',
+            'def packedCoreRemovedProvenance : String := "phase=0,n=0,column=0"',
+        ),
+        encoding="utf-8",
+    )
+
+    completed = render_preprint_data(artifact, tmp_path / "tampered.tex", check=False)
+    assert completed.returncode != 0
+    assert "core removal is not the audit's unique UNSAT deletion" in completed.stderr
