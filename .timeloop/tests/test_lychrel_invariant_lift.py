@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -18,6 +19,13 @@ from lychrel_invariant_certificate import (  # noqa: E402
     compression_record,
     evaluate_predicate,
     parse_certificate,
+)
+from t27_base19_invariant_lift import (  # noqa: E402
+    EvidenceError,
+    canonicalize_state,
+    load_promoted_inputs,
+    reproduce_structural_baseline,
+    state_table_payload,
 )
 
 
@@ -168,3 +176,110 @@ def test_compression_record_uses_exact_integer_byte_comparison() -> None:
     assert result["compression_denominator"] == result["certificate_bytes"]
     assert result["at_least_tenfold"] is True
     json.dumps(result, allow_nan=False)
+
+
+def test_promoted_base19_inputs_have_frozen_identity() -> None:
+    equations, frontier = load_promoted_inputs(ROOT)
+
+    assert equations.content_sha256 == (
+        "ff79f31cbc55d7c463e6a14faedaad58d880509d5769e56b9a4bd06ebacd9040"
+    )
+    assert frontier.content_sha256 == (
+        "0d25cf4645b3c187c74511b0677ea1481c4ba6c923a726ffea9747ee1b4a64c0"
+    )
+    assert frontier.provenances_sha256 == (
+        "cac34c9317e8209bfea6a4e4fb37ef204346ccde54424f8c93dd8a8e40619302"
+    )
+    assert frontier.removed == "phase=0,n=0,column=82"
+    assert len(equations.equations) == 409
+    assert len(frontier.layers) == 35
+    assert tuple(layer.number for layer in frontier.layers) == tuple(range(-1, 34))
+    assert tuple(
+        frontier.layers_by_number[layer].output_state_count
+        for layer in range(25, 34)
+    ) == (20, 12, 12, 17, 16, 18, 18, 22, 0)
+
+
+def test_canonical_state_orders_phase_carries_before_digits() -> None:
+    layer = load_promoted_inputs(ROOT)[1].layers_by_number[32]
+    state = canonicalize_state(layer, "output", layer.output_states[0])
+
+    assert list(state)[:4] == ["L0", "R0", "L1", "R1"]
+    assert list(state)[-2:] == ["D0", "D1"]
+    assert tuple(state.values()) == layer.output_states[0]
+
+
+def _copy_promoted_inputs(tmp_path: Path) -> Path:
+    destination = tmp_path / "repo" / "publication" / "base19-radial"
+    (destination / "instance").mkdir(parents=True)
+    (destination / "certificates").mkdir()
+    shutil.copy(
+        ROOT / "publication/base19-radial/instance/equations.json",
+        destination / "instance/equations.json",
+    )
+    shutil.copy(
+        ROOT / "publication/base19-radial/certificates/minimal-core-frontier.json",
+        destination / "certificates/minimal-core-frontier.json",
+    )
+    return tmp_path / "repo"
+
+
+def test_promoted_loader_rejects_a_changed_source_digest(tmp_path: Path) -> None:
+    root = _copy_promoted_inputs(tmp_path)
+    path = root / "publication/base19-radial/instance/equations.json"
+    payload = json.loads(path.read_text())
+    payload["content_sha256"] = "0" * 64
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(EvidenceError, match="content digest"):
+        load_promoted_inputs(root)
+
+
+def test_promoted_loader_rejects_a_frontier_state_width_mismatch(
+    tmp_path: Path,
+) -> None:
+    root = _copy_promoted_inputs(tmp_path)
+    path = root / "publication/base19-radial/certificates/minimal-core-frontier.json"
+    payload = json.loads(path.read_text())
+    payload["layers"][0]["output_states"][0].append(0)
+    unsigned = dict(payload)
+    unsigned.pop("content_sha256")
+    payload["content_sha256"] = __import__("hashlib").sha256(
+        (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    ).hexdigest()
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(EvidenceError, match="digest"):
+        load_promoted_inputs(root)
+
+
+def test_structural_baseline_reproduces_pair_and_terminal_facts() -> None:
+    baseline = reproduce_structural_baseline(load_promoted_inputs(ROOT))
+
+    assert baseline["pair_count"] == 203
+    assert baseline["boundary_provenances"] == [
+        "phase=5,n=0,column=0",
+        "phase=5,n=0,column=83",
+    ]
+    assert [item["base"] for item in baseline["difference_relaxation"]] == list(
+        range(17, 41)
+    )
+    assert {
+        item["status"] for item in baseline["difference_relaxation"]
+    } == {"SAT"}
+    assert len(baseline["terminal_deletions"]) == 12
+    assert min(
+        item["surviving_state_count"] for item in baseline["terminal_deletions"]
+    ) >= 2
+
+
+def test_state_table_payload_has_only_canonical_mathematical_content() -> None:
+    frontier = load_promoted_inputs(ROOT)[1]
+    payload = state_table_payload(
+        tuple(frontier.layers_by_number[layer] for layer in range(25, 33))
+    )
+
+    assert set(payload) == {"layers"}
+    assert [item["layer"] for item in payload["layers"]] == list(range(25, 33))
+    assert set(payload["layers"][0]) == {"layer", "variables", "states"}
+    assert len(payload["layers"][0]["states"]) == 20
