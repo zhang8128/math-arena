@@ -24,6 +24,9 @@ from lychrel_reachability_separator import (  # noqa: E402
     parse_counterexample_trace,
     parse_separator_certificate,
 )
+from t28_base19_tail_quotient import (  # noqa: E402
+    replay_layer31_counterexample_trace,
+)
 
 
 def test_trace_distinguishes_terminal_iteration_from_counterexample_count() -> None:
@@ -234,3 +237,37 @@ def test_trace_rejects_non_string_stop_reason() -> None:
             terminal_iteration=2,
             stop_reason=1,  # type: ignore[arg-type]
         )
+
+
+def test_real_t28_trace_replay_stops_after_221_exact_counterexamples() -> None:
+    """Candidate 222 is a depth failure, not a 222nd semantic model."""
+    result, trace = replay_layer31_counterexample_trace(ROOT)
+
+    assert result.status == "STOP"
+    assert result.iterations == 222
+    assert result.stop_reason == "decision_depth_exceeded"
+    assert len(trace.steps) == 221
+    assert tuple(step.iteration for step in trace.steps) == tuple(range(1, 222))
+    assert len({step.input_state for step in trace.steps}) == 221
+    assert {step.rejected_class for step in trace.steps} == {"DEAD"}
+    assert {step.obligation for step in trace.steps} == {
+        "dead_has_no_successor"
+    }
+    assert trace.terminal_iteration == 222
+    assert trace.stop_reason == "decision_depth_exceeded"
+    assert dict(trace.steps[-1].input_state) == {
+        "D0": 18,
+        "D1": 6,
+        "L0": 0,
+        "L1": 1,
+        "L2": 1,
+        "L3": 0,
+        "L4": 0,
+        "L5": 0,
+        "R0": 0,
+        "R1": 0,
+        "R2": 1,
+        "R3": 0,
+        "R4": 0,
+        "R5": 1,
+    }

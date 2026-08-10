@@ -28,6 +28,10 @@ from lychrel_quotient_automaton import (  # noqa: E402
     classify_state,
     layer_path_depth,
 )
+from lychrel_reachability_separator import (  # noqa: E402
+    CounterexampleTrace,
+    TraceStep,
+)
 from t27_base19_invariant_lift import (  # noqa: E402
     EquationManifest,
     EvidenceError,
@@ -1142,14 +1146,17 @@ def _fallback_counterexample(partition: CandidatePartition, reason: str) -> Guar
     return GuardCounterexample(other.members[0], first.label, reason)
 
 
-def synthesize_layer(
+def _synthesize_layer_core(
     inputs: T28Inputs,
     partition: CandidatePartition,
     following: LayerQuotient,
     limits: GuardLimits,
-) -> LayerSynthesis:
-    """Refine one promoted quotient partition from exact semantic models."""
+    *,
+    capture_trace: bool,
+) -> tuple[LayerSynthesis, CounterexampleTrace | None]:
+    """Refine one promoted quotient partition and optionally capture its trace."""
     counterexamples: tuple[GuardCounterexample, ...] = ()
+    trace_steps: tuple[TraceStep, ...] = ()
     atoms = derive_guard_atoms(partition, (), limits)
     atom_count = len(atoms)
     iteration = 0
@@ -1163,7 +1170,7 @@ def synthesize_layer(
                 outside_members=tuple(item.state for item in counterexamples),
             )
         except GuardSynthesisError as error:
-            return LayerSynthesis(
+            result = LayerSynthesis(
                 "STOP",
                 partition.layer,
                 None,
@@ -1175,19 +1182,32 @@ def synthesize_layer(
                 if counterexamples
                 else _fallback_counterexample(partition, error.reason),
             )
+            trace = None
+            if capture_trace and trace_steps:
+                trace = CounterexampleTrace(
+                    schema="t29-base19-counterexample-trace-v1",
+                    variables=tuple(sorted(partition.variables)),
+                    steps=trace_steps,
+                    terminal_iteration=iteration,
+                    stop_reason=error.reason,
+                )
+            return result, trace
         coverage = check_reachable_coverage(inputs, quotient)
         if coverage.status != "PASS":
             raise EvidenceError("learned quotient misses its promoted training states")
         witnesses = _extract_edge_witnesses(inputs, quotient, following)
         exact = check_layer_semantics(inputs, quotient, following, witnesses)
         if exact.status == "PASS":
-            return LayerSynthesis(
-                "PASS",
-                partition.layer,
-                quotient,
-                witnesses,
-                iteration,
-                atom_count,
+            return (
+                LayerSynthesis(
+                    "PASS",
+                    partition.layer,
+                    quotient,
+                    witnesses,
+                    iteration,
+                    atom_count,
+                ),
+                None,
             )
         obligation = exact.obligations[-1]
         if obligation.counterexample is None or "input" not in obligation.counterexample:
@@ -1202,15 +1222,38 @@ def synthesize_layer(
             obligation.kind,
         )
         if counterexample in counterexamples:
-            return LayerSynthesis(
-                "STOP",
-                partition.layer,
+            return (
+                LayerSynthesis(
+                    "STOP",
+                    partition.layer,
+                    None,
+                    (),
+                    iteration,
+                    atom_count,
+                    "counterexample_cycle",
+                    counterexample,
+                ),
                 None,
-                (),
-                iteration,
-                atom_count,
-                "counterexample_cycle",
-                counterexample,
+            )
+        if capture_trace:
+            trace_steps = (
+                *trace_steps,
+                TraceStep(
+                    iteration=iteration,
+                    input_state=tuple(
+                        sorted(
+                            _state_assignment(
+                                partition.variables,
+                                counterexample.state,
+                            ).items()
+                        )
+                    ),
+                    rejected_class=counterexample.rejected_class,
+                    obligation=counterexample.reason,
+                    candidate_atom_count=atom_count,
+                    node_count=len(quotient.nodes),
+                    path_depth=layer_path_depth(quotient),
+                ),
             )
         class_spec = next(
             item
@@ -1224,19 +1267,58 @@ def synthesize_layer(
             limits,
         )
         if atom is None:
-            return LayerSynthesis(
-                "STOP",
-                partition.layer,
+            return (
+                LayerSynthesis(
+                    "STOP",
+                    partition.layer,
+                    None,
+                    (),
+                    iteration,
+                    atom_count,
+                    "guard_separator_not_found",
+                    counterexample,
+                ),
                 None,
-                (),
-                iteration,
-                atom_count,
-                "guard_separator_not_found",
-                counterexample,
             )
         atoms = tuple(sorted({*atoms, atom}, key=canonical_bytes))
         atom_count = len(atoms)
         counterexamples = (*counterexamples, counterexample)
+
+
+def synthesize_layer(
+    inputs: T28Inputs,
+    partition: CandidatePartition,
+    following: LayerQuotient,
+    limits: GuardLimits,
+) -> LayerSynthesis:
+    """Refine one promoted quotient partition from exact semantic models."""
+    result, _ = _synthesize_layer_core(
+        inputs,
+        partition,
+        following,
+        limits,
+        capture_trace=False,
+    )
+    return result
+
+
+def replay_layer_synthesis(
+    inputs: T28Inputs,
+    partition: CandidatePartition,
+    following: LayerQuotient,
+    limits: GuardLimits,
+) -> tuple[LayerSynthesis, CounterexampleTrace]:
+    """Replay a synthesis ending at candidate construction and retain its trace."""
+    result, trace = _synthesize_layer_core(
+        inputs,
+        partition,
+        following,
+        limits,
+        capture_trace=True,
+    )
+    if trace is None:
+        raise EvidenceError("trace replay requires a terminal candidate failure")
+    return result, trace
 
 
 def build_layer31_milestone(root: Path) -> LayerSynthesis:
@@ -1253,6 +1335,24 @@ def build_layer31_milestone(root: Path) -> LayerSynthesis:
     if terminal_check.status != "PASS":
         raise EvidenceError("terminal seed failed before layer-31 synthesis")
     return synthesize_layer(inputs, partition, terminal, GuardLimits())
+
+
+def replay_layer31_counterexample_trace(
+    root: Path,
+) -> tuple[LayerSynthesis, CounterexampleTrace]:
+    """Replay the frozen layer-31 milestone with its exact counterexamples."""
+    inputs = load_t28_inputs(root)
+    partitions = discover_reachable_quotient(inputs, 31, 32)
+    partition = partitions[0]
+    if len(partition.classes) != 4 or sorted(
+        len(item.members) for item in partition.classes
+    ) != [1, 2, 3, 12]:
+        raise EvidenceError("layer-31 candidate partition changed")
+    terminal = build_terminal_seed(inputs)
+    terminal_check = check_terminal_classes(inputs, terminal)
+    if terminal_check.status != "PASS":
+        raise EvidenceError("terminal seed failed before layer-31 synthesis")
+    return replay_layer_synthesis(inputs, partition, terminal, GuardLimits())
 
 
 def _public_baseline(baseline: Mapping[str, object]) -> dict[str, object]:
