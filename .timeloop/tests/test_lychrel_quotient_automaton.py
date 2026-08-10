@@ -22,6 +22,18 @@ from lychrel_quotient_automaton import (  # noqa: E402
     layer_path_depth,
     parse_quotient_certificate,
 )
+from t27_base19_invariant_lift import EvidenceError, canonicalize_state  # noqa: E402
+from t28_base19_tail_quotient import (  # noqa: E402
+    build_terminal_seed,
+    discover_reachable_quotient,
+    explicit_relation_payload,
+    load_t28_inputs,
+)
+
+EQUATIONS_CONTENT_SHA256 = "ff79f31cbc55d7c463e6a14faedaad58d880509d5769e56b9a4bd06ebacd9040"
+FRONTIER_CONTENT_SHA256 = "0d25cf4645b3c187c74511b0677ea1481c4ba6c923a726ffea9747ee1b4a64c0"
+PROVENANCES_SHA256 = "cac34c9317e8209bfea6a4e4fb37ef204346ccde54424f8c93dd8a8e40619302"
+T27_EVIDENCE_SHA256 = "32324c40903b78aec4d787b7e64a6d73d0999e3846d91ca1340c99f8ac2d8686"
 
 
 def test_decision_dag_classifies_two_classes_and_outside() -> None:
@@ -270,3 +282,89 @@ def test_certificate_parser_rejects_extra_keys_and_bad_digests() -> None:
     payload["source_digests"]["equations"] = "not-a-digest"
     with pytest.raises(ValueError, match="digest"):
         parse_quotient_certificate(payload)
+
+
+def test_t28_inputs_bind_the_frozen_t27_tail() -> None:
+    """Changing any frozen input must prevent a T28 research claim."""
+    inputs = load_t28_inputs(ROOT)
+
+    assert inputs.manifest.content_sha256 == EQUATIONS_CONTENT_SHA256
+    assert inputs.frontier.content_sha256 == FRONTIER_CONTENT_SHA256
+    assert inputs.frontier.provenances_sha256 == PROVENANCES_SHA256
+    assert inputs.t27_evidence_sha256 == T27_EVIDENCE_SHA256
+
+
+def test_terminal_seed_classifies_all_promoted_states_into_three_families() -> None:
+    """Dropping a terminal branch must route a promoted state outside."""
+    inputs = load_t28_inputs(ROOT)
+    seed = build_terminal_seed(inputs)
+    layer32 = inputs.frontier.layers_by_number[32]
+    labels = [
+        classify_state(seed, canonicalize_state(layer32, "output", state))
+        for state in layer32.output_states
+    ]
+
+    assert seed.layer == 32
+    assert {item.label for item in seed.classes} == {
+        "T_HIGH_DIGIT",
+        "T_PHASE_ZERO",
+        "T_RESIDUE",
+    }
+    assert sorted(labels.count(label) for label in set(labels)) == [6, 8, 8]
+    assert "outside" not in labels
+
+
+def test_t28_inputs_reject_a_changed_t27_evidence_file(tmp_path: Path) -> None:
+    """Removing the raw evidence hash check must admit altered T27 evidence."""
+    original = ROOT / ".timeloop" / "runs" / "t27_base19_invariant_lift.json"
+    changed = tmp_path / "changed-t27.json"
+    changed.write_bytes(original.read_bytes() + b"\n")
+
+    with pytest.raises(EvidenceError, match="T27 evidence digest"):
+        load_t28_inputs(ROOT, t27_evidence_path=changed)
+
+
+def test_reachable_successor_quotient_reproduces_candidate_counts() -> None:
+    """Changing signature grouping must alter the hand-checked class counts."""
+    partitions = discover_reachable_quotient(load_t28_inputs(ROOT), 25, 32)
+
+    assert [
+        (
+            partition.layer,
+            sum(len(item.members) for item in partition.classes),
+            len(partition.classes),
+        )
+        for partition in partitions
+    ] == [
+        (25, 20, 5),
+        (26, 12, 5),
+        (27, 12, 7),
+        (28, 17, 7),
+        (29, 16, 6),
+        (30, 18, 5),
+        (31, 18, 4),
+        (32, 22, 3),
+    ]
+    layer31 = next(partition for partition in partitions if partition.layer == 31)
+    assert sorted(len(item.members) for item in layer31.classes) == [1, 2, 3, 12]
+    assert sum(not item.allowed_next for item in layer31.classes) == 1
+    assert all(
+        len(item.allowed_next) == 1 for item in layer31.classes if item.allowed_next
+    )
+
+
+def test_explicit_relation_payload_contains_only_canonical_mathematics() -> None:
+    """Adding metadata must inflate the comparison denominator illegitimately."""
+    payload = explicit_relation_payload(load_t28_inputs(ROOT), 31, 32)
+
+    assert set(payload) == {"layers"}
+    assert [item["layer"] for item in payload["layers"]] == [31, 32]
+    assert all(
+        set(item) == {"layer", "variables", "next_variables", "states", "edges"}
+        for item in payload["layers"]
+    )
+    assert all(
+        set(edge) == {"input", "output"}
+        for item in payload["layers"]
+        for edge in item["edges"]
+    )
