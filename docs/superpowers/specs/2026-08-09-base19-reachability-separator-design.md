@@ -72,15 +72,17 @@ the iteration, canonical 14-coordinate input state, rejected class,
 obligation, candidate-atom count, and readability measurements available
 before rebuilding the next candidate.  Replay twice and require byte identity.
 
-The expected achieved trace contains 222 distinct counterexamples and ends at
-`decision_depth_exceeded`.  This count is a falsifiable repository expectation,
-not an assumption: a different count, order, state, or terminal reason fails
-closed before separator synthesis.
+The expected achieved trace contains 221 distinct counterexamples.  T28 stops
+while building candidate 222, before that candidate can produce another exact
+counterexample, and ends at `decision_depth_exceeded`.  These counts are
+falsifiable repository expectations, not assumptions: a different count,
+order, state, iteration, or terminal reason fails closed before separator
+synthesis.
 
 ### 2. Frozen finite dataset
 
 The positive set is exactly the 12 promoted layer-31 states in T28's `DEAD`
-successor-signature class.  The negative set is the reconstructed 222-state
+successor-signature class.  The negative set is the reconstructed 221-state
 counterexample trace plus the six promoted live layer-31 states.  The adapter
 requires the two sets to be canonical, duplicate-free, disjoint, and scoped to
 the same 14 variables.
@@ -126,7 +128,7 @@ T27--T29 implementation.  It independently:
 
 - recomputes source and trace hashes;
 - reconstructs the promoted positive and live-control sets;
-- evaluates the predicate on all 240 finite examples;
+- evaluates the predicate on all 239 finite examples;
 - enforces the grammar and readability limits;
 - rebuilds allowed tuples for the 12 local equations;
 - proves semantic UNSAT by constraint propagation and backtracking, or replays
@@ -166,9 +168,9 @@ STOP is not evidence that no human-readable reachability invariant exists.
 
 ## First falsifiable milestone
 
-Before semantic promotion, reproduce exactly 222 unique T28 counterexamples
+Before semantic promotion, reproduce exactly 221 unique T28 counterexamples
 and determine whether a frozen-language predicate separates the resulting 12
-positive and 228 negative states.  The milestone ends with a deterministic
+positive and 227 negative states.  The milestone ends with a deterministic
 finite certificate or a precise bounded STOP.  No semantic theorem is implied
 by this milestone alone.
 
