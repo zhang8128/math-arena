@@ -55,6 +55,7 @@ from t32_base19_semantic_leak_types import (  # noqa: E402
     T31_SOURCE_DIGESTS,
     EvidenceError,
     failure_mask,
+    find_first_leak_type,
     load_t32_inputs,
     q0_residuals,
     structural_view,
@@ -450,3 +451,42 @@ def test_independent_milestone_rejects_a_q0_countermodel(tmp_path: Path) -> None
     completed = run_independent_milestone(path)
     assert completed.returncode != 0
     assert "type soundness counterexample" in completed.stderr
+
+
+def test_repository_first_type_reaches_pass_or_exact_stop() -> None:
+    result = find_first_leak_type(load_t32_inputs(ROOT))
+    assert result.status in {
+        "PASS",
+        "NO_SOUND_TYPE",
+        "NO_DIVERSE_TYPE",
+        "WITNESS_BUDGET_EXHAUSTED",
+        "CANDIDATE_BUDGET_EXHAUSTED",
+        "INDEPENDENT_DISAGREEMENT",
+    }
+    assert 1 <= result.inspected_witness_count <= 128
+    assert 0 <= result.tested_candidate_count <= 2_000
+    if result.status == "PASS":
+        assert result.leak_type is not None
+        assert len(result.leak_type.literals) <= 6
+        assert len(result.witnesses) == 2
+        assert result.failure_masks[0] != result.failure_masks[1]
+        assert result.soundness_status == "UNSAT"
+        assert result.independent_status == "PASS"
+    else:
+        assert result.leak_type is None
+        assert result.stop_detail
+
+
+def test_first_type_search_is_byte_deterministic() -> None:
+    inputs = load_t32_inputs(ROOT)
+    assert canonical_bytes(find_first_leak_type(inputs).to_payload()) == (
+        canonical_bytes(find_first_leak_type(inputs).to_payload())
+    )
+
+
+def test_first_type_search_enforces_exact_budget_bounds() -> None:
+    inputs = load_t32_inputs(ROOT)
+    with pytest.raises(ValueError, match="witness limit"):
+        find_first_leak_type(inputs, witness_limit=0)
+    with pytest.raises(ValueError, match="candidate limit"):
+        find_first_leak_type(inputs, candidate_limit=2_001)

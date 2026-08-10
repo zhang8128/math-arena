@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
+import json
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -14,6 +18,14 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from lychrel_invariant_certificate import LayerPredicate  # noqa: E402
 from lychrel_reachability_separator import SemanticWitness  # noqa: E402
+from lychrel_semantic_leak_types import (  # noqa: E402
+    LeakType,
+    StructuralLiteral,
+    evaluate_leak_type,
+    evaluate_literal,
+    generate_literal_pool,
+    type_objective,
+)
 from t31_base19_bad_image_projection import (  # noqa: E402
     T31Inputs,
     build_layer30_relation,
@@ -31,6 +43,7 @@ T31_SOURCE_DIGESTS = {
     "test": "3b88dadc423f41ec1ca81a2aea4df60071ad0d1a1165fc229c902012babc6b3e",
 }
 T31_COMMITS = ("69022cb", "adc6986", "619b737", "6835036")
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class EvidenceError(RuntimeError):
@@ -349,3 +362,517 @@ def failure_mask(
     if len(residuals) != 5:
         raise EvidenceError("Q0 no longer has five equations")
     return tuple(value != 0 for value in residuals)  # type: ignore[return-value]
+
+
+@dataclass(frozen=True)
+class FirstTypeMilestoneResult:
+    status: str
+    leak_type: LeakType | None
+    witnesses: tuple[SemanticWitness, ...]
+    failure_masks: tuple[tuple[bool, ...], ...]
+    inspected_witness_count: int
+    tested_candidate_count: int
+    soundness_status: str | None
+    independent_status: str | None
+    stop_detail: str | None
+
+    def __post_init__(self) -> None:
+        statuses = {
+            "PASS",
+            "NO_SOUND_TYPE",
+            "NO_DIVERSE_TYPE",
+            "WITNESS_BUDGET_EXHAUSTED",
+            "CANDIDATE_BUDGET_EXHAUSTED",
+            "INDEPENDENT_DISAGREEMENT",
+        }
+        if self.status not in statuses:
+            raise ValueError("unsupported first-type milestone status")
+        if not 1 <= self.inspected_witness_count <= 128:
+            raise ValueError("first-type inspected witness count is outside 1..128")
+        if not 0 <= self.tested_candidate_count <= 2_000:
+            raise ValueError("first-type tested candidate count is outside 0..2,000")
+        if self.status == "PASS":
+            if (
+                self.leak_type is None
+                or len(self.witnesses) != 2
+                or len(self.failure_masks) != 2
+                or self.failure_masks[0] == self.failure_masks[1]
+                or self.soundness_status != "UNSAT"
+                or self.independent_status != "PASS"
+                or self.stop_detail is not None
+            ):
+                raise ValueError("first-type PASS gates differ")
+        elif self.leak_type is not None or not self.stop_detail:
+            raise ValueError("first-type STOP must omit the type and include detail")
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "leak_type": (
+                None if self.leak_type is None else self.leak_type.to_payload()
+            ),
+            "witnesses": [witness.to_payload() for witness in self.witnesses],
+            "failure_masks": [list(mask) for mask in self.failure_masks],
+            "inspected_witness_count": self.inspected_witness_count,
+            "tested_candidate_count": self.tested_candidate_count,
+            "soundness_status": self.soundness_status,
+            "independent_status": self.independent_status,
+            "stop_detail": self.stop_detail,
+        }
+
+
+def _solver_status(relation: object, solver: object, context: str) -> str:
+    status = solver.check()
+    if status == relation.z3.unknown:
+        raise EvidenceError(f"{context} returned UNKNOWN: {solver.reason_unknown()}")
+    return "SAT" if status == relation.z3.sat else "UNSAT"
+
+
+def _q0_expression(inputs: T32Inputs, relation: object) -> object:
+    z3 = relation.z3
+    return z3.And(
+        *(
+            sum(
+                coefficient * relation.variables[relation.output_mapping[name]]
+                for name, coefficient in atom.terms
+            )
+            == atom.constant
+            for atom in inputs.q0.clauses[0].atoms
+        )
+    )
+
+
+def _literal_expression(
+    inputs: T32Inputs, relation: object, literal: StructuralLiteral
+) -> object:
+    layout = inputs.phases[literal.phase]
+    variables = relation.variables
+    names = {
+        "a": variables[layout.a_original],
+        "b": variables[layout.b_original],
+        "Lin": variables[layout.lin_original],
+        "Rin": variables[layout.rin_original],
+        "Lout": variables[layout.lout_original],
+        "Rout": variables[layout.rout_original],
+    }
+    if literal.kind == "digit_order":
+        return {
+            "eq": names["a"] == names["b"],
+            "lt": names["a"] < names["b"],
+            "gt": names["a"] > names["b"],
+        }[literal.relation]
+    if literal.kind == "digit_sum":
+        total = names["a"] + names["b"]
+        return {
+            "lt19": total < 19,
+            "eq18": total == 18,
+            "ge19": total >= 19,
+        }[literal.relation]
+    pair = {
+        "input_carry_pair": (names["Lin"], names["Rin"]),
+        "output_carry_pair": (names["Lout"], names["Rout"]),
+        "left_carry_flow": (names["Lin"], names["Lout"]),
+        "right_carry_flow": (names["Rin"], names["Rout"]),
+    }[literal.kind]
+    return pair[0] == pair[1] if literal.relation == "eq" else pair[0] != pair[1]
+
+
+def _type_expression(inputs: T32Inputs, relation: object, leak_type: LeakType) -> object:
+    return relation.z3.And(
+        *(
+            _literal_expression(inputs, relation, literal)
+            for literal in leak_type.literals
+        )
+    )
+
+
+def _canonical_assignment(
+    relation: object, solver: object, context: str
+) -> tuple[tuple[str, int], ...]:
+    if _solver_status(relation, solver, context) != "SAT":
+        raise EvidenceError(f"cannot minimize non-SAT {context}")
+    for name, variable in sorted(relation.variables.items()):
+        domain = (
+            range(2)
+            if name.startswith("c:")
+            else range(1 if name.startswith("digit:p") and ":f0:d0" in name else 0, 19)
+        )
+        for value in domain:
+            solver.push()
+            solver.add(variable == value)
+            status = _solver_status(relation, solver, f"{context} minimization")
+            solver.pop()
+            if status == "SAT":
+                solver.add(variable == value)
+                break
+        else:
+            raise EvidenceError(f"{context} variable has no domain value: {name}")
+    if _solver_status(relation, solver, f"{context} finalization") != "SAT":
+        raise EvidenceError(f"{context} became inconsistent")
+    model = solver.model()
+    return tuple(
+        (name, model.eval(variable, model_completion=False).as_long())
+        for name, variable in sorted(relation.variables.items())
+    )
+
+
+def _semantic_witness(
+    relation: object, assignment: tuple[tuple[str, int], ...]
+) -> SemanticWitness:
+    values = dict(assignment)
+    input_originals = set(relation.transfer.input_variables)
+    output_originals = set(relation.transfer.output_variables)
+    return SemanticWitness(
+        input_state=tuple(
+            sorted(
+                (f"input:{canonical}", values[original])
+                for canonical, original in relation.input_mapping.items()
+            )
+        ),
+        output_state=tuple(
+            sorted(
+                (f"output:{canonical}", values[original])
+                for canonical, original in relation.output_mapping.items()
+            )
+        ),
+        local_state=tuple(
+            (f"local:{name}", values[name])
+            for name in sorted(set(values) - input_originals - output_originals)
+        ),
+    )
+
+
+def _witness_input(witness: SemanticWitness) -> tuple[int, ...]:
+    return tuple(value for _, value in witness.input_state)
+
+
+def _exact_witness(
+    inputs: T32Inputs, relation: object, solver: object, context: str
+) -> SemanticWitness:
+    witness = _semantic_witness(relation, _canonical_assignment(relation, solver, context))
+    assignment = reconstruct_witness_assignment(inputs, witness)
+    if set(assignment) != set(relation.variables):
+        raise EvidenceError(f"{context} witness scope differs")
+    return witness
+
+
+def _stop_result(
+    status: str,
+    inspected: int,
+    tested: int,
+    detail: str,
+    *,
+    soundness_status: str | None = None,
+    independent_status: str | None = None,
+) -> FirstTypeMilestoneResult:
+    return FirstTypeMilestoneResult(
+        status,
+        None,
+        (),
+        (),
+        inspected,
+        tested,
+        soundness_status,
+        independent_status,
+        detail,
+    )
+
+
+def _milestone_payload(
+    inputs: T32Inputs,
+    leak_type: LeakType,
+    witnesses: tuple[SemanticWitness, SemanticWitness],
+    masks: tuple[tuple[bool, ...], tuple[bool, ...]],
+) -> dict[str, object]:
+    return {
+        "schema": "t32-base19-semantic-leak-type-milestone-v1",
+        "leak_type": leak_type.to_payload(),
+        "witnesses": [witness.to_payload() for witness in witnesses],
+        "failure_masks": [list(mask) for mask in masks],
+        "source_digests": dict(inputs.source_digests),
+        "t29_artifact_digests": dict(inputs.t29_artifact_digests),
+        "t30_artifact_digests": dict(inputs.t30_artifact_digests),
+        "t31_source_digests": dict(inputs.t31_source_digests),
+        "t31_commits": list(inputs.t31_commits),
+        "design_sha256": inputs.design_sha256,
+    }
+
+
+def _run_independent_milestone(
+    inputs: T32Inputs,
+    leak_type: LeakType,
+    witnesses: tuple[SemanticWitness, SemanticWitness],
+    masks: tuple[tuple[bool, ...], tuple[bool, ...]],
+) -> tuple[str, str | None]:
+    run_dir = _REPOSITORY_ROOT / ".timeloop/runs"
+    paths = (
+        _REPOSITORY_ROOT / "publication/base19-radial/instance/equations.json",
+        _REPOSITORY_ROOT
+        / "publication/base19-radial/certificates/minimal-core-frontier.json",
+        run_dir / "t27_base19_invariant_lift.json",
+        run_dir / "t28_base19_tail_quotient.json",
+        run_dir / "t28_base19_tail_quotient_independent.json",
+        run_dir / "t29_base19_reachability_separator_trace.json",
+        run_dir / "t29_base19_reachability_separator_dataset.json",
+        run_dir / "t29_base19_reachability_separator.json",
+        run_dir / "t29_base19_reachability_separator_certificate.json",
+        run_dir / "t29_base19_reachability_separator_independent.json",
+        run_dir / "t30_base19_exact_image_refinement.json",
+        run_dir / "t30_base19_exact_image_refinement_certificate.json",
+        run_dir / "t30_base19_exact_image_refinement_independent.json",
+    )
+    payload = _milestone_payload(inputs, leak_type, witnesses, masks)
+    with tempfile.TemporaryDirectory(prefix="t32-milestone-") as directory:
+        milestone_path = Path(directory) / "milestone.json"
+        milestone_path.write_bytes(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            + b"\n"
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(run_dir / "t32_base19_semantic_leak_types_independent.py"),
+                "milestone",
+                *(str(path) for path in paths),
+                str(milestone_path),
+            ],
+            cwd=_REPOSITORY_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    if completed.returncode != 0:
+        return "REJECT", completed.stderr.strip()
+    try:
+        audit = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        return "REJECT", f"independent output is malformed: {error}"
+    if (
+        not isinstance(audit, dict)
+        or audit.get("status") != "PASS"
+        or audit.get("soundness_status") != "UNSAT"
+        or audit.get("repository_imports") != []
+    ):
+        return "REJECT", "independent milestone gates differ"
+    return "PASS", None
+
+
+_FIRST_TYPE_CACHE: dict[tuple[int, int, int], FirstTypeMilestoneResult] = {}
+
+
+def find_first_leak_type(
+    inputs: T32Inputs,
+    witness_limit: int = 128,
+    candidate_limit: int = 2_000,
+) -> FirstTypeMilestoneResult:
+    """Search the bounded 84-literal language for one sound diverse leak type."""
+    if (
+        not isinstance(witness_limit, int)
+        or isinstance(witness_limit, bool)
+        or not 1 <= witness_limit <= 128
+    ):
+        raise ValueError("witness limit must be in 1..128")
+    if (
+        not isinstance(candidate_limit, int)
+        or isinstance(candidate_limit, bool)
+        or not 1 <= candidate_limit <= 2_000
+    ):
+        raise ValueError("candidate limit must be in 1..2,000")
+    cache_key = (id(inputs), witness_limit, candidate_limit)
+    cached = _FIRST_TYPE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    relation = build_layer30_relation(inputs.t31_inputs)
+    z3 = relation.z3
+    seed = inputs.t31_witness
+    seed_assignment = reconstruct_witness_assignment(inputs, seed)
+    seed_input = _witness_input(seed)
+    seed_mask = failure_mask(inputs, seed)
+    inspected = [seed]
+    exclusions = [
+        z3.Or(
+            *(
+                relation.variables[name] != value
+                for name, value in sorted(seed_assignment.items())
+            )
+        )
+    ]
+    pool = generate_literal_pool()
+    tested_bytes: set[bytes] = set()
+    tested_count = 0
+
+    while len(inspected) < witness_limit:
+        bad_solver = z3.Solver()
+        bad_solver.add(*relation.assertions, z3.Not(_q0_expression(inputs, relation)))
+        bad_solver.add(*exclusions)
+        try:
+            if _solver_status(relation, bad_solver, "bad-image discovery") == "UNSAT":
+                result = _stop_result(
+                    "NO_DIVERSE_TYPE",
+                    len(inspected),
+                    tested_count,
+                    "all exact bad images were exhausted before a diverse pair",
+                )
+                _FIRST_TYPE_CACHE[cache_key] = result
+                return result
+            witness = _exact_witness(inputs, relation, bad_solver, "bad-image discovery")
+        except EvidenceError as error:
+            result = _stop_result(
+                "WITNESS_BUDGET_EXHAUSTED",
+                len(inspected),
+                tested_count,
+                str(error),
+            )
+            _FIRST_TYPE_CACHE[cache_key] = result
+            return result
+        assignment = reconstruct_witness_assignment(inputs, witness)
+        exclusions.append(
+            z3.Or(
+                *(
+                    relation.variables[name] != value
+                    for name, value in sorted(assignment.items())
+                )
+            )
+        )
+        if witness in inspected:
+            raise EvidenceError("first-type search repeated a canonical witness")
+        inspected.append(witness)
+        mask = failure_mask(inputs, witness)
+        if _witness_input(witness) == seed_input or mask == seed_mask:
+            continue
+
+        first_view = structural_view(inputs, seed)
+        second_view = structural_view(inputs, witness)
+        intersection = tuple(
+            literal
+            for literal in pool
+            if evaluate_literal(literal, first_view)
+            and evaluate_literal(literal, second_view)
+        )
+        candidates = []
+        for size in range(1, min(6, len(intersection)) + 1):
+            candidates.extend(
+                LeakType(tuple(selected))
+                for selected in itertools.combinations(intersection, size)
+            )
+            if len(candidates) >= candidate_limit - tested_count:
+                break
+        candidates.sort(key=type_objective)
+        for leak_type in candidates:
+            candidate_bytes = json.dumps(
+                leak_type.to_payload(),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            if candidate_bytes in tested_bytes:
+                continue
+            if tested_count >= candidate_limit:
+                result = _stop_result(
+                    "CANDIDATE_BUDGET_EXHAUSTED",
+                    len(inspected),
+                    tested_count,
+                    f"no sound diverse type found after {candidate_limit} conjunctions",
+                )
+                _FIRST_TYPE_CACHE[cache_key] = result
+                return result
+            tested_bytes.add(candidate_bytes)
+            tested_count += 1
+            type_expression = _type_expression(inputs, relation, leak_type)
+            diversity_solver = z3.Solver()
+            diversity_solver.add(*relation.assertions, type_expression)
+            diversity_solver.add(
+                z3.Or(
+                    *(
+                        relation.variables[relation.input_mapping[name]] != value
+                        for (prefixed, value) in seed.input_state
+                        for name in (prefixed.removeprefix("input:"),)
+                    )
+                )
+            )
+            try:
+                if _solver_status(relation, diversity_solver, "type diversity") != "SAT":
+                    continue
+                diversity_model = _exact_witness(
+                    inputs, relation, diversity_solver, "type diversity"
+                )
+                if _witness_input(diversity_model) == seed_input:
+                    raise EvidenceError("type diversity replay repeated the seed input")
+                soundness_solver = z3.Solver()
+                soundness_solver.add(
+                    *relation.assertions,
+                    type_expression,
+                    _q0_expression(inputs, relation),
+                )
+                soundness = _solver_status(relation, soundness_solver, "type soundness")
+                if soundness == "SAT":
+                    _exact_witness(inputs, relation, soundness_solver, "type countermodel")
+                    continue
+            except EvidenceError as error:
+                result = _stop_result(
+                    "NO_SOUND_TYPE",
+                    len(inspected),
+                    tested_count,
+                    str(error),
+                )
+                _FIRST_TYPE_CACHE[cache_key] = result
+                return result
+            witnesses = (seed, witness)
+            masks = (seed_mask, mask)
+            if not all(
+                evaluate_leak_type(leak_type, structural_view(inputs, item))
+                for item in witnesses
+            ):
+                raise EvidenceError("primary type witnesses failed structural replay")
+            independent_status, detail = _run_independent_milestone(
+                inputs, leak_type, witnesses, masks
+            )
+            if independent_status != "PASS":
+                result = _stop_result(
+                    "INDEPENDENT_DISAGREEMENT",
+                    len(inspected),
+                    tested_count,
+                    detail or "independent milestone rejected the primary type",
+                    soundness_status="UNSAT",
+                    independent_status=independent_status,
+                )
+                _FIRST_TYPE_CACHE[cache_key] = result
+                return result
+            result = FirstTypeMilestoneResult(
+                "PASS",
+                leak_type,
+                witnesses,
+                masks,
+                len(inspected),
+                tested_count,
+                "UNSAT",
+                "PASS",
+                None,
+            )
+            _FIRST_TYPE_CACHE[cache_key] = result
+            return result
+
+        if tested_count >= candidate_limit:
+            result = _stop_result(
+                "CANDIDATE_BUDGET_EXHAUSTED",
+                len(inspected),
+                tested_count,
+                f"no sound diverse type found after {candidate_limit} conjunctions",
+            )
+            _FIRST_TYPE_CACHE[cache_key] = result
+            return result
+
+    result = _stop_result(
+        "WITNESS_BUDGET_EXHAUSTED",
+        len(inspected),
+        tested_count,
+        f"no sound diverse type found after {witness_limit} bad images",
+    )
+    _FIRST_TYPE_CACHE[cache_key] = result
+    return result
