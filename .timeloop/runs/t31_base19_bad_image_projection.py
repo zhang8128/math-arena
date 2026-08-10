@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import sys
 from collections.abc import Mapping
@@ -15,8 +16,11 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from lychrel_bad_image_projection import (  # noqa: E402
     P30_VARIABLES,
+    Layer30Predicate,
     ProjectionAtom,
+    ProjectionClause,
     ProjectionOrigin,
+    compactness_bytes,
     evaluate_p30,
 )
 from lychrel_exact_image_refinement import (  # noqa: E402
@@ -24,6 +28,7 @@ from lychrel_exact_image_refinement import (  # noqa: E402
     parse_exact_image_refinement_certificate,
 )
 from lychrel_invariant_certificate import LayerPredicate, canonical_bytes  # noqa: E402
+from lychrel_reachability_separator import SemanticWitness  # noqa: E402
 from t27_base19_invariant_lift import (  # noqa: E402
     canonical_variable,
     canonicalize_state,
@@ -101,6 +106,52 @@ class ProjectionAtomRecord:
             "atom": self.atom.to_payload(),
             "origin": self.origin.to_payload(),
             "holds_on_all_promoted": self.holds_on_all_promoted,
+        }
+
+
+@dataclass(frozen=True)
+class CandidateSearchResult:
+    status: str
+    p30: Layer30Predicate | None
+    origins: tuple[ProjectionOrigin, ...]
+    counterexamples: tuple[SemanticWitness, ...]
+    predicate_bytes: int | None
+    state_table_bytes: int
+    stop_detail: str | None
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            "UNSAT",
+            "NO_CANDIDATE",
+            "NON_COMPACT",
+            "BUDGET_EXHAUSTED",
+        }:
+            raise ValueError("unsupported candidate-search status")
+        if not self.counterexamples or len(self.counterexamples) > 64:
+            raise ValueError("candidate search requires 1..64 counterexamples")
+        if self.state_table_bytes < 1:
+            raise ValueError("candidate search requires a state-table byte count")
+        if self.p30 is None:
+            if self.origins or self.predicate_bytes is not None:
+                raise ValueError("missing P30 cannot carry origins or predicate bytes")
+        elif not self.origins or self.predicate_bytes is None:
+            raise ValueError("P30 requires origins and a predicate byte count")
+        if self.status == "UNSAT" and (self.p30 is None or self.stop_detail is not None):
+            raise ValueError("candidate UNSAT requires P30 and no stop detail")
+        if self.status != "UNSAT" and not self.stop_detail:
+            raise ValueError("candidate STOP requires a detail")
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "p30": None if self.p30 is None else self.p30.to_payload(),
+            "origins": [origin.to_payload() for origin in self.origins],
+            "counterexamples": [
+                witness.to_payload() for witness in self.counterexamples
+            ],
+            "predicate_bytes": self.predicate_bytes,
+            "state_table_bytes": self.state_table_bytes,
+            "stop_detail": self.stop_detail,
         }
 
 
@@ -532,3 +583,289 @@ def evaluate_p30_atom(atom: ProjectionAtom, assignment: Mapping[str, int]) -> bo
         Layer30Predicate(30, P30_VARIABLES, (ProjectionClause((atom,)),)),
         assignment,
     )
+
+
+def _row_assignment(row: tuple[int, ...]) -> dict[str, int]:
+    return dict(zip(P30_VARIABLES, row, strict=True))
+
+
+def _candidate_objective(predicate: Layer30Predicate) -> tuple[object, ...]:
+    path_lengths = tuple(len(clause.atoms) for clause in predicate.clauses)
+    atoms = tuple(atom for clause in predicate.clauses for atom in clause.atoms)
+    return (
+        len(predicate.clauses),
+        max(path_lengths),
+        len(atoms),
+        sum(len(atom.terms) for atom in atoms),
+        sum(abs(coefficient) for atom in atoms for _, coefficient in atom.terms),
+        canonical_bytes(predicate.to_payload()),
+    )
+
+
+def _select_candidate(
+    records: tuple[ProjectionAtomRecord, ...],
+    witnesses: tuple[tuple[int, ...], ...],
+    promoted_rows: tuple[tuple[int, ...], ...],
+) -> tuple[
+    Layer30Predicate,
+    tuple[ProjectionOrigin, ...],
+    int,
+    int,
+] | None:
+    """Select the least compact conjunction hitting every recorded bad input."""
+    candidates = []
+    for size in range(1, min(6, len(records)) + 1):
+        for selected in itertools.combinations(records, size):
+            predicate = Layer30Predicate(
+                30,
+                P30_VARIABLES,
+                (ProjectionClause(tuple(record.atom for record in selected)),),
+            )
+            if not all(
+                evaluate_p30(predicate, _row_assignment(row)) for row in promoted_rows
+            ):
+                continue
+            if not all(
+                not evaluate_p30(predicate, _row_assignment(witness))
+                for witness in witnesses
+            ):
+                continue
+            predicate_bytes, state_table_bytes = compactness_bytes(
+                predicate, promoted_rows
+            )
+            if predicate_bytes >= state_table_bytes:
+                continue
+            origins = tuple(
+                record.origin
+                for record in selected
+                for atom in predicate.clauses[0].atoms
+                if record.atom == atom
+            )
+            origins = tuple(sorted(set(origins), key=canonical_bytes))
+            candidates.append(
+                (
+                    _candidate_objective(predicate),
+                    predicate,
+                    origins,
+                    predicate_bytes,
+                    state_table_bytes,
+                )
+            )
+    if not candidates:
+        return None
+    _, predicate, origins, predicate_bytes, state_table_bytes = min(
+        candidates, key=lambda item: item[0]
+    )
+    return predicate, origins, predicate_bytes, state_table_bytes
+
+
+def _solver_status(z3: object, solver: object, context: str) -> object:
+    status = solver.check()
+    if status == z3.unknown:
+        raise EvidenceError(f"{context} returned UNKNOWN: {solver.reason_unknown()}")
+    return status
+
+
+def _z3_p30_atom(
+    relation: Layer30Relation,
+    atom: ProjectionAtom,
+) -> object:
+    total = sum(
+        coefficient * relation.variables[relation.input_mapping[name]]
+        for name, coefficient in atom.terms
+    )
+    if atom.relation == "eq":
+        return total == atom.constant
+    if atom.relation == "le":
+        return total <= atom.constant
+    assert atom.modulus is not None
+    return (total - atom.constant) % atom.modulus == 0
+
+
+def _z3_p30(relation: Layer30Relation, predicate: Layer30Predicate) -> object:
+    z3 = relation.z3
+    return z3.Or(
+        *(
+            z3.And(*(_z3_p30_atom(relation, atom) for atom in clause.atoms))
+            for clause in predicate.clauses
+        )
+    )
+
+
+def _lexicographic_assignment(
+    relation: Layer30Relation,
+    solver: object,
+    context: str,
+) -> tuple[tuple[str, int], ...]:
+    z3 = relation.z3
+    if _solver_status(z3, solver, context) != z3.sat:
+        raise EvidenceError(f"cannot minimize a non-SAT {context}")
+    base = 19
+    for name, variable in sorted(relation.variables.items()):
+        if name.startswith("c:"):
+            domain = range(2)
+        else:
+            lower = 1 if name.startswith("digit:p") and ":f0:d0" in name else 0
+            domain = range(lower, base)
+        for value in domain:
+            solver.push()
+            solver.add(variable == value)
+            status = _solver_status(z3, solver, f"{context} minimization")
+            solver.pop()
+            if status == z3.sat:
+                solver.add(variable == value)
+                break
+        else:
+            raise EvidenceError(f"{context} variable has no value: {name}")
+    if _solver_status(z3, solver, f"{context} finalization") != z3.sat:
+        raise EvidenceError(f"{context} became inconsistent during minimization")
+    model = solver.model()
+    return tuple(
+        (name, model.eval(variable, model_completion=False).as_long())
+        for name, variable in sorted(relation.variables.items())
+    )
+
+
+def _candidate_witness(
+    relation: Layer30Relation,
+    assignment: tuple[tuple[str, int], ...],
+) -> SemanticWitness:
+    values = dict(assignment)
+    transfer = relation.transfer
+    input_names = set(transfer.input_variables)
+    output_names = set(transfer.output_variables)
+    canonical_input = canonicalize_state(
+        transfer,
+        "input",
+        tuple(values[name] for name in transfer.input_variables),
+    )
+    canonical_output = canonicalize_state(
+        transfer,
+        "output",
+        tuple(values[name] for name in transfer.output_variables),
+    )
+    return SemanticWitness(
+        input_state=tuple(
+            sorted((f"input:{name}", value) for name, value in canonical_input.items())
+        ),
+        output_state=tuple(
+            sorted(
+                (f"output:{name}", value) for name, value in canonical_output.items()
+            )
+        ),
+        local_state=tuple(
+            (f"local:{name}", values[name])
+            for name in sorted(set(values) - input_names - output_names)
+        ),
+    )
+
+
+def _witness_input_row(witness: SemanticWitness) -> tuple[int, ...]:
+    assignment = {
+        name.removeprefix("input:"): value for name, value in witness.input_state
+    }
+    return tuple(assignment[name] for name in P30_VARIABLES)
+
+
+def _bad_image_solver(
+    inputs: T31Inputs,
+    relation: Layer30Relation,
+    predicate: Layer30Predicate | None,
+) -> object:
+    z3 = relation.z3
+    solver = z3.Solver()
+    solver.add(*relation.assertions)
+    solver.add(
+        z3.Not(
+            z3.And(
+                *(
+                    _q0_atom_expression(relation, atom)
+                    for atom in inputs.q0.clauses[0].atoms
+                )
+            )
+        )
+    )
+    if predicate is not None:
+        solver.add(_z3_p30(relation, predicate))
+    return solver
+
+
+def _state_table_size(inputs: T31Inputs) -> int:
+    table = {
+        "layer": 30,
+        "variables": list(P30_VARIABLES),
+        "states": [list(row) for row in inputs.promoted_rows],
+    }
+    return len(canonical_bytes(table))
+
+
+def synthesize_p30(
+    inputs: T31Inputs,
+    records: tuple[ProjectionAtomRecord, ...],
+    counterexample_limit: int = 64,
+) -> CandidateSearchResult:
+    """Run the bounded deterministic projected-atom CEGIS milestone."""
+    if not 1 <= counterexample_limit <= 64:
+        raise ValueError("counterexample limit must be in 1..64")
+    if tuple(sorted(records, key=lambda item: canonical_bytes(item.atom))) != records:
+        raise ValueError("projection records must be canonically ordered")
+    relation = build_layer30_relation(inputs)
+    counterexamples: list[SemanticWitness] = []
+    state_table_bytes = _state_table_size(inputs)
+    predicate: Layer30Predicate | None = None
+    origins: tuple[ProjectionOrigin, ...] = ()
+    predicate_bytes: int | None = None
+
+    while True:
+        solver = _bad_image_solver(inputs, relation, predicate)
+        status = _solver_status(relation.z3, solver, "candidate bad-image query")
+        if status == relation.z3.unsat:
+            assert predicate is not None and predicate_bytes is not None
+            return CandidateSearchResult(
+                "UNSAT",
+                predicate,
+                origins,
+                tuple(counterexamples),
+                predicate_bytes,
+                state_table_bytes,
+                None,
+            )
+        assignment = _lexicographic_assignment(
+            relation, solver, "candidate bad-image witness"
+        )
+        witness = _candidate_witness(relation, assignment)
+        if witness in counterexamples:
+            raise EvidenceError("candidate search repeated a canonical witness")
+        counterexamples.append(witness)
+        if len(counterexamples) >= counterexample_limit:
+            return CandidateSearchResult(
+                "BUDGET_EXHAUSTED",
+                predicate,
+                origins,
+                tuple(counterexamples),
+                predicate_bytes,
+                state_table_bytes,
+                f"exact bad image remains after {counterexample_limit} counterexamples",
+            )
+        witness_rows = tuple(_witness_input_row(item) for item in counterexamples)
+        selected = _select_candidate(records, witness_rows, inputs.promoted_rows)
+        if selected is None:
+            detail = (
+                "no projected atom excludes the first exact bad image"
+                if len(counterexamples) == 1
+                and all(
+                    evaluate_p30_atom(record.atom, _row_assignment(witness_rows[0]))
+                    for record in records
+                )
+                else "no six-atom projected conjunction excludes all exact bad images"
+            )
+            return CandidateSearchResult(
+                "NO_CANDIDATE",
+                None,
+                (),
+                tuple(counterexamples),
+                None,
+                state_table_bytes,
+                detail,
+            )
+        predicate, origins, predicate_bytes, _ = selected

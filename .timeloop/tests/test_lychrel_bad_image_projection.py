@@ -45,9 +45,11 @@ from lychrel_reachability_separator import SemanticWitness  # noqa: E402
 from t31_base19_bad_image_projection import (  # noqa: E402
     T30_ARTIFACT_DIGESTS,
     EvidenceError,
+    _select_candidate,
     _walk_projection_atoms,
     load_t31_inputs,
     project_bad_image_atoms,
+    synthesize_p30,
 )
 
 P30_VARIABLES = (
@@ -384,3 +386,64 @@ def test_bad_image_projection_is_byte_deterministic() -> None:
     first = project_bad_image_atoms(inputs)
     second = project_bad_image_atoms(inputs)
     assert canonical_bytes(first) == canonical_bytes(second)
+
+
+def projection_record(atom: ProjectionAtom, index: int) -> object:
+    from t31_base19_bad_image_projection import ProjectionAtomRecord
+
+    payload = canonical_bytes(atom.to_payload())
+    return ProjectionAtomRecord(
+        atom=atom,
+        origin=ProjectionOrigin(
+            atom_sha256=hashlib.sha256(payload).hexdigest(),
+            failed_q0_equation=index,
+            qe_formula_sha256=hashlib.sha256(f"formula-{index}".encode()).hexdigest(),
+            expression_path=(index,),
+            polarity="direct",
+        ),
+        holds_on_all_promoted=True,
+    )
+
+
+def test_candidate_selector_uses_the_frozen_objective() -> None:
+    promoted = tuple(
+        tuple(digit if name == "D0" else 0 for name in P30_VARIABLES)
+        for digit in range(18)
+    )
+    witness = tuple(1 if name == "L0" else 0 for name in P30_VARIABLES)
+    records = (
+        projection_record(ProjectionAtom("le", (("L0", 1),), 0), 0),
+        projection_record(
+            ProjectionAtom("le", (("L0", 1), ("R0", 1)), 0), 1
+        ),
+    )
+    selected = _select_candidate(records, (witness,), promoted)
+    assert selected is not None
+    predicate, origins, predicate_bytes, state_table_bytes = selected
+    assert predicate.clauses[0].atoms == (ProjectionAtom("le", (("L0", 1),), 0),)
+    assert origins == (records[0].origin,)
+    assert predicate_bytes < state_table_bytes
+
+
+def test_repository_projection_stops_without_fabricating_p30() -> None:
+    inputs = load_t31_inputs(ROOT)
+    records = project_bad_image_atoms(inputs)
+    result = synthesize_p30(inputs, records)
+    assert result.status == "NO_CANDIDATE"
+    assert result.p30 is None
+    assert result.origins == ()
+    assert result.predicate_bytes is None
+    assert result.state_table_bytes > 0
+    assert len(result.counterexamples) == 1
+    assert len(result.counterexamples[0].input_state) == 13
+    assert len(result.counterexamples[0].output_state) == 14
+    assert result.stop_detail == "no projected atom excludes the first exact bad image"
+
+
+def test_candidate_search_is_byte_deterministic() -> None:
+    inputs = load_t31_inputs(ROOT)
+    records = project_bad_image_atoms(inputs)
+    first = synthesize_p30(inputs, records)
+    second = synthesize_p30(inputs, records)
+    assert canonical_bytes(first.to_payload()) == canonical_bytes(second.to_payload())
+    assert set(first.origins) <= {record.origin for record in records}
