@@ -13,14 +13,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from lychrel_invariant_certificate import (  # noqa: E402
+    Conjunction,
+    LayerPredicate,
+    LinearAtom,
+    canonical_bytes,
+)
 from lychrel_reachability_separator import (  # noqa: E402
     CounterexampleTrace,
     SeparatorDataset,
+    finite_separation_failures,
 )
-from t27_base19_invariant_lift import EvidenceError  # noqa: E402
+from t27_base19_invariant_lift import (  # noqa: E402
+    EvidenceError,
+    GrammarLimits,
+    separate_counterexample,
+)
 from t28_base19_tail_quotient import (  # noqa: E402
     CandidatePartition,
+    GuardCounterexample,
+    GuardLimits,
     T28Inputs,
+    derive_guard_atoms,
     discover_reachable_quotient,
     load_t28_inputs,
 )
@@ -96,6 +110,40 @@ class T29Inputs:
             raise ValueError("T29 source digests differ from the frozen identities")
         if self.removed != "phase=0,n=0,column=82":
             raise ValueError("T29 removed-coordinate identity changed")
+
+
+@dataclass(frozen=True)
+class AtomPool:
+    atoms: tuple[LinearAtom, ...]
+
+    def __post_init__(self) -> None:
+        if not self.atoms:
+            raise ValueError("candidate atom pool must be nonempty")
+        if self.atoms != tuple(sorted(set(self.atoms), key=canonical_bytes)):
+            raise ValueError("candidate atom pool must be canonical")
+
+
+@dataclass(frozen=True)
+class FiniteSeparatorResult:
+    status: str
+    predicate: LayerPredicate | None
+    objective: tuple[int, int, int, int, int, int, int, bytes] | None
+    failures: tuple[tuple[str, tuple[int, ...]], ...] = ()
+    stop_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status == "PASS":
+            if self.predicate is None or self.objective is None or self.failures:
+                raise ValueError("finite PASS requires one replayed optimum")
+            if self.stop_reason is not None:
+                raise ValueError("finite PASS cannot carry a stop reason")
+        elif self.status == "STOP":
+            if self.predicate is not None or self.objective is not None:
+                raise ValueError("finite STOP cannot carry a predicate")
+            if not self.stop_reason:
+                raise ValueError("finite STOP requires a reason")
+        else:
+            raise ValueError("finite status must be PASS or STOP")
 
 
 def _read_mapping(path: Path, context: str) -> tuple[bytes, Mapping[str, object]]:
@@ -283,3 +331,327 @@ def dataset_payload(dataset: SeparatorDataset) -> dict[str, object]:
             "live_controls": len(dataset.live_controls),
         },
     }
+
+
+def _atom_holds_state(
+    atom: LinearAtom,
+    variables: tuple[str, ...],
+    state: tuple[int, ...],
+) -> bool:
+    assignment = dict(zip(variables, state, strict=True))
+    total = sum(coefficient * assignment[name] for name, coefficient in atom.terms)
+    if atom.relation == "eq":
+        return total == atom.constant
+    if atom.relation == "le":
+        return total <= atom.constant
+    assert atom.modulus is not None
+    return (total - atom.constant) % atom.modulus == 0
+
+
+def _checked_atom_pool(
+    atoms: set[LinearAtom],
+    limits: SeparatorLimits,
+) -> AtomPool:
+    ordered = tuple(sorted(atoms, key=canonical_bytes))
+    if len(ordered) > limits.max_candidate_atoms:
+        raise EvidenceError("candidate_atom_pool_exceeded")
+    return AtomPool(ordered)
+
+
+def _state_mapping(
+    variables: tuple[str, ...],
+    state: tuple[int, ...],
+) -> dict[str, int]:
+    return dict(zip(variables, state, strict=True))
+
+
+def build_candidate_atom_pool(
+    inputs: T29Inputs,
+    dataset: SeparatorDataset,
+    limits: SeparatorLimits,
+) -> AtomPool:
+    """Reconstruct T28's atoms and add deterministic T29 separator seeds."""
+    if dataset.variables != tuple(sorted(inputs.partition.variables)):
+        raise EvidenceError("candidate pool dataset scope changed")
+    guard_limits = GuardLimits(
+        coefficients=limits.coefficients,
+        moduli=limits.moduli,
+    )
+    counterexamples = tuple(
+        GuardCounterexample(
+            tuple(
+                _state_mapping(dataset.variables, state)[variable]
+                for variable in inputs.partition.variables
+            ),
+            "DEAD",
+            "dead_has_no_successor",
+        )
+        for state in dataset.trace_negatives
+    )
+    reconstructed = derive_guard_atoms(
+        inputs.partition,
+        counterexamples,
+        guard_limits,
+    )
+    if len(reconstructed) != 37:
+        raise EvidenceError(
+            f"T28 reconstructed atom count changed: {len(reconstructed)}"
+        )
+    atoms = set(reconstructed)
+    _checked_atom_pool(atoms, limits)
+
+    for clause in inputs.t28_inputs.terminal_predicate.clauses:
+        atoms.update(clause.atoms)
+    _checked_atom_pool(atoms, limits)
+
+    grammar = GrammarLimits(
+        coefficients=limits.coefficients,
+        moduli=limits.moduli,
+    )
+    positive_maps = tuple(
+        _state_mapping(dataset.variables, state) for state in dataset.positives
+    )
+    negatives = (*dataset.trace_negatives, *dataset.live_controls)
+    for state in negatives:
+        candidate = separate_counterexample(
+            positive_maps,
+            _state_mapping(dataset.variables, state),
+            dataset.variables,
+            grammar,
+        )
+        if candidate is not None:
+            atoms.add(candidate.atom)
+    _checked_atom_pool(atoms, limits)
+
+    seed = tuple(sorted(atoms, key=canonical_bytes))
+    positive_components: dict[tuple[bool, ...], list[dict[str, int]]] = {}
+    for state, assignment in zip(dataset.positives, positive_maps, strict=True):
+        truth = tuple(
+            _atom_holds_state(atom, dataset.variables, state) for atom in seed
+        )
+        positive_components.setdefault(truth, []).append(assignment)
+    for truth in sorted(positive_components):
+        component = tuple(positive_components[truth])
+        for state in negatives:
+            candidate = separate_counterexample(
+                component,
+                _state_mapping(dataset.variables, state),
+                dataset.variables,
+                grammar,
+            )
+            if candidate is not None:
+                atoms.add(candidate.atom)
+        _checked_atom_pool(atoms, limits)
+    return _checked_atom_pool(atoms, limits)
+
+
+def check_finite_separator(
+    dataset: SeparatorDataset,
+    predicate: LayerPredicate,
+) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """Replay one finite separator against all three labeled parts."""
+    return finite_separation_failures(predicate, dataset)
+
+
+def synthesize_finite_separator(
+    dataset: SeparatorDataset,
+    pool: AtomPool,
+    limits: SeparatorLimits,
+) -> FiniteSeparatorResult:
+    """Select the cheapest bounded DNF separating the frozen finite dataset."""
+    try:
+        import z3  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise EvidenceError("finite separator synthesis requires z3-solver") from error
+    if len(pool.atoms) > limits.max_candidate_atoms:
+        raise EvidenceError("candidate_atom_pool_exceeded")
+    scope = set(dataset.variables)
+    if any(
+        any(variable not in scope for variable, _ in atom.terms)
+        for atom in pool.atoms
+    ):
+        raise EvidenceError("candidate atom lies outside the dataset scope")
+
+    solver = z3.Optimize()
+    active = tuple(z3.Bool(f"t29_clause_{clause}_active") for clause in range(3))
+    selected = tuple(
+        tuple(
+            z3.Bool(f"t29_clause_{clause}_atom_{atom}")
+            for atom in range(len(pool.atoms))
+        )
+        for clause in range(3)
+    )
+    widths = tuple(
+        z3.Sum(*(z3.If(choice, 1, 0) for choice in row))
+        for row in selected
+    )
+    solver.add(active[0])
+    for clause in range(3):
+        solver.add(
+            z3.Implies(active[clause], widths[clause] >= 1),
+            widths[clause] <= limits.max_atoms_per_clause,
+        )
+        for choice in selected[clause]:
+            solver.add(z3.Implies(choice, active[clause]))
+        if clause:
+            solver.add(z3.Implies(active[clause], active[clause - 1]))
+
+    positives = dataset.positives
+    negatives = (*dataset.trace_negatives, *dataset.live_controls)
+    positive_truth = tuple(
+        tuple(_atom_holds_state(atom, dataset.variables, state) for atom in pool.atoms)
+        for state in positives
+    )
+    negative_truth = tuple(
+        tuple(_atom_holds_state(atom, dataset.variables, state) for atom in pool.atoms)
+        for state in negatives
+    )
+    for truth in positive_truth:
+        solver.add(
+            z3.Or(
+                *(
+                    z3.And(
+                        active[clause],
+                        *(
+                            z3.Not(selected[clause][index])
+                            for index, holds in enumerate(truth)
+                            if not holds
+                        ),
+                    )
+                    for clause in range(3)
+                )
+            )
+        )
+    for truth in negative_truth:
+        rejecting = tuple(index for index, holds in enumerate(truth) if not holds)
+        for clause in range(3):
+            solver.add(
+                z3.Implies(
+                    active[clause],
+                    z3.Or(*(selected[clause][index] for index in rejecting)),
+                )
+            )
+
+    bit_weights = tuple(1 << (len(pool.atoms) - index - 1) for index in range(len(pool.atoms)))
+    clause_codes = tuple(
+        z3.Sum(
+            *(
+                z3.If(selected[clause][index], bit_weights[index], 0)
+                for index in range(len(pool.atoms))
+            )
+        )
+        for clause in range(3)
+    )
+    solver.add(clause_codes[0] >= clause_codes[1], clause_codes[1] >= clause_codes[2])
+    clause_count = z3.Sum(*(z3.If(item, 1, 0) for item in active))
+    total_atoms = z3.Sum(*widths)
+    maximum_width = z3.Int("t29_maximum_clause_width")
+    solver.add(maximum_width >= 0, *(maximum_width >= width for width in widths))
+    coefficient_support = z3.Sum(
+        *(
+            z3.If(selected[clause][index], len(atom.terms), 0)
+            for clause in range(3)
+            for index, atom in enumerate(pool.atoms)
+        )
+    )
+    absolute_sum = z3.Sum(
+        *(
+            z3.If(
+                selected[clause][index],
+                sum(abs(coefficient) for _, coefficient in atom.terms),
+                0,
+            )
+            for clause in range(3)
+            for index, atom in enumerate(pool.atoms)
+        )
+    )
+    relation_rank = {"eq": 0, "le": 1, "congruent": 2}
+    relation_code = z3.Sum(
+        *(
+            z3.If(selected[clause][index], relation_rank[atom.relation], 0)
+            for clause in range(3)
+            for index, atom in enumerate(pool.atoms)
+        )
+    )
+    modulus_code = z3.Sum(
+        *(
+            z3.If(selected[clause][index], atom.modulus or 0, 0)
+            for clause in range(3)
+            for index, atom in enumerate(pool.atoms)
+        )
+    )
+    for objective in (
+        clause_count,
+        total_atoms,
+        maximum_width,
+        coefficient_support,
+        absolute_sum,
+        relation_code,
+        modulus_code,
+    ):
+        solver.minimize(objective)
+    solver.maximize(
+        z3.Sum(
+            *(
+                code * (1 << ((2 - index) * len(pool.atoms)))
+                for index, code in enumerate(clause_codes)
+            )
+        )
+    )
+    status = solver.check()
+    if status == z3.unknown:
+        raise EvidenceError(
+            f"finite separator synthesis returned UNKNOWN: {solver.reason_unknown()}"
+        )
+    if status == z3.unsat:
+        first_uncovered = next(
+            (
+                state
+                for state, truth in zip(positives, positive_truth, strict=True)
+                if not any(truth)
+            ),
+            positives[0],
+        )
+        return FiniteSeparatorResult(
+            status="STOP",
+            predicate=None,
+            objective=None,
+            failures=(("positive", first_uncovered),),
+            stop_reason="finite_separator_not_found",
+        )
+    model = solver.model()
+    clauses = tuple(
+        Conjunction(
+            tuple(
+                atom
+                for index, atom in enumerate(pool.atoms)
+                if z3.is_true(model.eval(selected[clause][index], model_completion=True))
+            )
+        )
+        for clause in range(3)
+        if z3.is_true(model.eval(active[clause], model_completion=True))
+    )
+    predicate = LayerPredicate(layer=31, variables=dataset.variables, clauses=clauses)
+    failures = check_finite_separator(dataset, predicate)
+    if failures:
+        raise EvidenceError("optimized finite separator failed exact replay")
+    objective_values = (
+        len(predicate.clauses),
+        sum(len(clause.atoms) for clause in predicate.clauses),
+        max(len(clause.atoms) for clause in predicate.clauses),
+        sum(len(atom.terms) for clause in predicate.clauses for atom in clause.atoms),
+        sum(
+            abs(coefficient)
+            for clause in predicate.clauses
+            for atom in clause.atoms
+            for _, coefficient in atom.terms
+        ),
+        sum(relation_rank[atom.relation] for clause in predicate.clauses for atom in clause.atoms),
+        sum((atom.modulus or 0) for clause in predicate.clauses for atom in clause.atoms),
+        canonical_bytes(predicate),
+    )
+    return FiniteSeparatorResult(
+        status="PASS",
+        predicate=predicate,
+        objective=objective_values,
+    )

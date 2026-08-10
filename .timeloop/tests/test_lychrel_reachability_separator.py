@@ -13,6 +13,7 @@ from lychrel_invariant_certificate import (  # noqa: E402
     Conjunction,
     LayerPredicate,
     LinearAtom,
+    canonical_bytes,
 )
 from lychrel_reachability_separator import (  # noqa: E402
     CounterexampleTrace,
@@ -28,10 +29,14 @@ from t28_base19_tail_quotient import (  # noqa: E402
     replay_layer31_counterexample_trace,
 )
 from t29_base19_reachability_separator import (  # noqa: E402
+    AtomPool,
     SeparatorLimits,
+    build_candidate_atom_pool,
     build_separator_dataset,
+    check_finite_separator,
     dataset_payload,
     load_t29_inputs,
+    synthesize_finite_separator,
     trace_payload,
 )
 
@@ -300,3 +305,114 @@ def test_real_t29_adapter_builds_the_frozen_disjoint_dataset() -> None:
         "trace_negatives": 221,
         "live_controls": 6,
     }
+
+
+def test_finite_separator_finds_one_clause_toy_optimum() -> None:
+    """A single equality is the exact cheapest separator for this dataset."""
+    dataset = SeparatorDataset(
+        variables=("x",),
+        positives=((0,),),
+        trace_negatives=((1,),),
+        live_controls=((2,),),
+    )
+    atom = LinearAtom("eq", (("x", 1),), 0)
+
+    result = synthesize_finite_separator(
+        dataset,
+        AtomPool((atom,)),
+        SeparatorLimits(),
+    )
+
+    assert result.status == "PASS"
+    assert result.predicate == LayerPredicate(
+        layer=31,
+        variables=("x",),
+        clauses=(Conjunction((atom,)),),
+    )
+    assert result.objective[:3] == (1, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("positives", "trace_negatives", "live_controls", "clause_count"),
+    (
+        (((0,), (2,)), ((1,),), ((3,),), 2),
+        (((0,), (2,), (4,)), ((1,), (3,)), ((5,),), 3),
+    ),
+)
+def test_finite_separator_requires_each_disconnected_positive_clause(
+    positives: tuple[tuple[int, ...], ...],
+    trace_negatives: tuple[tuple[int, ...], ...],
+    live_controls: tuple[tuple[int, ...], ...],
+    clause_count: int,
+) -> None:
+    """Singleton equalities expose whether two- and three-clause DNF works."""
+    dataset = SeparatorDataset(
+        variables=("x",),
+        positives=positives,
+        trace_negatives=trace_negatives,
+        live_controls=live_controls,
+    )
+    atoms = tuple(
+        sorted(
+            (
+                LinearAtom("eq", (("x", 1),), state[0])
+                for state in positives
+            ),
+            key=canonical_bytes,
+        )
+    )
+
+    result = synthesize_finite_separator(
+        dataset,
+        AtomPool(atoms),
+        SeparatorLimits(),
+    )
+
+    assert result.status == "PASS"
+    assert result.objective is not None
+    assert result.objective[:3] == (clause_count, clause_count, 1)
+
+
+def test_finite_separator_stop_names_first_uncovered_positive() -> None:
+    """A bounded failure needs a checkable state, not an opaque solver result."""
+    dataset = SeparatorDataset(
+        variables=("x",),
+        positives=((0,), (2,)),
+        trace_negatives=((1,),),
+        live_controls=((3,),),
+    )
+    pool = AtomPool((LinearAtom("eq", (("x", 1),), 0),))
+
+    result = synthesize_finite_separator(dataset, pool, SeparatorLimits())
+
+    assert result.status == "STOP"
+    assert result.stop_reason == "finite_separator_not_found"
+    assert result.failures == (("positive", (2,)),)
+
+
+def test_real_atom_pool_reconstructs_the_bounded_t28_seed() -> None:
+    """The enriched pool must retain the 37-atom T28 refinement boundary."""
+    inputs = load_t29_inputs(ROOT)
+    _, trace = replay_layer31_counterexample_trace(ROOT)
+    dataset = build_separator_dataset(inputs, trace)
+
+    pool = build_candidate_atom_pool(inputs, dataset, SeparatorLimits())
+    result = synthesize_finite_separator(dataset, pool, SeparatorLimits())
+
+    assert len(pool.atoms) == 83
+    assert pool.atoms == tuple(sorted(set(pool.atoms), key=canonical_bytes))
+    assert all(
+        coefficient in range(-3, 4)
+        for atom in pool.atoms
+        for _, coefficient in atom.terms
+    )
+    assert all(
+        atom.modulus is None or atom.modulus in range(2, 21)
+        for atom in pool.atoms
+    )
+    assert result.status == "PASS"
+    assert result.predicate is not None
+    assert result.objective is not None
+    assert result.objective[:7] == (1, 10, 10, 22, 25, 9, 0)
+    assert len(result.predicate.clauses[0].atoms) == 10
+    assert check_finite_separator(dataset, result.predicate) == ()
