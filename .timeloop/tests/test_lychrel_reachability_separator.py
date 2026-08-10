@@ -30,12 +30,16 @@ from t28_base19_tail_quotient import (  # noqa: E402
 )
 from t29_base19_reachability_separator import (  # noqa: E402
     AtomPool,
+    SemanticCheck,
     SeparatorLimits,
     build_candidate_atom_pool,
     build_separator_dataset,
     check_finite_separator,
+    check_semantic_dead_region,
     dataset_payload,
+    decide_t29_gate,
     load_t29_inputs,
+    render_t29_report,
     synthesize_finite_separator,
     trace_payload,
 )
@@ -416,3 +420,89 @@ def test_real_atom_pool_reconstructs_the_bounded_t28_seed() -> None:
     assert result.objective[:7] == (1, 10, 10, 22, 25, 9, 0)
     assert len(result.predicate.clauses[0].atoms) == 10
     assert check_finite_separator(dataset, result.predicate) == ()
+
+
+def test_semantic_dead_region_control_finds_a_complete_successor_witness() -> None:
+    """A predicate true over the digit domain must not be promoted to dead."""
+    inputs = load_t29_inputs(ROOT)
+    predicate = LayerPredicate(
+        layer=31,
+        variables=tuple(sorted(inputs.partition.variables)),
+        clauses=(
+            Conjunction((LinearAtom("le", (("D0", -1),), 0),)),
+        ),
+    )
+
+    result = check_semantic_dead_region(inputs, predicate)
+
+    assert isinstance(result, SemanticCheck)
+    assert result.status == "SAT"
+    assert result.witness is not None
+    assert len(result.witness.input_state) == 14
+    assert len(result.witness.output_state) == 14
+    assert result.equation_count == 12
+
+
+def test_semantic_dead_region_control_proves_an_empty_predicate_unsat() -> None:
+    """D0 is a base-19 digit, so D0 <= -1 has no transition model."""
+    inputs = load_t29_inputs(ROOT)
+    predicate = LayerPredicate(
+        layer=31,
+        variables=tuple(sorted(inputs.partition.variables)),
+        clauses=(
+            Conjunction((LinearAtom("le", (("D0", 1),), -1),)),
+        ),
+    )
+
+    result = check_semantic_dead_region(inputs, predicate)
+
+    assert result.status == "UNSAT"
+    assert result.witness is None
+    assert result.equation_count == 12
+
+
+def test_primary_gate_preserves_finite_pass_with_semantic_counterexample() -> None:
+    """Semantic SAT stops promotion but must not erase finite separation."""
+    dataset = SeparatorDataset(
+        variables=("x",),
+        positives=((0,),),
+        trace_negatives=((1,),),
+        live_controls=((2,),),
+    )
+    atom = LinearAtom("eq", (("x", 1),), 0)
+    finite = synthesize_finite_separator(
+        dataset,
+        AtomPool((atom,)),
+        SeparatorLimits(),
+    )
+    witness = SemanticWitness(
+        input_state=(("input:x", 0),),
+        output_state=(("output:y", 1),),
+        local_state=(("local:z", 0),),
+    )
+    semantic = SemanticCheck("SAT", witness, 12)
+    frozen = load_t29_inputs(ROOT)
+    baseline = {
+        "source_digests": frozen.source_digests,
+        "trace_sha256": "1" * 64,
+        "dataset_sha256": "2" * 64,
+        "pool_size": 1,
+        "counts": {
+            "positives": 1,
+            "trace_negatives": 1,
+            "live_controls": 1,
+        },
+    }
+
+    evidence, certificate = decide_t29_gate(baseline, finite, semantic)
+
+    assert evidence["status"] == "FINITE_SEPARATOR_PASS_SEMANTIC_STOP"
+    assert evidence["semantic_counterexample"] == witness.to_payload()
+    assert certificate is not None
+    assert certificate.finite_status == "PASS"
+    assert certificate.semantic_status == "SAT"
+    assert certificate.semantic_witness == witness
+    report = render_t29_report(evidence)
+    assert "FINITE_SEPARATOR_PASS_SEMANTIC_STOP" in report
+    assert "finite-only" in report
+    assert "semantic successor" in report
