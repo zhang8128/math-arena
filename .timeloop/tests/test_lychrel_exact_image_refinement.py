@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -509,3 +510,28 @@ def test_primary_builder_and_report_state_the_bounded_claim() -> None:
     report = render_t30_report(evidence)
     assert "promoted layer-30 frontier" in report
     assert "EXACT_IMAGE_REFINEMENT_PASS" in report
+
+
+def test_primary_cli_preserves_predecessor_obligation_order(tmp_path: Path) -> None:
+    evidence = tmp_path / "evidence.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / ".timeloop/runs/t30_base19_exact_image_refinement.py"),
+            "--evidence",
+            str(evidence),
+            "--certificate",
+            str(tmp_path / "certificate.json"),
+            "--report",
+            str(tmp_path / "report.md"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert [
+        item["predecessor_index"]
+        for item in payload["implication"]["predecessor_obligations"]
+    ] == list(range(18))

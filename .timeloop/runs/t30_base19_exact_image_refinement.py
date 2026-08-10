@@ -896,7 +896,9 @@ def decide_t30_gate(
                 obligation.exact_model_count for obligation in implication.obligations
             ),
             "distinct_output_count": layer31.output_state_count,
-            "obligations": _obligation_payload(implication.obligations),
+            "predecessor_obligations": _obligation_payload(
+                implication.obligations
+            ),
             "witness": _witness_payload(implication.witness),
         },
         "finite": None
