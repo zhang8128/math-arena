@@ -27,7 +27,11 @@ from lychrel_exact_image_refinement import (  # noqa: E402
     ExactImageRefinementCertificate,
     parse_exact_image_refinement_certificate,
 )
-from lychrel_invariant_certificate import LayerPredicate, canonical_bytes  # noqa: E402
+from lychrel_invariant_certificate import (  # noqa: E402
+    LayerPredicate,
+    canonical_bytes,
+    evaluate_predicate,
+)
 from lychrel_reachability_separator import SemanticWitness  # noqa: E402
 from t27_base19_invariant_lift import (  # noqa: E402
     canonical_variable,
@@ -153,6 +157,21 @@ class CandidateSearchResult:
             "state_table_bytes": self.state_table_bytes,
             "stop_detail": self.stop_detail,
         }
+
+
+@dataclass(frozen=True)
+class BadImageWitnessReplay:
+    equation_residuals: tuple[int, ...]
+    q0_holds: bool
+
+    def __post_init__(self) -> None:
+        if len(self.equation_residuals) != 12 or any(
+            not isinstance(residual, int) or isinstance(residual, bool)
+            for residual in self.equation_residuals
+        ):
+            raise ValueError("bad-image replay requires 12 integer residuals")
+        if not isinstance(self.q0_holds, bool):
+            raise ValueError("bad-image replay Q0 result must be Boolean")
 
 
 def _raw_digest(raw: bytes) -> str:
@@ -760,6 +779,54 @@ def _candidate_witness(
     )
 
 
+def replay_bad_image_witness(
+    inputs: T31Inputs,
+    witness: SemanticWitness,
+) -> BadImageWitnessReplay:
+    """Constructively replay one witness against the 12 equations and Q0."""
+    relation = build_layer30_relation(inputs)
+    assignment: dict[str, int] = {}
+
+    def bind(original: str, value: int) -> None:
+        if original in assignment:
+            raise EvidenceError(f"bad-image witness repeats variable: {original}")
+        assignment[original] = value
+
+    for prefixed, value in witness.input_state:
+        canonical = prefixed.removeprefix("input:")
+        if f"input:{canonical}" != prefixed or canonical not in relation.input_mapping:
+            raise EvidenceError(f"bad-image witness input is unknown: {prefixed}")
+        bind(relation.input_mapping[canonical], value)
+    for prefixed, value in witness.output_state:
+        canonical = prefixed.removeprefix("output:")
+        if f"output:{canonical}" != prefixed or canonical not in relation.output_mapping:
+            raise EvidenceError(f"bad-image witness output is unknown: {prefixed}")
+        bind(relation.output_mapping[canonical], value)
+    for prefixed, value in witness.local_state:
+        original = prefixed.removeprefix("local:")
+        if f"local:{original}" != prefixed:
+            raise EvidenceError(f"bad-image witness local is malformed: {prefixed}")
+        bind(original, value)
+
+    expected = set(relation.variables)
+    actual = set(assignment)
+    if actual != expected:
+        raise EvidenceError(
+            "bad-image witness variables differ: "
+            f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+        )
+    output = {
+        canonical: assignment[original]
+        for canonical, original in relation.output_mapping.items()
+    }
+    return BadImageWitnessReplay(
+        tuple(
+            equation.residual(assignment, 19) for equation in relation.equations
+        ),
+        evaluate_predicate(inputs.q0, output),
+    )
+
+
 def _witness_input_row(witness: SemanticWitness) -> tuple[int, ...]:
     assignment = {
         name.removeprefix("input:"): value for name, value in witness.input_state
@@ -834,6 +901,9 @@ def synthesize_p30(
             relation, solver, "candidate bad-image witness"
         )
         witness = _candidate_witness(relation, assignment)
+        replay = replay_bad_image_witness(inputs, witness)
+        if replay.equation_residuals != (0,) * 12 or replay.q0_holds:
+            raise EvidenceError("candidate bad-image witness failed exact replay")
         if witness in counterexamples:
             raise EvidenceError("candidate search repeated a canonical witness")
         counterexamples.append(witness)

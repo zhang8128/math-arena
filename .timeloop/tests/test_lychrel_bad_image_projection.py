@@ -49,6 +49,7 @@ from t31_base19_bad_image_projection import (  # noqa: E402
     _walk_projection_atoms,
     load_t31_inputs,
     project_bad_image_atoms,
+    replay_bad_image_witness,
     synthesize_p30,
 )
 
@@ -437,6 +438,9 @@ def test_repository_projection_stops_without_fabricating_p30() -> None:
     assert len(result.counterexamples) == 1
     assert len(result.counterexamples[0].input_state) == 13
     assert len(result.counterexamples[0].output_state) == 14
+    replay = replay_bad_image_witness(inputs, result.counterexamples[0])
+    assert replay.equation_residuals == (0,) * 12
+    assert replay.q0_holds is False
     assert result.stop_detail == "no projected atom excludes the first exact bad image"
 
 
