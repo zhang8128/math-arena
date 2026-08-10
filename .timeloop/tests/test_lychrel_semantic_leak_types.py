@@ -59,6 +59,7 @@ from t32_base19_semantic_leak_types import (  # noqa: E402
     load_t32_inputs,
     q0_residuals,
     structural_view,
+    synthesize_leak_family,
 )
 
 
@@ -490,3 +491,37 @@ def test_first_type_search_enforces_exact_budget_bounds() -> None:
         find_first_leak_type(inputs, witness_limit=0)
     with pytest.raises(ValueError, match="candidate limit"):
         find_first_leak_type(inputs, candidate_limit=2_001)
+
+
+def test_repository_family_reaches_pass_or_exact_stop() -> None:
+    inputs = load_t32_inputs(ROOT)
+    milestone = find_first_leak_type(inputs)
+    assert milestone.status == "PASS"
+    result = synthesize_leak_family(inputs, milestone)
+    assert result.status in {
+        "PASS",
+        "NO_SOUND_TYPE",
+        "NO_DIVERSE_TYPE",
+        "TYPE_LIMIT_EXCEEDED",
+        "WITNESS_BUDGET_EXHAUSTED",
+        "CANDIDATE_BUDGET_EXHAUSTED",
+        "UNKNOWN",
+    }
+    assert result.inspected_witness_count <= 256
+    assert result.tested_candidate_count <= 10_000
+    if result.status == "PASS":
+        assert result.family is not None
+        assert 1 <= len(result.family.types) <= 8
+        assert result.exhaustiveness_status == "UNSAT"
+        assert result.type_soundness == ("UNSAT",) * len(result.family.types)
+        assert len(result.diversity) == len(result.family.types)
+    else:
+        assert result.stop_detail
+
+
+def test_family_search_is_byte_deterministic() -> None:
+    inputs = load_t32_inputs(ROOT)
+    milestone = find_first_leak_type(inputs)
+    first = synthesize_leak_family(inputs, milestone)
+    second = synthesize_leak_family(inputs, milestone)
+    assert canonical_bytes(first.to_payload()) == canonical_bytes(second.to_payload())

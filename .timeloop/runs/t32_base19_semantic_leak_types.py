@@ -20,7 +20,9 @@ from lychrel_invariant_certificate import LayerPredicate  # noqa: E402
 from lychrel_reachability_separator import SemanticWitness  # noqa: E402
 from lychrel_semantic_leak_types import (  # noqa: E402
     LeakType,
+    LeakTypeFamily,
     StructuralLiteral,
+    TypeDiversityRecord,
     evaluate_leak_type,
     evaluate_literal,
     generate_literal_pool,
@@ -665,6 +667,7 @@ def _run_independent_milestone(
 
 
 _FIRST_TYPE_CACHE: dict[tuple[int, int, int], FirstTypeMilestoneResult] = {}
+_FIRST_TYPE_TRACES: dict[int, tuple[SemanticWitness, ...]] = {}
 
 
 def find_first_leak_type(
@@ -855,6 +858,7 @@ def find_first_leak_type(
                 "PASS",
                 None,
             )
+            _FIRST_TYPE_TRACES[id(result)] = tuple(inspected)
             _FIRST_TYPE_CACHE[cache_key] = result
             return result
 
@@ -876,3 +880,406 @@ def find_first_leak_type(
     )
     _FIRST_TYPE_CACHE[cache_key] = result
     return result
+
+
+@dataclass(frozen=True)
+class FamilySearchResult:
+    status: str
+    family: LeakTypeFamily | None
+    diversity: tuple[TypeDiversityRecord, ...]
+    uncovered_witnesses: tuple[SemanticWitness, ...]
+    type_soundness: tuple[str, ...]
+    exhaustiveness_status: str | None
+    inspected_witness_count: int
+    tested_candidate_count: int
+    stop_detail: str | None
+
+    def __post_init__(self) -> None:
+        statuses = {
+            "PASS",
+            "NO_SOUND_TYPE",
+            "NO_DIVERSE_TYPE",
+            "TYPE_LIMIT_EXCEEDED",
+            "WITNESS_BUDGET_EXHAUSTED",
+            "CANDIDATE_BUDGET_EXHAUSTED",
+            "UNKNOWN",
+        }
+        if self.status not in statuses:
+            raise ValueError("unsupported family-search status")
+        if not 1 <= self.inspected_witness_count <= 256:
+            raise ValueError("family inspected witness count is outside 1..256")
+        if not 0 <= self.tested_candidate_count <= 10_000:
+            raise ValueError("family tested candidate count is outside 0..10,000")
+        if self.status == "PASS":
+            if (
+                self.family is None
+                or self.stop_detail is not None
+                or self.exhaustiveness_status != "UNSAT"
+                or self.type_soundness != ("UNSAT",) * len(self.family.types)
+                or len(self.diversity) != len(self.family.types)
+            ):
+                raise ValueError("family PASS gates differ")
+        elif not self.stop_detail:
+            raise ValueError("family STOP requires a detail")
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "family": None if self.family is None else self.family.to_payload(),
+            "diversity": [record.to_payload() for record in self.diversity],
+            "uncovered_witnesses": [
+                witness.to_payload() for witness in self.uncovered_witnesses
+            ],
+            "type_soundness": list(self.type_soundness),
+            "exhaustiveness_status": self.exhaustiveness_status,
+            "inspected_witness_count": self.inspected_witness_count,
+            "tested_candidate_count": self.tested_candidate_count,
+            "stop_detail": self.stop_detail,
+        }
+
+
+def _family_stop(
+    status: str,
+    uncovered: list[SemanticWitness],
+    inspected: int,
+    tested: int,
+    detail: str,
+) -> FamilySearchResult:
+    return FamilySearchResult(
+        status,
+        None,
+        (),
+        tuple(uncovered),
+        (),
+        None,
+        inspected,
+        tested,
+        detail,
+    )
+
+
+def _candidate_types_for_pair(
+    inputs: T32Inputs,
+    first: SemanticWitness,
+    second: SemanticWitness,
+) -> tuple[LeakType, ...]:
+    first_view = structural_view(inputs, first)
+    second_view = structural_view(inputs, second)
+    intersection = tuple(
+        literal
+        for literal in generate_literal_pool()
+        if evaluate_literal(literal, first_view)
+        and evaluate_literal(literal, second_view)
+    )
+    result = []
+    for size in range(1, min(6, len(intersection)) + 1):
+        selected = [
+            LeakType(tuple(combination))
+            for combination in itertools.combinations(intersection, size)
+        ]
+        selected.sort(key=type_objective)
+        result.extend(selected)
+        if len(result) >= 10_000:
+            break
+    return tuple(result)
+
+
+def _family_diversity(
+    family: LeakTypeFamily,
+    records: dict[
+        LeakType,
+        tuple[
+            tuple[SemanticWitness, SemanticWitness],
+            tuple[tuple[bool, ...], tuple[bool, ...]],
+        ],
+    ],
+) -> tuple[TypeDiversityRecord, ...]:
+    return tuple(
+        TypeDiversityRecord(index, records[leak_type][0], records[leak_type][1])
+        for index, leak_type in enumerate(family.types)
+    )
+
+
+_FAMILY_CACHE: dict[tuple[int, int, int, int, int], FamilySearchResult] = {}
+
+
+def synthesize_leak_family(
+    inputs: T32Inputs,
+    milestone: FirstTypeMilestoneResult,
+    witness_limit: int = 256,
+    candidate_limit: int = 10_000,
+    type_limit: int = 8,
+) -> FamilySearchResult:
+    """Complete the bounded structural cover by exact uncovered-witness CEGIS."""
+    if milestone.status != "PASS" or milestone.leak_type is None:
+        raise ValueError("family synthesis requires a successful first-type milestone")
+    if (
+        not isinstance(witness_limit, int)
+        or isinstance(witness_limit, bool)
+        or not milestone.inspected_witness_count <= witness_limit <= 256
+    ):
+        raise ValueError("family witness limit is outside the milestone-inclusive bound")
+    if (
+        not isinstance(candidate_limit, int)
+        or isinstance(candidate_limit, bool)
+        or not milestone.tested_candidate_count <= candidate_limit <= 10_000
+    ):
+        raise ValueError("family candidate limit is outside the milestone-inclusive bound")
+    if (
+        not isinstance(type_limit, int)
+        or isinstance(type_limit, bool)
+        or not 1 <= type_limit <= 8
+    ):
+        raise ValueError("family type limit must be in 1..8")
+    cache_key = (id(inputs), id(milestone), witness_limit, candidate_limit, type_limit)
+    cached = _FAMILY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    relation = build_layer30_relation(inputs.t31_inputs)
+    z3 = relation.z3
+    family_types = [milestone.leak_type]
+    milestone_witnesses = milestone.witnesses
+    milestone_masks = milestone.failure_masks
+    if len(milestone_witnesses) != 2 or len(milestone_masks) != 2:
+        raise ValueError("first-type milestone diversity boundary differs")
+    diversity_records = {
+        milestone.leak_type: (
+            (milestone_witnesses[0], milestone_witnesses[1]),
+            (milestone_masks[0], milestone_masks[1]),
+        )
+    }
+    known_witnesses = list(
+        _FIRST_TYPE_TRACES.get(id(milestone), milestone.witnesses)
+    )
+    known_set = set(known_witnesses)
+    inspected_count = milestone.inspected_witness_count
+    tested_count = milestone.tested_candidate_count
+    tested_types = {milestone.leak_type}
+    uncovered: list[SemanticWitness] = []
+
+    while True:
+        family = LeakTypeFamily(tuple(family_types))
+        uncovered_solver = z3.Solver()
+        uncovered_solver.add(
+            *relation.assertions,
+            z3.Not(_q0_expression(inputs, relation)),
+            z3.Not(
+                z3.Or(
+                    *(
+                        _type_expression(inputs, relation, leak_type)
+                        for leak_type in family.types
+                    )
+                )
+            ),
+        )
+        try:
+            uncovered_status = _solver_status(
+                relation, uncovered_solver, "family exhaustiveness"
+            )
+        except EvidenceError as error:
+            result = _family_stop(
+                "UNKNOWN", uncovered, inspected_count, tested_count, str(error)
+            )
+            _FAMILY_CACHE[cache_key] = result
+            return result
+        if uncovered_status == "UNSAT":
+            result = FamilySearchResult(
+                "PASS",
+                family,
+                _family_diversity(family, diversity_records),
+                tuple(uncovered),
+                ("UNSAT",) * len(family.types),
+                "UNSAT",
+                inspected_count,
+                tested_count,
+                None,
+            )
+            _FAMILY_CACHE[cache_key] = result
+            return result
+        try:
+            seed = _exact_witness(
+                inputs, relation, uncovered_solver, "family uncovered witness"
+            )
+        except EvidenceError as error:
+            result = _family_stop(
+                "UNKNOWN", uncovered, inspected_count, tested_count, str(error)
+            )
+            _FAMILY_CACHE[cache_key] = result
+            return result
+        if seed in uncovered:
+            result = _family_stop(
+                "UNKNOWN",
+                uncovered,
+                inspected_count,
+                tested_count,
+                "family search repeated an uncovered witness",
+            )
+            _FAMILY_CACHE[cache_key] = result
+            return result
+        uncovered.append(seed)
+        if seed not in known_set:
+            if inspected_count >= witness_limit:
+                result = _family_stop(
+                    "WITNESS_BUDGET_EXHAUSTED",
+                    uncovered,
+                    inspected_count,
+                    tested_count,
+                    f"uncovered witness would exceed global limit {witness_limit}",
+                )
+                _FAMILY_CACHE[cache_key] = result
+                return result
+            known_witnesses.append(seed)
+            known_set.add(seed)
+            inspected_count += 1
+        if len(family.types) >= type_limit:
+            result = _family_stop(
+                "TYPE_LIMIT_EXCEEDED",
+                uncovered,
+                inspected_count,
+                tested_count,
+                f"a ninth mechanism is required beyond type limit {type_limit}",
+            )
+            _FAMILY_CACHE[cache_key] = result
+            return result
+
+        seed_mask = failure_mask(inputs, seed)
+        seed_input = _witness_input(seed)
+        pair_exclusions = []
+        accepted = False
+        while not accepted:
+            partner_solver = z3.Solver()
+            partner_solver.add(
+                *relation.assertions,
+                z3.Not(_q0_expression(inputs, relation)),
+                *pair_exclusions,
+            )
+            try:
+                partner_status = _solver_status(
+                    relation, partner_solver, "family diversity witness"
+                )
+            except EvidenceError as error:
+                result = _family_stop(
+                    "UNKNOWN", uncovered, inspected_count, tested_count, str(error)
+                )
+                _FAMILY_CACHE[cache_key] = result
+                return result
+            if partner_status == "UNSAT":
+                result = _family_stop(
+                    "NO_DIVERSE_TYPE",
+                    uncovered,
+                    inspected_count,
+                    tested_count,
+                    "no second bad witness has a distinct input and failure mask",
+                )
+                _FAMILY_CACHE[cache_key] = result
+                return result
+            try:
+                partner = _exact_witness(
+                    inputs, relation, partner_solver, "family diversity witness"
+                )
+            except EvidenceError as error:
+                result = _family_stop(
+                    "UNKNOWN", uncovered, inspected_count, tested_count, str(error)
+                )
+                _FAMILY_CACHE[cache_key] = result
+                return result
+            partner_assignment = reconstruct_witness_assignment(inputs, partner)
+            pair_exclusions.append(
+                z3.Or(
+                    *(
+                        relation.variables[name] != value
+                        for name, value in sorted(partner_assignment.items())
+                    )
+                )
+            )
+            if partner not in known_set:
+                if inspected_count >= witness_limit:
+                    result = _family_stop(
+                        "WITNESS_BUDGET_EXHAUSTED",
+                        uncovered,
+                        inspected_count,
+                        tested_count,
+                        f"diversity witness would exceed global limit {witness_limit}",
+                    )
+                    _FAMILY_CACHE[cache_key] = result
+                    return result
+                known_witnesses.append(partner)
+                known_set.add(partner)
+                inspected_count += 1
+            partner_mask = failure_mask(inputs, partner)
+            if _witness_input(partner) == seed_input or partner_mask == seed_mask:
+                continue
+
+            candidates = _candidate_types_for_pair(inputs, seed, partner)
+            for leak_type in candidates:
+                if leak_type in tested_types:
+                    continue
+                if tested_count >= candidate_limit:
+                    result = _family_stop(
+                        "CANDIDATE_BUDGET_EXHAUSTED",
+                        uncovered,
+                        inspected_count,
+                        tested_count,
+                        f"no family found after {candidate_limit} conjunctions",
+                    )
+                    _FAMILY_CACHE[cache_key] = result
+                    return result
+                tested_types.add(leak_type)
+                tested_count += 1
+                type_expression = _type_expression(inputs, relation, leak_type)
+                soundness_solver = z3.Solver()
+                soundness_solver.add(
+                    *relation.assertions,
+                    type_expression,
+                    _q0_expression(inputs, relation),
+                )
+                try:
+                    soundness = _solver_status(
+                        relation, soundness_solver, "family type soundness"
+                    )
+                    if soundness == "SAT":
+                        _exact_witness(
+                            inputs,
+                            relation,
+                            soundness_solver,
+                            "family type countermodel",
+                        )
+                        continue
+                except EvidenceError as error:
+                    result = _family_stop(
+                        "UNKNOWN", uncovered, inspected_count, tested_count, str(error)
+                    )
+                    _FAMILY_CACHE[cache_key] = result
+                    return result
+                if not all(
+                    evaluate_leak_type(leak_type, structural_view(inputs, item))
+                    for item in (seed, partner)
+                ):
+                    result = _family_stop(
+                        "UNKNOWN",
+                        uncovered,
+                        inspected_count,
+                        tested_count,
+                        "accepted family type failed witness replay",
+                    )
+                    _FAMILY_CACHE[cache_key] = result
+                    return result
+                family_types.append(leak_type)
+                diversity_records[leak_type] = (
+                    (seed, partner),
+                    (seed_mask, partner_mask),
+                )
+                accepted = True
+                break
+
+            if tested_count >= candidate_limit and not accepted:
+                result = _family_stop(
+                    "CANDIDATE_BUDGET_EXHAUSTED",
+                    uncovered,
+                    inspected_count,
+                    tested_count,
+                    f"no family found after {candidate_limit} conjunctions",
+                )
+                _FAMILY_CACHE[cache_key] = result
+                return result
