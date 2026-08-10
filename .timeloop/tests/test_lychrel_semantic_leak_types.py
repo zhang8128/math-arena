@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
 import hashlib
+import importlib.util
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -8,6 +11,30 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+INDEPENDENT = (
+    ROOT / ".timeloop/runs/t32_base19_semantic_leak_types_independent.py"
+)
+EQUATIONS = ROOT / "publication/base19-radial/instance/equations.json"
+FRONTIER = ROOT / "publication/base19-radial/certificates/minimal-core-frontier.json"
+T27_EVIDENCE = ROOT / ".timeloop/runs/t27_base19_invariant_lift.json"
+T28_EVIDENCE = ROOT / ".timeloop/runs/t28_base19_tail_quotient.json"
+T28_INDEPENDENT = ROOT / ".timeloop/runs/t28_base19_tail_quotient_independent.json"
+T29_TRACE = ROOT / ".timeloop/runs/t29_base19_reachability_separator_trace.json"
+T29_DATASET = ROOT / ".timeloop/runs/t29_base19_reachability_separator_dataset.json"
+T29_EVIDENCE = ROOT / ".timeloop/runs/t29_base19_reachability_separator.json"
+T29_CERTIFICATE = (
+    ROOT / ".timeloop/runs/t29_base19_reachability_separator_certificate.json"
+)
+T29_INDEPENDENT = (
+    ROOT / ".timeloop/runs/t29_base19_reachability_separator_independent.json"
+)
+T30_EVIDENCE = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement.json"
+T30_CERTIFICATE = (
+    ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_certificate.json"
+)
+T30_INDEPENDENT = (
+    ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_independent.json"
+)
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
 
@@ -271,3 +298,155 @@ def test_t32_adapter_rejects_a_mutated_t31_source(tmp_path: Path) -> None:
     )
     with pytest.raises(EvidenceError, match="T31 runner raw SHA-256 changed"):
         load_t32_inputs(ROOT, t31_runner_path=changed)
+
+
+def load_independent_module() -> object:
+    spec = importlib.util.spec_from_file_location("t32_independent_test", INDEPENDENT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_independent_checker_starts_under_isolated_python() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-I", str(INDEPENDENT), "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert "milestone" in completed.stdout
+    assert "full" in completed.stdout
+
+
+def test_independent_checker_has_only_standard_library_imports() -> None:
+    tree = ast.parse(INDEPENDENT.read_text(encoding="utf-8"))
+    roots = {
+        alias.name.split(".", 1)[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    roots.update(
+        node.module.split(".", 1)[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    )
+    assert roots <= {
+        "__future__",
+        "argparse",
+        "hashlib",
+        "itertools",
+        "json",
+        "re",
+        "sys",
+        "dataclasses",
+        "pathlib",
+    }
+
+
+def test_independent_constraint_search_handles_literal_target_both_ways() -> None:
+    module = load_independent_module()
+    equation = {
+        "left": {"variable": "p0:f0:d1"},
+        "right": {"literal": 18},
+        "target": {"variable": "p0:f0:d2"},
+        "carry_in": None,
+        "carry_out": "c:p0:n0:col1",
+    }
+    domains = {
+        "digit:p0:f0:d1": set(range(19)),
+        "digit:p0:f0:d2": set(range(19)),
+        "c:p0:n0:col1": {0, 1},
+    }
+    constraint = module.allowed_equation_tuples(equation, domains, 19)
+    assert module.first_solution(domains, (constraint,)) == (
+        ("c:p0:n0:col1", 0),
+        ("digit:p0:f0:d1", 0),
+        ("digit:p0:f0:d2", 18),
+    )
+    reverse = {name: set(values) for name, values in domains.items()}
+    reverse["digit:p0:f0:d2"] = {0}
+    assert module.first_solution(reverse, (constraint,)) == (
+        ("c:p0:n0:col1", 1),
+        ("digit:p0:f0:d1", 1),
+        ("digit:p0:f0:d2", 0),
+    )
+
+
+def test_independent_structural_literals_cover_all_six_kinds() -> None:
+    module = load_independent_module()
+    assignment = structural_assignment()
+    literals = (
+        {"phase": 0, "kind": "digit_order", "relation": "eq"},
+        {"phase": 5, "kind": "digit_sum", "relation": "eq18"},
+        {"phase": 4, "kind": "input_carry_pair", "relation": "ne"},
+        {"phase": 4, "kind": "output_carry_pair", "relation": "ne"},
+        {"phase": 4, "kind": "left_carry_flow", "relation": "ne"},
+        {"phase": 5, "kind": "right_carry_flow", "relation": "eq"},
+    )
+    assert all(
+        module.structural_literal_holds(literal, assignment)
+        for literal in literals
+    )
+
+
+def run_independent_milestone(path: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(INDEPENDENT),
+            "milestone",
+            str(EQUATIONS),
+            str(FRONTIER),
+            str(T27_EVIDENCE),
+            str(T28_EVIDENCE),
+            str(T28_INDEPENDENT),
+            str(T29_TRACE),
+            str(T29_DATASET),
+            str(T29_EVIDENCE),
+            str(T29_CERTIFICATE),
+            str(T29_INDEPENDENT),
+            str(T30_EVIDENCE),
+            str(T30_CERTIFICATE),
+            str(T30_INDEPENDENT),
+            str(path),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_independent_milestone_rejects_a_q0_countermodel(tmp_path: Path) -> None:
+    inputs = load_t32_inputs(ROOT)
+    dummy_witness = {"input_state": {}, "output_state": {}, "local_state": {}}
+    milestone = {
+        "schema": "t32-base19-semantic-leak-type-milestone-v1",
+        "leak_type": {
+            "literals": [
+                {"phase": 0, "kind": "input_carry_pair", "relation": "eq"}
+            ]
+        },
+        "witnesses": [dummy_witness, dummy_witness],
+        "failure_masks": [
+            [True, False, False, False, False],
+            [False, True, False, False, False],
+        ],
+        "source_digests": dict(inputs.source_digests),
+        "t29_artifact_digests": dict(inputs.t29_artifact_digests),
+        "t30_artifact_digests": dict(inputs.t30_artifact_digests),
+        "t31_source_digests": dict(inputs.t31_source_digests),
+        "t31_commits": list(inputs.t31_commits),
+        "design_sha256": inputs.design_sha256,
+    }
+    path = tmp_path / "milestone.json"
+    path.write_bytes(canonical_bytes(milestone) + b"\n")
+    completed = run_independent_milestone(path)
+    assert completed.returncode != 0
+    assert "type soundness counterexample" in completed.stderr
