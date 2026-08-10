@@ -22,6 +22,24 @@ an infinite-range conclusion only through explicit algebraic case certificates.
 CaDiCaL 3.0.1 for the conditional concrete scan, pytest 8.x, deterministic
 JSON, SHA-256, and the existing one-hot and compact binary topology encodings.
 
+## Execution outcome (2026-08-09)
+
+- [x] Tasks 1 through 3: typed certificate language, frozen evidence replay,
+  and universal local obligation checker.
+- [x] Task 4 achieved boundary: a three-clause layer-32 tail invariant passes
+  exact initiation and terminal exclusion; bounded backward synthesis finds no
+  accepted layer-31 predicate.
+- [x] Task 5 hard stop: Gate A records
+  `backward_extension_layer_31_not_found`, sub-tenfold compression, and
+  `gate_b_authorized: false`.
+- [x] Task 6 achieved-claim audit: an isolated standard-library checker
+  independently verifies the terminal tail lemma and rejects mutation. It does
+  not claim to reconstruct the absent inductive certificate.
+- [x] Tasks 7 and 8 skipped because Gate A did not pass.
+- [x] Task 9 durable evidence and scope-calibrated notebook conclusion.
+- [ ] A layer-25-to-32 inductive certificate and symbolic base lift remain
+  unachieved; no unchecked plan item is implicitly claimed complete.
+
 ## Global Constraints
 
 - Preserve `.timeloop/exam/results.jsonl` and every unrelated user change.

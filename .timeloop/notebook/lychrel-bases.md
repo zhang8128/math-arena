@@ -788,3 +788,119 @@ TDD for perturbation semantics and isolation, 184 one-hot/PicoSAT solves, 184
 independently implemented binary/CaDiCaL solves, one caught isolated-import
 defect, current literature/OEIS rechecks, and two concurrent deterministic
 integrated replays.
+
+## T27 STATUS — A COMPACT TERMINAL INVARIANT EXISTS; THE INDUCTIVE LIFT STOPS
+
+### STATUS
+
+Gate A is `STOP` at `backward_extension_layer_31_not_found`. Gate B was not
+authorized, so no base-`41..200` scan, topology transport, symbolic base lift,
+or Lean bridge was attempted.
+
+### CLAIM
+
+For the frozen 408-equation base-19 radial obstruction with removed coordinate
+`phase=0,n=0,column=82`, all 22 promoted reachable states at layer 32 lie in
+the union of three closed-grammar conjunctions of sizes 11, 11, and 10. No
+state in that union extends to a bounded model of the terminal 12 equations.
+
+The three components expose actual digit/carry laws rather than enumerating
+the 22 states. Representative laws include
+
+`D1 = 13 + R0 + R2 - 3*R1`,
+
+`D0 = 14 + 2*R3 - R5`, `D1 = R0 + R3`, and
+
+`R0 - 3*R2 - D1 = 17 (mod 19)`.
+
+This is a terminal tail lemma for the already verified obstruction. It is not
+an inductive replacement for the promoted frontier proof.
+
+### FALSIFIABLE MILESTONE
+
+The approved milestone required predicates for layers 25 through 32,
+initiation on 20 layer-25 states, seven exact consecution checks, terminal
+exclusion, and at least tenfold canonical-JSON compression. The reachable
+state counts are exactly `(20,12,12,17,16,18,18,22)`.
+
+Terminal synthesis passes, but literal transport to layer 31 misses reachable
+states. State CEGIS, equation-derived structural families, batched
+counterexample scoring, a 12-atom global conjunction, and several three-way
+component partitions produced no accepted layer-31 predicate within the
+frozen grammar. This is a bounded search failure, not a proof that no compact
+inductive invariant exists.
+
+### INDEPENDENT CHECK
+
+The primary checker proves initiation over all 22 promoted layer-32 states and
+terminal exclusion over the full `2^12 * 19^2 = 1,478,656` frontier domain.
+
+The isolated standard-library checker imports no repository module. It reads
+the frozen equation manifest, promoted frontier, and T27 evidence; rebuilds
+allowed tuples for the terminal equations; evaluates all 22 reachable states;
+and proves each clause UNSAT by independent generalized arc consistency and
+backtracking. It rejects a mutated predicate constant. Its durable PASS binds
+to primary evidence SHA-256
+`32324c40903b78aec4d787b7e64a6d73d0999e3846d91ca1340c99f8ac2d8686`.
+
+### COMPRESSION
+
+The three-clause predicate is 1,987 canonical bytes. The explicit state
+payload for layers 25 through 32 is 4,802 bytes, only about 2.42 times larger.
+The required tenfold threshold therefore fails even before accounting for the
+missing layer-25-to-31 predicates. No renamed state table is reported as a
+successful certificate.
+
+### PRISM AND RESEARCH
+
+Math Prism supplied invariant, modular/local-global, duality, and composed
+frames as hypothesis generators. Its concrete invariant and base claims were
+independently falsified before this implementation, and no Prism statement is
+a mathematical premise here.
+
+A primary-source recheck on 2026-08-09 confirms that proof-derived
+interpolation and pseudo-Boolean cutting planes remain appropriate candidate
+generators. Cimatti, Griggio, and Sebastiani give proof-based interpolation
+procedures for linear-arithmetic SMT; VeriPB documents independently checked
+cutting-plane proof logging; and PBLean now imports VeriPB certificates into
+Lean 4. None supplies this reverse-add invariant, and PBLean does not remove
+the missing semantic bridge from digit equations to the proposed predicates.
+No novelty claim is made.
+
+Sources:
+
+- Cimatti, Griggio, and Sebastiani, “Efficient Generation of Craig
+  Interpolants in Satisfiability Modulo Theories”:
+  <https://arxiv.org/abs/0906.4492>
+- VeriPB project and publications: <https://veripb.org/> and
+  <https://veripb.org/publications.html>
+- Szeider, “PBLean: Pseudo-Boolean Proof Certificates for Lean 4”:
+  <https://arxiv.org/abs/2602.08692>
+- David Seal's base-17 construction: <https://www.mathpages.com/home/dseal.htm>
+
+### STOP CONDITION
+
+The first failed gate is the missing layer-31 backward extension. The
+sub-tenfold diagnostic is an additional failure. Per the approved plan, either
+failure forbids Gate B; the grammar was not enlarged to four clauses, 13
+atoms, coefficient magnitude four, or modulus 21.
+
+### LIMITATIONS
+
+- The tail lemma depends on the promoted frontier for its reachability premise.
+- It proves nothing about other base-19 topologies or unbounded reverse-add
+  orbits.
+- It does not explain the base-17/base-19 topology difference symbolically.
+- It does not show that another bounded grammar or partition cannot succeed.
+- The independent audit covers the achieved tail lemma, not an inductive
+  certificate that does not exist.
+
+### NEXT
+
+Do not resume undirected SAT scanning. The narrow next experiment is to derive
+the layer-31 weakest preimage of the three terminal families directly from the
+12 local equations, preserving disjunction structure during elimination
+instead of separating sampled states. Its first milestone is one exact
+layer-31 predicate with at most three 12-atom clauses that covers all 18
+reachable states and passes universal consecution. Stop there if it fails;
+only a PASS earns extension toward layer 25.
