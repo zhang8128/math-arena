@@ -20,6 +20,49 @@ JSON and affine-predicate types, `z3-solver` 5.x for primary checks, Python
 standard-library generalized arc consistency/backtracking for independent
 assurance, pytest 8.x, Ruff, and SHA-256.
 
+## Execution outcome (2026-08-10)
+
+All seven tasks reached their specified PASS boundary inline without
+subagents:
+
+- Task 1 defined the immutable certificate grammar in commit `90ba386`.
+- Task 2 bound the complete frozen T29 boundary and exact `Q0` in commit
+  `1da1938`.
+- Task 3 enumerated the exact predecessor images in commit `ac34256`.
+- Task 4 established the finite and refined semantic gates in commit
+  `95e7f0b`; commit `319433f` added a failing-then-passing regression for
+  predecessor-obligation ordering before any durable artifact was written.
+- Task 5 added the isolated standard-library replay in commit `f19b02a`.
+- Task 6 wrote independently accepted, byte-deterministic artifacts in commit
+  `1735844`. A whitespace regression test caught and corrected one generated
+  report line before that commit.
+- Task 7 passed the focused T27--T30 regression (`150 passed in 568.59s`) and
+  the complete Timeloop suite (`251 passed in 2895.49s`), followed by Ruff and
+  Git diff hygiene.
+
+The achieved status is `EXACT_IMAGE_REFINEMENT_PASS`. Exact enumeration found
+18 predecessor obligations, five successor-bearing predecessors, 18 complete
+local models, and 18 distinct layer-31 outputs. All outputs satisfy `Q0`; the
+finite replay returned `12/0/6` for promoted DEAD, trace-accepted, and live
+counts; the T29 semantic leak fails `Q0`; and
+`S29 and Q0 and T31_32` is UNSAT. The independent checker reproduced those
+results without repository imports or Z3.
+
+Raw T30 artifact SHA-256 values are:
+
+```text
+evidence     4b327e826a8b2462eedffa2cf572b77155fc95d8e7b94a4430d7f0331f75bd2a
+certificate  3ac0b6ae254ad8bb7c7b19754335ea6a81bea77a0dc808e7eda1cd8994839892
+independent  56037d658f628ffa526f9adb710746231806450717f7bde5c0655f4ed6388639
+report       3ea55f8410887d3a522436be38bf3d9b5c010ac3c412d48405cd69f19828b95c
+```
+
+The protected preprint ZIP remained
+`e9d1d0d087e37d822cae19b82453dfd6c55031d797b1e5696f4b04a39308ae33`.
+No lower-layer extension, fallback refinement, semantic-leak typing,
+symbolic-base lift, base comparison, topology scan, publication change, or
+Lean work ran.
+
 ## Global Constraints
 
 - Work in `/Users/kairos/Projects/personal/math` inline without subagents.

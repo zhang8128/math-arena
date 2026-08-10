@@ -1131,3 +1131,103 @@ reachability, holds on the 12 promoted `DEAD` states, and excludes both the 221
 trace models and this semantic leak. Stop if the added condition is merely a
 state table or fails exact preimage replay. Only a semantic PASS should reopen
 lower-layer extension or symbolic lifting in the base.
+
+## T30 STATUS — EXACT-IMAGE REFINEMENT PASS
+
+### STATUS
+
+`EXACT_IMAGE_REFINEMENT_PASS`. Primary Z3 enumeration and an isolated
+standard-library checker agree on the complete approved T30 boundary.
+
+### CLAIM
+
+For the frozen base-19 radial obstruction with removed coordinate
+`phase=0,n=0,column=82`, let the reachability premise be exactly the 18
+promoted layer-30 frontier states. Their exact layer-30-to-31 images imply the
+following five-equation layer-31 predicate `Q0`:
+
+```text
+L1 - L4 + L5 - R4 = 0
+L1 - 2*L2 - 2*L4 - 2*L5 - 3*R1 + 3*R2 + 2*R3 + R4 = 0
+3*L0 + L1 + 2*L2 - 2*L5 - 3*R1 + R3 = 3
+D1 + 3*L0 - 2*L1 - 3*L2 + L3 + L4 - R0
+   - 3*R1 - 3*R2 + 3*R3 - R4 = 9
+D0 - D1 - L0 + R0 + R5 = 1
+```
+
+Conjoining `Q0` with T29's immutable ten-atom separator `S29` makes the exact
+layer-31-to-32 successor query UNSAT. `S29` and `Q0` remain separately
+serialized; T29 and its 12-atom grammar ceiling were not changed.
+
+This is a bounded theorem relative to the promoted layer-30 premise. It does
+not claim `Q0` for arbitrary predecessor interfaces, characterize the premise
+by a compact formula, or establish an unbounded orbit invariant.
+
+### EARLIER-LAYER IMPLICATION
+
+The primary checker fixes each promoted predecessor and enumerates every
+complete model of the original 12 layer-30-to-31 equations over exact digit
+and carry domains. The per-predecessor model-count vector is
+
+`(0,0,0,0,0,4,0,0,0,0,0,0,4,4,0,4,2,0)`.
+
+Thus the constructive certificate records 18 obligations, five
+successor-bearing predecessors, 18 complete local models, and 18 distinct
+layer-31 outputs. Every exact output satisfies all five equations of `Q0`.
+No explicit-state disjunction or lookup occurs inside `Q0`.
+
+### FINITE AND SEMANTIC CHECKS
+
+Direct replay gives `12/0/6`: all 12 promoted layer-31 `DEAD` states satisfy
+`Q0`, zero of the 221 T28 trace models satisfy it, and all six promoted live
+controls satisfy it. `S29` continues to reject those six live controls. The
+T29 semantic leak beginning
+
+`D0=5, D1=6, L0=0, L1=1, L2=1, L3=0, L4=1, L5=1, R0=0, R1=0, R2=1, R3=0, R4=0, R5=1`
+
+fails `Q0`. Finally, the exact bounded query
+`S29(x) and Q0(x) and T31_32(x,y)` over all 12 original equations is UNSAT.
+
+### INDEPENDENT CHECK
+
+The isolated checker imports no repository module, Z3, or T27--T30
+implementation. It raw-hashes every source and T29/T30 artifact, rebuilds
+allowed tuples for both 12-equation transfers, uses generalized arc
+consistency plus deterministic backtracking to enumerate all 18 fixed
+predecessor images, replays the 239 finite states and T29 leak, and proves the
+refined layer-32 CSP unsatisfiable. It also rejects source, `Q0`, obligation,
+count, status, and witness mutations.
+
+### ARTIFACTS AND VERIFICATION
+
+```text
+evidence     4b327e826a8b2462eedffa2cf572b77155fc95d8e7b94a4430d7f0331f75bd2a
+certificate  3ac0b6ae254ad8bb7c7b19754335ea6a81bea77a0dc808e7eda1cd8994839892
+independent  56037d658f628ffa526f9adb710746231806450717f7bde5c0655f4ed6388639
+report       3ea55f8410887d3a522436be38bf3d9b5c010ac3c412d48405cd69f19828b95c
+```
+
+The focused T27--T30 regression passed 150 tests in 568.59 seconds. The full
+Timeloop suite passed 251 tests in 2895.49 seconds, followed by Ruff and Git
+diff hygiene. All five raw T29 hashes remain exact. The protected preprint ZIP
+remains
+`e9d1d0d087e37d822cae19b82453dfd6c55031d797b1e5696f4b04a39308ae33`.
+
+### LIMITATIONS AND STOP CONDITION
+
+- The reachability premise is the promoted layer-30 frontier, not an
+  independently synthesized formula for all reachable predecessors.
+- T30 proves a bounded two-transfer consequence, not induction across lower
+  layers or an unbounded reverse-and-add statement.
+- A changed digest, malformed artifact, counterexample, mutation survival,
+  solver unknown, or primary/independent disagreement would have stopped the
+  round. None occurred.
+- No lower-layer extension, weakest-preimage fallback, semantic-leak typing,
+  symbolic-base lift, base comparison, topology scan, publication change, or
+  Lean work ran.
+
+### NEXT
+
+The next decision is whether to begin a separate round seeking a compact
+characterization of the promoted layer-30 reachability premise. T30 itself is
+complete and does not authorize that extension.
