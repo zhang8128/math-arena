@@ -30,6 +30,14 @@ from lychrel_safe_region_cover import (  # noqa: E402
     generate_seed_pair_pool,
     parse_safe_region_cover_certificate,
 )
+from t33_base19_safe_region_cover import (  # noqa: E402
+    T32_SOURCE_DIGESTS,
+    EvidenceError,
+    _load_t33_inputs_uncached,
+    exact_bad_input_status,
+    load_t33_inputs,
+    query_bad_input,
+)
 
 
 def digest_entries(names: set[str]) -> tuple[tuple[str, str], ...]:
@@ -295,3 +303,50 @@ def test_certificate_parser_rejects_mutated_seed_pool_provenance() -> None:
     changed_seed["provenances"][0]["seed_pair"]["rows"][1][-1] = 2
     with pytest.raises(ValueError, match="pool"):
         parse_safe_region_cover_certificate(changed_seed)
+
+
+def test_t33_adapter_replays_the_committed_t32_stop() -> None:
+    inputs = load_t33_inputs(ROOT)
+    assert inputs.t32_first_type_status == "PASS"
+    assert inputs.t32_first_type.to_payload() == {
+        "literals": [
+            {"phase": 0, "kind": "digit_order", "relation": "eq"},
+            {"phase": 0, "kind": "digit_sum", "relation": "lt19"},
+        ]
+    }
+    assert inputs.t32_first_type_tested_candidate_count == 31
+    assert inputs.t32_first_type_inspected_witness_count == 3
+    assert inputs.t32_family_status == "CANDIDATE_BUDGET_EXHAUSTED"
+    assert inputs.t32_family_tested_candidate_count == 10_000
+    assert inputs.t32_family_inspected_witness_count == 8
+    assert inputs.promoted_rows == inputs.t32_inputs.t31_inputs.promoted_rows
+    assert len(inputs.promoted_rows) == len(set(inputs.promoted_rows)) == 18
+    assert dict(inputs.t32_source_digests) == T32_SOURCE_DIGESTS
+
+
+def test_bad_input_solver_accepts_no_promoted_row() -> None:
+    inputs = load_t33_inputs(ROOT)
+    assert tuple(
+        exact_bad_input_status(inputs, row) for row in inputs.promoted_rows
+    ) == ("UNSAT",) * 18
+
+
+def test_bad_input_query_replays_a_sat_countermodel() -> None:
+    inputs = load_t33_inputs(ROOT)
+    witness_input = dict(inputs.t32_inputs.t31_witness.input_state)
+    row = tuple(witness_input[f"input:{name}"] for name in P30_VARIABLES)
+    result = query_bad_input(inputs, row)
+    assert result.status == "SAT"
+    assert result.witness is not None
+    assert result.equation_residuals == (0,) * 12
+    assert result.q0_holds is False
+
+
+def test_t33_adapter_rejects_a_mutated_t32_source(tmp_path: Path) -> None:
+    changed = tmp_path / "t32.py"
+    changed.write_bytes(
+        (ROOT / ".timeloop/runs/t32_base19_semantic_leak_types.py").read_bytes()
+        + b"\n"
+    )
+    with pytest.raises(EvidenceError, match="T32 runner raw SHA-256 changed"):
+        _load_t33_inputs_uncached(ROOT, t32_runner_path=changed)
