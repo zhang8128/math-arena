@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import shutil
 import subprocess
 import sys
 from dataclasses import replace
@@ -53,6 +55,15 @@ EQUATIONS_CONTENT_SHA256 = "ff79f31cbc55d7c463e6a14faedaad58d880509d5769e56b9a4b
 FRONTIER_CONTENT_SHA256 = "0d25cf4645b3c187c74511b0677ea1481c4ba6c923a726ffea9747ee1b4a64c0"
 PROVENANCES_SHA256 = "cac34c9317e8209bfea6a4e4fb37ef204346ccde54424f8c93dd8a8e40619302"
 T27_EVIDENCE_SHA256 = "32324c40903b78aec4d787b7e64a6d73d0999e3846d91ca1340c99f8ac2d8686"
+EQUATIONS = ROOT / "publication" / "base19-radial" / "instance" / "equations.json"
+FRONTIER = (
+    ROOT
+    / "publication"
+    / "base19-radial"
+    / "certificates"
+    / "minimal-core-frontier.json"
+)
+INDEPENDENT = ROOT / ".timeloop" / "runs" / "t28_base19_tail_quotient_independent.py"
 
 
 def test_decision_dag_classifies_two_classes_and_outside() -> None:
@@ -858,3 +869,88 @@ def test_primary_cli_bootstraps_repository_imports() -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert "--through-layer" in completed.stdout
+
+
+def independent_stop_fixture() -> dict[str, object]:
+    counts = ((25, 20, 5), (26, 12, 5), (27, 12, 7), (28, 17, 7),
+              (29, 16, 6), (30, 18, 5), (31, 18, 4), (32, 22, 3))
+    return {
+        "schema": "t28-base19-tail-quotient-evidence-v1",
+        "status": "STOP",
+        "base": 19,
+        "through_layer": 31,
+        "stop_layer": 31,
+        "stop_reason": "decision_depth_exceeded",
+        "frozen_hashes": {
+            "equations": EQUATIONS_CONTENT_SHA256,
+            "frontier": FRONTIER_CONTENT_SHA256,
+            "provenances": PROVENANCES_SHA256,
+            "t27_evidence": T27_EVIDENCE_SHA256,
+        },
+        "candidate_counts": {
+            str(layer): {"reachable_state_count": states, "class_count": classes}
+            for layer, states, classes in counts
+        },
+        "grammar_limits": {
+            "coefficients": list(range(-3, 4)),
+            "moduli": list(range(2, 21)),
+            "max_classes": 8,
+            "max_nodes": 64,
+            "max_depth": 10,
+        },
+        "synthesis": {"iterations": 222, "candidate_atom_count": 37},
+        "counterexample": {
+            "obligation": "dead_has_no_successor",
+            "rejected_class": "DEAD",
+            "state": {
+                "L0": 0, "R0": 0, "L1": 1, "R1": 0,
+                "L2": 1, "R2": 1, "L3": 0, "R3": 0,
+                "L4": 0, "R4": 0, "L5": 0, "R5": 1,
+                "D0": 18, "D1": 6,
+            },
+        },
+    }
+
+
+def test_independent_checker_replays_real_stop_in_isolated_mode(tmp_path: Path) -> None:
+    checker = tmp_path / "checker.py"
+    evidence = tmp_path / "evidence.json"
+    shutil.copy(INDEPENDENT, checker)
+    evidence.write_bytes(canonical_bytes(independent_stop_fixture()) + b"\n")
+
+    completed = subprocess.run(
+        (sys.executable, "-I", str(checker), str(EQUATIONS), str(FRONTIER), str(evidence)),
+        cwd=tmp_path,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    audit = json.loads(completed.stdout)
+
+    assert audit["status"] == "STOP"
+    assert audit["repository_imports"] == []
+    assert audit["rebuilt_tail_counts"] == [18, 18, 22, 0]
+    assert audit["counterexample_successor_exists"] is True
+
+
+def test_independent_real_mutation_rejects_out_of_domain_counterexample(
+    tmp_path: Path,
+) -> None:
+    checker = tmp_path / "checker.py"
+    evidence = tmp_path / "evidence.json"
+    shutil.copy(INDEPENDENT, checker)
+    payload = independent_stop_fixture()
+    payload["counterexample"]["state"]["D0"] = 19
+    evidence.write_bytes(canonical_bytes(payload) + b"\n")
+
+    completed = subprocess.run(
+        (sys.executable, "-I", str(checker), str(EQUATIONS), str(FRONTIER), str(evidence)),
+        cwd=tmp_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "REJECT:" in completed.stderr
+    assert '"status":"PASS"' not in completed.stdout
