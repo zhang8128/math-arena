@@ -24,7 +24,13 @@ from lychrel_quotient_automaton import (  # noqa: E402
 )
 from t27_base19_invariant_lift import EvidenceError, canonicalize_state  # noqa: E402
 from t28_base19_tail_quotient import (  # noqa: E402
+    ExplicitTransfer,
     build_terminal_seed,
+    check_explicit_layer,
+    check_layer_semantics,
+    check_quotient_certificate,
+    check_reachable_coverage,
+    check_terminal_classes,
     discover_reachable_quotient,
     explicit_relation_payload,
     load_t28_inputs,
@@ -368,3 +374,220 @@ def test_explicit_relation_payload_contains_only_canonical_mathematics() -> None
         for item in payload["layers"]
         for edge in item["edges"]
     )
+
+
+def explicit_transfer_fixture() -> ExplicitTransfer:
+    return ExplicitTransfer(
+        source_layer=31,
+        input_variables=("x",),
+        output_variables=("y",),
+        source_domain=((0,), (1,), (2,)),
+        transitions=(
+            ((0,), ()),
+            ((1,), ((0,),)),
+            ((2,), ((1,),)),
+        ),
+    )
+
+
+def _edge_witness(source: int = 1, target: int = 0) -> EdgeWitness:
+    return EdgeWitness(
+        source_layer=31,
+        source_class="LIVE",
+        target_class="T0",
+        input_state=(("x", source),),
+        output_state=(("y", target),),
+        local_state=(),
+    )
+
+
+def test_semantics_rejects_a_live_state_without_successor() -> None:
+    """Removing live existence must accept a vacuous universal edge check."""
+    check = check_explicit_layer(
+        transfer=explicit_transfer_fixture(),
+        source_labels={(0,): "LIVE", (1,): "LIVE", (2,): "outside"},
+        target_labels={(0,): "T0", (1,): "T1"},
+        classes=(ClassSpec("LIVE", "live", ("T0",)),),
+        witnesses=(_edge_witness(),),
+    )
+
+    assert check.status == "FAIL"
+    assert check.obligations[-1].kind == "live_has_successor"
+    assert check.obligations[-1].counterexample == {"input": {"x": 0}}
+
+
+def test_semantics_rejects_a_dead_state_with_a_successor() -> None:
+    """Removing dead exclusion must accept a falsely dead class."""
+    check = check_explicit_layer(
+        transfer=explicit_transfer_fixture(),
+        source_labels={(0,): "outside", (1,): "DEAD", (2,): "outside"},
+        target_labels={(0,): "T0", (1,): "T1"},
+        classes=(ClassSpec("DEAD", "dead", ()),),
+        witnesses=(),
+    )
+
+    assert check.status == "FAIL"
+    assert check.obligations[-1].kind == "dead_has_no_successor"
+    assert check.obligations[-1].counterexample == {
+        "input": {"x": 1},
+        "output": {"y": 0},
+    }
+
+
+def test_semantics_rejects_a_forbidden_successor() -> None:
+    """Removing target classification must accept an edge to the wrong family."""
+    check = check_explicit_layer(
+        transfer=explicit_transfer_fixture(),
+        source_labels={(0,): "outside", (1,): "outside", (2,): "LIVE"},
+        target_labels={(0,): "T0", (1,): "T1"},
+        classes=(ClassSpec("LIVE", "live", ("T0",)),),
+        witnesses=(_edge_witness(source=2, target=1),),
+    )
+
+    assert check.status == "FAIL"
+    assert check.obligations[-1].kind == "forbidden_successor"
+    assert check.obligations[-1].counterexample == {
+        "input": {"x": 2},
+        "output": {"y": 1},
+    }
+
+
+def test_semantics_rejects_a_missing_or_false_edge_witness() -> None:
+    """Removing witness replay must report an edge that has no shown model."""
+    arguments = {
+        "transfer": explicit_transfer_fixture(),
+        "source_labels": {(0,): "outside", (1,): "LIVE", (2,): "outside"},
+        "target_labels": {(0,): "T0", (1,): "T1"},
+        "classes": (ClassSpec("LIVE", "live", ("T0",)),),
+    }
+    missing = check_explicit_layer(**arguments, witnesses=())
+    false = check_explicit_layer(**arguments, witnesses=(_edge_witness(target=1),))
+
+    assert missing.status == "FAIL"
+    assert missing.obligations[-1].kind == "edge_has_witness"
+    assert false.status == "FAIL"
+    assert false.obligations[-1].kind == "edge_has_witness"
+
+
+def test_semantics_accepts_an_exact_dead_and_live_partition() -> None:
+    """Changing any branch in the fixture must break the exact PASS result."""
+    check = check_explicit_layer(
+        transfer=explicit_transfer_fixture(),
+        source_labels={(0,): "DEAD", (1,): "LIVE", (2,): "outside"},
+        target_labels={(0,): "T0", (1,): "T1"},
+        classes=(
+            ClassSpec("DEAD", "dead", ()),
+            ClassSpec("LIVE", "live", ("T0",)),
+        ),
+        witnesses=(_edge_witness(),),
+    )
+
+    assert check.status == "PASS"
+    assert [item.kind for item in check.obligations] == [
+        "dead_has_no_successor",
+        "live_has_successor",
+        "forbidden_successor",
+        "edge_has_witness",
+    ]
+    assert all(item.status == "PASS" for item in check.obligations)
+
+
+def test_exact_terminal_checker_excludes_each_effective_family() -> None:
+    """Dropping one terminal equation must make at least one family satisfiable."""
+    inputs = load_t28_inputs(ROOT)
+    seed = build_terminal_seed(inputs)
+
+    coverage = check_reachable_coverage(inputs, seed)
+    exclusion = check_terminal_classes(inputs, seed)
+
+    assert coverage.status == "PASS"
+    assert coverage.obligations[0].checked_count == 22
+    assert exclusion.status == "PASS"
+    assert [item.class_label for item in exclusion.obligations] == [
+        "T_HIGH_DIGIT",
+        "T_PHASE_ZERO",
+        "T_RESIDUE",
+    ]
+    assert all(item.kind == "terminal_exclusion" for item in exclusion.obligations)
+    assert all(item.checked_count == 1_478_656 for item in exclusion.obligations)
+
+
+def test_exact_layer_checker_rejects_a_false_all_dead_guard() -> None:
+    """Ignoring local models must let a false dead classification pass."""
+    inputs = load_t28_inputs(ROOT)
+    partition = next(
+        item for item in discover_reachable_quotient(inputs, 31, 32) if item.layer == 31
+    )
+    all_dead = LayerQuotient(
+        layer=31,
+        variables=partition.variables,
+        root="node:0",
+        classes=(ClassSpec("DEAD", "dead", ()),),
+        nodes=(
+            DecisionNode(
+                0,
+                LinearAtom("le", (("L0", 1),), 1),
+                "class:DEAD",
+                "outside",
+            ),
+        ),
+    )
+
+    check = check_layer_semantics(
+        inputs,
+        all_dead,
+        build_terminal_seed(inputs),
+        witnesses=(),
+    )
+
+    assert check.status == "FAIL"
+    assert check.obligations[-1].kind == "dead_has_no_successor"
+    assert check.obligations[-1].class_label == "DEAD"
+    assert check.obligations[-1].counterexample is not None
+    assert set(check.obligations[-1].counterexample) == {"input", "output"}
+
+
+def test_certificate_checker_stops_at_a_false_layer_semantics() -> None:
+    """Skipping a failed layer must let an invalid tail reach terminal PASS."""
+    inputs = load_t28_inputs(ROOT)
+    partition = next(
+        item for item in discover_reachable_quotient(inputs, 31, 32) if item.layer == 31
+    )
+    all_dead = LayerQuotient(
+        31,
+        partition.variables,
+        "node:0",
+        (ClassSpec("DEAD", "dead", ()),),
+        (
+            DecisionNode(
+                0,
+                LinearAtom("le", (("L0", 1),), 1),
+                "class:DEAD",
+                "outside",
+            ),
+        ),
+    )
+    certificate = QuotientCertificate(
+        "t28-tail-quotient-certificate-v1",
+        19,
+        "phase=0,n=0,column=82",
+        (
+            ("equations", EQUATIONS_CONTENT_SHA256),
+            ("frontier", FRONTIER_CONTENT_SHA256),
+            ("provenances", PROVENANCES_SHA256),
+            ("t27_evidence", T27_EVIDENCE_SHA256),
+        ),
+        31,
+        (all_dead, build_terminal_seed(inputs)),
+        (),
+    )
+
+    check = check_quotient_certificate(inputs, certificate)
+
+    assert check.status == "FAIL"
+    assert [item.kind for item in check.obligations] == [
+        "promoted_coverage",
+        "promoted_coverage",
+        "dead_has_no_successor",
+    ]
+    assert check.obligations[-1].counterexample is not None

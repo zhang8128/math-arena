@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,7 +12,9 @@ from lychrel_invariant_certificate import LayerPredicate
 from lychrel_quotient_automaton import (
     ClassSpec,
     DecisionNode,
+    EdgeWitness,
     LayerQuotient,
+    QuotientCertificate,
     classify_state,
 )
 from t27_base19_invariant_lift import (
@@ -19,6 +22,7 @@ from t27_base19_invariant_lift import (
     EvidenceError,
     FrontierCertificate,
     GrammarLimits,
+    canonical_variable,
     canonicalize_state,
     load_promoted_inputs,
     synthesize_terminal_predicate,
@@ -50,6 +54,732 @@ class CandidatePartition:
     layer: int
     variables: tuple[str, ...]
     classes: tuple[CandidateClass, ...]
+
+
+@dataclass(frozen=True)
+class ExplicitTransfer:
+    source_layer: int
+    input_variables: tuple[str, ...]
+    output_variables: tuple[str, ...]
+    source_domain: tuple[tuple[int, ...], ...]
+    transitions: tuple[tuple[tuple[int, ...], tuple[tuple[int, ...], ...]], ...]
+
+    def __post_init__(self) -> None:
+        if tuple(sorted(set(self.source_domain))) != self.source_domain:
+            raise ValueError("explicit source domain must be sorted and unique")
+        if tuple(item[0] for item in self.transitions) != self.source_domain:
+            raise ValueError("explicit transitions must cover the source domain in order")
+        if any(len(state) != len(self.input_variables) for state in self.source_domain):
+            raise ValueError("explicit input state width changed")
+        for _, outputs in self.transitions:
+            if tuple(sorted(set(outputs))) != outputs:
+                raise ValueError("explicit outputs must be sorted and unique")
+            if any(len(state) != len(self.output_variables) for state in outputs):
+                raise ValueError("explicit output state width changed")
+
+
+@dataclass(frozen=True)
+class QuotientObligation:
+    kind: str
+    layer: int
+    class_label: str
+    status: str
+    checked_count: int
+    counterexample: dict[str, dict[str, int]] | None = None
+
+
+@dataclass(frozen=True)
+class QuotientCheck:
+    status: str
+    obligations: tuple[QuotientObligation, ...]
+
+
+def _named_state(variables: tuple[str, ...], state: tuple[int, ...]) -> dict[str, int]:
+    return dict(zip(variables, state, strict=True))
+
+
+def check_explicit_layer(
+    transfer: ExplicitTransfer,
+    source_labels: Mapping[tuple[int, ...], str],
+    target_labels: Mapping[tuple[int, ...], str],
+    classes: tuple[ClassSpec, ...],
+    witnesses: tuple[EdgeWitness, ...],
+) -> QuotientCheck:
+    """Check quotient semantics over a complete finite relation."""
+    if set(source_labels) != set(transfer.source_domain):
+        raise ValueError("source labels must cover the explicit source domain")
+    transitions = dict(transfer.transitions)
+    obligations = []
+    checked_count = len(transfer.source_domain)
+    witness_by_edge = {
+        (item.source_class, item.target_class): item for item in witnesses
+    }
+    if len(witness_by_edge) != len(witnesses):
+        raise ValueError("explicit edge witnesses must be unique")
+
+    for class_spec in sorted(classes, key=lambda item: item.label):
+        members = tuple(
+            state
+            for state in transfer.source_domain
+            if source_labels[state] == class_spec.label
+        )
+        if class_spec.kind == "dead":
+            for state in members:
+                if transitions[state]:
+                    output = transitions[state][0]
+                    obligations.append(
+                        QuotientObligation(
+                            "dead_has_no_successor",
+                            transfer.source_layer,
+                            class_spec.label,
+                            "FAIL",
+                            checked_count,
+                            {
+                                "input": _named_state(transfer.input_variables, state),
+                                "output": _named_state(transfer.output_variables, output),
+                            },
+                        )
+                    )
+                    return QuotientCheck("FAIL", tuple(obligations))
+            obligations.append(
+                QuotientObligation(
+                    "dead_has_no_successor",
+                    transfer.source_layer,
+                    class_spec.label,
+                    "PASS",
+                    checked_count,
+                )
+            )
+            continue
+        if class_spec.kind != "live":
+            raise ValueError("explicit source classes must be live or dead")
+
+        for state in members:
+            if not transitions[state]:
+                obligations.append(
+                    QuotientObligation(
+                        "live_has_successor",
+                        transfer.source_layer,
+                        class_spec.label,
+                        "FAIL",
+                        checked_count,
+                        {"input": _named_state(transfer.input_variables, state)},
+                    )
+                )
+                return QuotientCheck("FAIL", tuple(obligations))
+        obligations.append(
+            QuotientObligation(
+                "live_has_successor",
+                transfer.source_layer,
+                class_spec.label,
+                "PASS",
+                checked_count,
+            )
+        )
+
+        for state in members:
+            for output in transitions[state]:
+                if target_labels.get(output, "outside") not in class_spec.allowed_next:
+                    obligations.append(
+                        QuotientObligation(
+                            "forbidden_successor",
+                            transfer.source_layer,
+                            class_spec.label,
+                            "FAIL",
+                            checked_count,
+                            {
+                                "input": _named_state(transfer.input_variables, state),
+                                "output": _named_state(transfer.output_variables, output),
+                            },
+                        )
+                    )
+                    return QuotientCheck("FAIL", tuple(obligations))
+        obligations.append(
+            QuotientObligation(
+                "forbidden_successor",
+                transfer.source_layer,
+                class_spec.label,
+                "PASS",
+                checked_count,
+            )
+        )
+
+        for target_class in class_spec.allowed_next:
+            witness = witness_by_edge.get((class_spec.label, target_class))
+            valid = witness is not None
+            if witness is not None:
+                input_state = tuple(
+                    dict(witness.input_state).get(name)
+                    for name in transfer.input_variables
+                )
+                output_state = tuple(
+                    dict(witness.output_state).get(name) for name in transfer.output_variables
+                )
+                valid = (
+                    witness.source_layer == transfer.source_layer
+                    and None not in input_state
+                    and None not in output_state
+                    and input_state in transitions
+                    and output_state in transitions[input_state]
+                    and source_labels[input_state] == class_spec.label
+                    and target_labels.get(output_state) == target_class
+                )
+            if not valid:
+                obligations.append(
+                    QuotientObligation(
+                        "edge_has_witness",
+                        transfer.source_layer,
+                        class_spec.label,
+                        "FAIL",
+                        checked_count,
+                    )
+                )
+                return QuotientCheck("FAIL", tuple(obligations))
+            obligations.append(
+                QuotientObligation(
+                    "edge_has_witness",
+                    transfer.source_layer,
+                    class_spec.label,
+                    "PASS",
+                    checked_count,
+                )
+            )
+    return QuotientCheck("PASS", tuple(obligations))
+
+
+def _canonical_to_original(layer: object, side: str) -> dict[str, str]:
+    names = layer.input_variables if side == "input" else layer.output_variables
+    return {canonical_variable(name, layer, side): name for name in names}
+
+
+def _z3_layer_problem(
+    inputs: T28Inputs,
+    transfer_number: int,
+) -> tuple[object, object, dict[str, object], tuple[object, ...], object]:
+    try:
+        import z3  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise EvidenceError("T28 exact checks require z3-solver") from error
+    transfer = inputs.frontier.layers_by_number[transfer_number]
+    try:
+        equations = tuple(
+            inputs.manifest.by_provenance[provenance]
+            for provenance in transfer.equation_provenances
+        )
+    except KeyError as error:
+        raise EvidenceError(f"T28 transfer references unknown equation: {error.args[0]}") from error
+    names = sorted(
+        set(transfer.input_variables)
+        | set(transfer.output_variables)
+        | {name for equation in equations for name in equation.variables}
+    )
+    variables = {
+        name: z3.Int(
+            "t28_"
+            + str(transfer_number)
+            + "_"
+            + "".join(character if character.isalnum() else "_" for character in name)
+        )
+        for name in names
+    }
+    constraints = []
+    for name, variable in variables.items():
+        if name.startswith("c:"):
+            constraints.extend((variable >= 0, variable <= 1))
+        else:
+            lower = 1 if name.startswith("digit:p") and ":f0:d0" in name else 0
+            constraints.extend((variable >= lower, variable < inputs.manifest.base))
+    for equation in equations:
+        constraints.append(equation.residual(variables, inputs.manifest.base) == 0)
+    return z3, transfer, variables, tuple(constraints), equations
+
+
+def _z3_atom_formula(
+    z3: object,
+    atom: object,
+    canonical_to_original: Mapping[str, str],
+    variables: Mapping[str, object],
+) -> object:
+    try:
+        total = sum(
+            coefficient * variables[canonical_to_original[name]]
+            for name, coefficient in atom.terms
+        )
+    except KeyError as error:
+        raise EvidenceError(
+            f"decision atom references unknown variable: {error.args[0]}"
+        ) from error
+    if atom.relation == "eq":
+        return total == atom.constant
+    if atom.relation == "le":
+        return total <= atom.constant
+    if atom.relation == "congruent":
+        return (total - atom.constant) % atom.modulus == 0
+    raise EvidenceError(f"unsupported decision relation: {atom.relation}")
+
+
+def _z3_classifier(
+    z3: object,
+    layer: LayerQuotient,
+    canonical_to_original: Mapping[str, str],
+    variables: Mapping[str, object],
+) -> tuple[object, dict[str, int]]:
+    codes = {class_spec.label: index for index, class_spec in enumerate(layer.classes)}
+    expressions: dict[int, object] = {}
+
+    def target_expression(target: str) -> object:
+        if target == "outside":
+            return z3.IntVal(-1)
+        kind, value = target.split(":", 1)
+        if kind == "class":
+            return z3.IntVal(codes[value])
+        return expressions[int(value)]
+
+    for node in reversed(layer.nodes):
+        expressions[node.node_id] = z3.If(
+            _z3_atom_formula(z3, node.atom, canonical_to_original, variables),
+            target_expression(node.when_true),
+            target_expression(node.when_false),
+        )
+    if layer.root == "outside":
+        return z3.IntVal(-1), codes
+    root_kind, root_value = layer.root.split(":", 1)
+    if root_kind == "class":
+        return z3.IntVal(codes[root_value]), codes
+    return expressions[int(root_value)], codes
+
+
+def _check_status(z3: object, solver: object, context: str) -> object:
+    status = solver.check()
+    if status == z3.unknown:
+        raise EvidenceError(f"{context} returned UNKNOWN: {solver.reason_unknown()}")
+    return status
+
+
+def _lexicographic_model(
+    z3: object,
+    solver: object,
+    variables: Mapping[str, object],
+    ordered_names: tuple[str, ...],
+    base: int,
+) -> object:
+    if _check_status(z3, solver, "counterexample search") != z3.sat:
+        raise EvidenceError("cannot canonicalize an UNSAT counterexample")
+    for name in ordered_names:
+        domain = range(2) if name.startswith("c:") else range(base)
+        for value in domain:
+            solver.push()
+            solver.add(variables[name] == value)
+            status = _check_status(z3, solver, "counterexample minimization")
+            solver.pop()
+            if status == z3.sat:
+                solver.add(variables[name] == value)
+                break
+        else:
+            raise EvidenceError(f"counterexample variable has no value: {name}")
+    if _check_status(z3, solver, "counterexample finalization") != z3.sat:
+        raise EvidenceError("canonical counterexample became inconsistent")
+    return solver.model()
+
+
+def _model_state(
+    model: object,
+    variables: Mapping[str, object],
+    canonical_to_original: Mapping[str, str],
+) -> dict[str, int]:
+    return {
+        canonical: model.eval(variables[original], model_completion=True).as_long()
+        for canonical, original in canonical_to_original.items()
+    }
+
+
+def _domain_size(names: tuple[str, ...], base: int) -> int:
+    result = 1
+    for name in names:
+        result *= 2 if name.startswith("c:") else base
+    return result
+
+
+def check_reachable_coverage(
+    inputs: T28Inputs,
+    layer: LayerQuotient,
+) -> QuotientCheck:
+    """Require every promoted state at a named cut to avoid outside."""
+    promoted = inputs.frontier.layers_by_number[layer.layer]
+    expected_variables = _canonical_variables(inputs, layer.layer)
+    if layer.variables != expected_variables:
+        raise EvidenceError("quotient variables differ from the promoted frontier")
+    for state in promoted.output_states:
+        assignment = canonicalize_state(promoted, "output", state)
+        if classify_state(layer, assignment) == "outside":
+            return QuotientCheck(
+                "FAIL",
+                (
+                    QuotientObligation(
+                        "promoted_coverage",
+                        layer.layer,
+                        "ALL",
+                        "FAIL",
+                        promoted.output_state_count,
+                        {"input": assignment},
+                    ),
+                ),
+            )
+    return QuotientCheck(
+        "PASS",
+        (
+            QuotientObligation(
+                "promoted_coverage",
+                layer.layer,
+                "ALL",
+                "PASS",
+                promoted.output_state_count,
+            ),
+        ),
+    )
+
+
+def check_terminal_classes(
+    inputs: T28Inputs,
+    terminal: LayerQuotient,
+) -> QuotientCheck:
+    """Exclude each effective terminal class with all 12 layer-33 equations."""
+    if terminal.layer != 32 or any(item.kind != "terminal" for item in terminal.classes):
+        raise EvidenceError("terminal checker requires the layer-32 terminal seed")
+    z3, transfer, variables, constraints, _ = _z3_layer_problem(inputs, 33)
+    input_mapping = _canonical_to_original(transfer, "input")
+    if terminal.variables != tuple(input_mapping):
+        raise EvidenceError("terminal variables differ from the layer-33 input")
+    classifier, codes = _z3_classifier(z3, terminal, input_mapping, variables)
+    checked_count = _domain_size(transfer.input_variables, inputs.manifest.base)
+    obligations = []
+    for class_spec in terminal.classes:
+        solver = z3.Solver()
+        solver.add(*constraints, classifier == codes[class_spec.label])
+        status = _check_status(z3, solver, "terminal exclusion")
+        if status == z3.sat:
+            model = _lexicographic_model(
+                z3,
+                solver,
+                variables,
+                transfer.input_variables,
+                inputs.manifest.base,
+            )
+            obligations.append(
+                QuotientObligation(
+                    "terminal_exclusion",
+                    32,
+                    class_spec.label,
+                    "FAIL",
+                    checked_count,
+                    {"input": _model_state(model, variables, input_mapping)},
+                )
+            )
+            return QuotientCheck("FAIL", tuple(obligations))
+        obligations.append(
+            QuotientObligation(
+                "terminal_exclusion",
+                32,
+                class_spec.label,
+                "PASS",
+                checked_count,
+            )
+        )
+    return QuotientCheck("PASS", tuple(obligations))
+
+
+def _contains_quantifier(z3: object, expression: object) -> bool:
+    if z3.is_quantifier(expression):
+        return True
+    return any(_contains_quantifier(z3, child) for child in expression.children())
+
+
+def _project_successor_relation(
+    z3: object,
+    variables: Mapping[str, object],
+    input_names: tuple[str, ...],
+    constraints: tuple[object, ...],
+) -> object:
+    quantified = [variables[name] for name in variables if name not in input_names]
+    relation = z3.And(*constraints)
+    if not quantified:
+        return relation
+    goal = z3.Goal()
+    goal.add(z3.Exists(quantified, relation))
+    try:
+        projected = z3.Tactic("qe")(goal).as_expr()
+    except z3.Z3Exception as error:
+        raise EvidenceError(f"successor projection failed: {error}") from error
+    if _contains_quantifier(z3, projected):
+        raise EvidenceError("successor projection retained a quantifier")
+    return projected
+
+
+def _witness_holds(
+    inputs: T28Inputs,
+    current: LayerQuotient,
+    following: LayerQuotient,
+    transfer: object,
+    equations: tuple[object, ...],
+    witness: EdgeWitness,
+) -> bool:
+    input_mapping = _canonical_to_original(transfer, "input")
+    output_mapping = _canonical_to_original(transfer, "output")
+    assignment = {
+        input_mapping[name]: value for name, value in witness.input_state
+    } | {output_mapping[name]: value for name, value in witness.output_state} | dict(
+        witness.local_state
+    )
+    equation_names = {name for equation in equations for name in equation.variables}
+    all_names = set(transfer.input_variables) | set(transfer.output_variables) | equation_names
+    if set(assignment) != all_names:
+        return False
+    for name, value in assignment.items():
+        if name.startswith("c:"):
+            if value not in (0, 1):
+                return False
+        else:
+            lower = 1 if name.startswith("digit:p") and ":f0:d0" in name else 0
+            if not lower <= value < inputs.manifest.base:
+                return False
+    if any(equation.residual(assignment, inputs.manifest.base) != 0 for equation in equations):
+        return False
+    return (
+        witness.source_layer == current.layer
+        and classify_state(current, dict(witness.input_state)) == witness.source_class
+        and classify_state(following, dict(witness.output_state)) == witness.target_class
+    )
+
+
+def check_layer_semantics(
+    inputs: T28Inputs,
+    current: LayerQuotient,
+    following: LayerQuotient,
+    witnesses: tuple[EdgeWitness, ...],
+) -> QuotientCheck:
+    """Check one symbolic quotient transfer over the complete bounded domain."""
+    if following.layer != current.layer + 1:
+        raise EvidenceError("quotient layers must be consecutive")
+    z3, transfer, variables, constraints, equations = _z3_layer_problem(
+        inputs, following.layer
+    )
+    input_mapping = _canonical_to_original(transfer, "input")
+    output_mapping = _canonical_to_original(transfer, "output")
+    if current.variables != tuple(input_mapping) or following.variables != tuple(output_mapping):
+        raise EvidenceError("quotient variables differ from the exact transfer")
+    source_classifier, source_codes = _z3_classifier(
+        z3, current, input_mapping, variables
+    )
+    target_classifier, target_codes = _z3_classifier(
+        z3, following, output_mapping, variables
+    )
+    checked_count = _domain_size(transfer.input_variables, inputs.manifest.base)
+    obligations = []
+    projected_relation: object | None = None
+    witness_by_edge = {
+        (item.source_class, item.target_class): item for item in witnesses
+    }
+
+    for class_spec in current.classes:
+        source_formula = source_classifier == source_codes[class_spec.label]
+        if class_spec.kind == "dead":
+            solver = z3.Solver()
+            solver.add(*constraints, source_formula)
+            status = _check_status(z3, solver, "dead-class exclusion")
+            if status == z3.sat:
+                ordered = tuple(
+                    dict.fromkeys(
+                        (*transfer.input_variables, *transfer.output_variables, *variables)
+                    )
+                )
+                model = _lexicographic_model(
+                    z3, solver, variables, ordered, inputs.manifest.base
+                )
+                return QuotientCheck(
+                    "FAIL",
+                    (
+                        *obligations,
+                        QuotientObligation(
+                            "dead_has_no_successor",
+                            current.layer,
+                            class_spec.label,
+                            "FAIL",
+                            checked_count,
+                            {
+                                "input": _model_state(model, variables, input_mapping),
+                                "output": _model_state(model, variables, output_mapping),
+                            },
+                        ),
+                    ),
+                )
+            obligations.append(
+                QuotientObligation(
+                    "dead_has_no_successor",
+                    current.layer,
+                    class_spec.label,
+                    "PASS",
+                    checked_count,
+                )
+            )
+            continue
+        if class_spec.kind != "live":
+            raise EvidenceError("nonterminal source class must be live or dead")
+
+        if projected_relation is None:
+            projected_relation = _project_successor_relation(
+                z3, variables, transfer.input_variables, constraints
+            )
+        solver = z3.Solver()
+        solver.add(source_formula, z3.Not(projected_relation))
+        status = _check_status(z3, solver, "live successor existence")
+        if status == z3.sat:
+            model = _lexicographic_model(
+                z3,
+                solver,
+                variables,
+                transfer.input_variables,
+                inputs.manifest.base,
+            )
+            return QuotientCheck(
+                "FAIL",
+                (
+                    *obligations,
+                    QuotientObligation(
+                        "live_has_successor",
+                        current.layer,
+                        class_spec.label,
+                        "FAIL",
+                        checked_count,
+                        {"input": _model_state(model, variables, input_mapping)},
+                    ),
+                ),
+            )
+        obligations.append(
+            QuotientObligation(
+                "live_has_successor",
+                current.layer,
+                class_spec.label,
+                "PASS",
+                checked_count,
+            )
+        )
+
+        allowed_codes = [target_codes[label] for label in class_spec.allowed_next]
+        solver = z3.Solver()
+        solver.add(
+            *constraints,
+            source_formula,
+            z3.Not(z3.Or(*(target_classifier == code for code in allowed_codes))),
+        )
+        status = _check_status(z3, solver, "forbidden successor")
+        if status == z3.sat:
+            ordered = tuple(
+                dict.fromkeys(
+                    (*transfer.input_variables, *transfer.output_variables, *variables)
+                )
+            )
+            model = _lexicographic_model(
+                z3, solver, variables, ordered, inputs.manifest.base
+            )
+            return QuotientCheck(
+                "FAIL",
+                (
+                    *obligations,
+                    QuotientObligation(
+                        "forbidden_successor",
+                        current.layer,
+                        class_spec.label,
+                        "FAIL",
+                        checked_count,
+                        {
+                            "input": _model_state(model, variables, input_mapping),
+                            "output": _model_state(model, variables, output_mapping),
+                        },
+                    ),
+                ),
+            )
+        obligations.append(
+            QuotientObligation(
+                "forbidden_successor",
+                current.layer,
+                class_spec.label,
+                "PASS",
+                checked_count,
+            )
+        )
+
+        for target_label in class_spec.allowed_next:
+            witness = witness_by_edge.get((class_spec.label, target_label))
+            if witness is None or not _witness_holds(
+                inputs, current, following, transfer, equations, witness
+            ):
+                return QuotientCheck(
+                    "FAIL",
+                    (
+                        *obligations,
+                        QuotientObligation(
+                            "edge_has_witness",
+                            current.layer,
+                            class_spec.label,
+                            "FAIL",
+                            checked_count,
+                        ),
+                    ),
+                )
+            obligations.append(
+                QuotientObligation(
+                    "edge_has_witness",
+                    current.layer,
+                    class_spec.label,
+                    "PASS",
+                    checked_count,
+                )
+            )
+    return QuotientCheck("PASS", tuple(obligations))
+
+
+def check_quotient_certificate(
+    inputs: T28Inputs,
+    certificate: QuotientCertificate,
+) -> QuotientCheck:
+    """Check identity, promoted coverage, transfers, and terminal exclusion."""
+    if certificate.base != inputs.manifest.base:
+        raise EvidenceError("quotient certificate base differs from frozen inputs")
+    if certificate.removed != inputs.frontier.removed:
+        raise EvidenceError("quotient certificate removal differs from frozen inputs")
+    expected_digests = {
+        "equations": inputs.manifest.content_sha256,
+        "frontier": inputs.frontier.content_sha256,
+        "provenances": inputs.frontier.provenances_sha256,
+        "t27_evidence": inputs.t27_evidence_sha256,
+    }
+    if dict(certificate.source_digests) != expected_digests:
+        raise EvidenceError("quotient certificate source digests differ")
+
+    obligations = []
+    for layer in certificate.layers:
+        coverage = check_reachable_coverage(inputs, layer)
+        obligations.extend(coverage.obligations)
+        if coverage.status != "PASS":
+            return QuotientCheck("FAIL", tuple(obligations))
+    for current, following in zip(certificate.layers, certificate.layers[1:], strict=False):
+        layer_witnesses = tuple(
+            witness
+            for witness in certificate.witnesses
+            if witness.source_layer == current.layer
+        )
+        check = check_layer_semantics(
+            inputs,
+            current,
+            following,
+            layer_witnesses,
+        )
+        obligations.extend(check.obligations)
+        if check.status != "PASS":
+            return QuotientCheck("FAIL", tuple(obligations))
+    terminal = check_terminal_classes(inputs, certificate.layers[-1])
+    obligations.extend(terminal.obligations)
+    return QuotientCheck(terminal.status, tuple(obligations))
 
 
 def load_t28_inputs(
