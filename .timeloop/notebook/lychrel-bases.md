@@ -904,3 +904,123 @@ instead of separating sampled states. Its first milestone is one exact
 layer-31 predicate with at most three 12-atom clauses that covers all 18
 reachable states and passes universal consecution. Stop there if it fails;
 only a PASS earns extension toward layer 25.
+
+## T28 STATUS — THE REACHABLE FOUR-CLASS QUOTIENT IS NOT READABLE AT LAYER 31
+
+### STATUS
+
+STOP. Primary synthesis and isolated assurance agree on
+`decision_depth_exceeded` at layer 31. No T28 quotient certificate exists, and
+the mandatory checkpoint forbade attempts at layers 30 through 25.
+
+### CLAIM
+
+For the frozen base-19 radial obstruction, removed coordinate
+`phase=0,n=0,column=82`, T28 tested one exact claim boundary: whether the 18
+promoted layer-31 states' four successor-signature classes extend to semantic
+classes over the complete bounded layer-31 domain using coefficients `-3..3`,
+moduli `2..20`, at most eight classes, 64 decision nodes, and ten tests per
+path. They did not pass that bounded test. This does not prove that no readable
+invariant, different partition, or reachability-aware quotient exists.
+
+### RELATION TO T27 AND PREPRINT
+
+T28 builds on, but does not replace, the preprint and T27. The preprint's
+35-layer certificate remains the authoritative obstruction proof. T27 proves
+the compact three-family terminal lemma at layer 32. T28 asks a different,
+explanatory question: can those terminal families be pulled back one layer as
+a small semantic quotient? The answer for the approved grammar and readability
+cap is STOP. Nothing here weakens or strengthens the preprint's obstruction
+theorem.
+
+### QUOTIENT
+
+Reachable successor signatures propose four layer-31 classes with member sizes
+`(12,2,1,3)`: `DEAD`, plus one live predecessor class for each of
+`T_HIGH_DIGIT`, `T_PHASE_ZERO`, and `T_RESIDUE`. Across layers 25 through 32,
+the hypothesis class counts are `(5,5,7,7,6,5,4,3)` on reachable-state counts
+`(20,12,12,17,16,18,18,22)`. These counts are discovery hypotheses, not
+semantic theorems.
+
+CEGIS began from 14 bounded affine/congruence atoms and stopped on iteration
+222 with 37 candidate atoms. All accepted intermediate DAGs stayed within 64
+nodes and ten tests per path. The next reduced tree crossed the depth-10 cap;
+it was not serialized as a certificate. The frozen layer-32 terminal seed has
+32 nodes and path depth 32 and is explicitly exempt from the synthesized-layer
+path cap.
+
+### EXACT CHECK
+
+Every candidate was checked against the original local integer equations, not
+only against the 18 promoted states. The decisive counterexample was
+
+`D0=18, D1=6, L0=0, R0=0, L1=1, R1=0, L2=1, R2=1, L3=0, R3=0, L4=0, R4=0, L5=0, R5=1`.
+
+The candidate classified it as `DEAD`, but the exact layer-32 relation has a
+successor, falsifying `dead_has_no_successor`. This repeated phenomenon is the
+unifying obstruction uncovered by T28: equality of successor signatures on
+the promoted reachable sample is not, by itself, a congruence over the full
+bounded frontier domain.
+
+### INDEPENDENT CHECK
+
+The isolated standard-library checker imports no repository module or solver.
+It recomputes equation and frontier content hashes, replays output-state
+digests for layers 30 through 33 with counts `(18,18,22,0)`, fixes the 14
+counterexample coordinates, rebuilds allowed tuples for the 12 local equations,
+and proves by generalized arc consistency plus backtracking that a successor
+exists. It rejects an out-of-domain counterexample mutation. Its durable status
+is also STOP and binds primary evidence SHA-256
+`b0904f68fda4ad7990ac1d474ec157cf671567cdf02869d9ae2cceebe1814e47`.
+
+### COMPRESSION
+
+No layer-31 certificate exists, so no explanatory-compression PASS is claimed
+and no certificate/table byte ratio is reported. T27's terminal predicate and
+its previously reported compression diagnostic remain unchanged.
+
+### PRISM AND RESEARCH
+
+The updated Math Prism failed closed with
+`MathFrameStoreOfflineMigrationRequired`, reason
+`unrecognized_structural_layout_exceeds_inline_cap`, generation 2, schema
+cookie 150. No migration was authorized, no frame artifact was fabricated, and
+Prism supplied no mathematical premise. The manual symbolic-automata,
+Presburger-preimage, and phase-cyclic frames remained hypotheses only.
+
+D'Antoni, Kincaid, and Wang provide symbolic-automata and
+bisimulation-up-to-congruence precedent
+(<https://arxiv.org/abs/1610.01722>). Cimatti, Griggio, and Sebastiani provide
+the optional proof-based interpolation/preimage route
+(<https://arxiv.org/abs/0906.4492>). Neither source proves this reverse-add
+quotient or predicts the STOP.
+
+### STOP CONDITION
+
+The first mandatory gate failed when exact counterexamples still required a
+decision path deeper than ten. The grammar, class cap, node cap, topology, and
+claim boundary were not enlarged. No base lift, base-17/base-19 classification,
+topology scan, lower-layer extension, or Lean bridge ran.
+
+### LIMITATIONS
+
+- The counterexample falsifies the learned semantic `DEAD` guard, not the
+  promoted four-way partition on its 18 sampled reachable states.
+- The independent checker audits the achieved STOP boundary, not nonexistent
+  guard, edge, or compression claims.
+- T28 does not prove that depth 11 suffices, that another partition succeeds,
+  or that a human-readable invariant is impossible.
+- The preprint's obstruction certificate and T27's terminal lemma remain the
+  only positive mathematical certificates in this chain.
+
+### NEXT
+
+The coherent next program is reachability-aware weakest-preimage analysis:
+explain which additional invariant distinguishes promoted `DEAD` states from
+the exact successor-bearing counterexamples, before attempting another guard
+synthesis. Its first falsifiable milestone is a single independently replayed
+predicate that separates all 12 promoted `DEAD` states from the iteration-222
+counterexample set while remaining implied by an exact earlier-layer
+reachability condition. Stop if that requires an unbounded state table or
+changes the frozen topology. Treat a symbolic lift in base `b`, other bases,
+and Lean as separate later decisions.

@@ -21,6 +21,26 @@ arithmetic, `z3-solver` 5.x for primary synthesis and universal checks, Python
 standard-library constraint propagation and backtracking for independent
 replay, pytest 8.x, Ruff, deterministic canonical JSON, and SHA-256.
 
+## Execution outcome (2026-08-09)
+
+- [x] Tasks 1--3: certificate language, frozen adapter, and exact primary
+  verifier.
+- [x] Task 4: deterministic layer-31 CEGIS synthesis.
+- [x] Task 5: primary evidence gate and reproducible STOP artifact.
+- [x] Task 6: isolated reconstruction and independent STOP agreement.
+- [ ] Task 7: skipped after `decision_depth_exceeded` at the mandatory
+  layer-31 checkpoint.
+- [x] Task 8: durable conclusion and final verification.
+
+The exact four-class layer-31 attempt stopped after 222 refinements with 37
+candidate atoms.  Its next reduced decision tree exceeded the ten-test path
+cap while an exact model still refuted the proposed `DEAD` semantics.  Primary
+and independent routes agree that the recorded model has a successor under
+the original 12 local equations.  Consequently T28 certifies no new automaton
+layer interval; the maximal jointly audited mathematical tail remains T27's
+verified layer-32 terminal lemma.  This is a bounded readability failure, not
+completion of the broader invariant target.
+
 ## Global Constraints
 
 - Preserve `.timeloop/exam/results.jsonl` and every unrelated user change.
