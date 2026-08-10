@@ -3,13 +3,23 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from lychrel_invariant_certificate import LayerPredicate, LinearAtom, canonical_bytes
-from lychrel_quotient_automaton import (
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from lychrel_invariant_certificate import (  # noqa: E402
+    LayerPredicate,
+    LinearAtom,
+    canonical_bytes,
+)
+from lychrel_quotient_automaton import (  # noqa: E402
     ClassSpec,
     DecisionNode,
     EdgeWitness,
@@ -18,7 +28,7 @@ from lychrel_quotient_automaton import (
     classify_state,
     layer_path_depth,
 )
-from t27_base19_invariant_lift import (
+from t27_base19_invariant_lift import (  # noqa: E402
     EquationManifest,
     EvidenceError,
     FrontierCertificate,
@@ -1245,6 +1255,128 @@ def build_layer31_milestone(root: Path) -> LayerSynthesis:
     return synthesize_layer(inputs, partition, terminal, GuardLimits())
 
 
+def _public_baseline(baseline: Mapping[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in baseline.items()
+        if not key.startswith("_")
+        and key not in {"input_status", "terminal_status", "digests_match"}
+    }
+
+
+def _stop_primary(
+    baseline: Mapping[str, object],
+    reason: str,
+    layer_result: LayerSynthesis,
+) -> tuple[dict[str, object], None]:
+    evidence = _public_baseline(baseline)
+    evidence.update(
+        {
+            "status": "STOP",
+            "stop_layer": 31,
+            "stop_reason": reason,
+            "synthesis": {
+                "iterations": layer_result.iterations,
+                "candidate_atom_count": layer_result.candidate_atom_count,
+            },
+        }
+    )
+    if layer_result.counterexample is not None:
+        variables = baseline.get("layer31_variables", ())
+        named_state = (
+            dict(zip(variables, layer_result.counterexample.state, strict=True))
+            if isinstance(variables, tuple)
+            and len(variables) == len(layer_result.counterexample.state)
+            else None
+        )
+        evidence["counterexample"] = {
+            "state": named_state,
+            "state_values": list(layer_result.counterexample.state),
+            "rejected_class": layer_result.counterexample.rejected_class,
+            "obligation": layer_result.counterexample.reason,
+        }
+    return evidence, None
+
+
+def decide_primary_gate(
+    baseline: Mapping[str, object],
+    layer_result: LayerSynthesis,
+) -> tuple[dict[str, object], QuotientCertificate | None]:
+    """Fail closed before promoting layer-31 synthesis to assurance."""
+    if baseline.get("input_status") != "PASS":
+        reason = (
+            "input_status_unknown"
+            if baseline.get("input_status") == "UNKNOWN"
+            else "input_evidence_failure"
+        )
+        return _stop_primary(baseline, reason, layer_result)
+    if baseline.get("digests_match") is not True:
+        return _stop_primary(baseline, "frozen_digest_mismatch", layer_result)
+    if baseline.get("terminal_status") != "PASS":
+        return _stop_primary(baseline, "terminal_class_failure", layer_result)
+    if layer_result.status == "STOP":
+        return _stop_primary(
+            baseline,
+            layer_result.stop_reason or "layer31_synthesis_failure",
+            layer_result,
+        )
+    if layer_result.status != "PASS":
+        return _stop_primary(baseline, "layer31_status_unknown", layer_result)
+    if layer_result.layer != 31 or layer_result.quotient is None:
+        return _stop_primary(baseline, "missing_layer31_quotient", layer_result)
+    if len(layer_result.quotient.classes) != 4:
+        return _stop_primary(baseline, "wrong_layer31_class_count", layer_result)
+    if not layer_result.witnesses:
+        return _stop_primary(baseline, "missing_edge_witnesses", layer_result)
+    terminal = baseline.get("_terminal_layer")
+    if not isinstance(terminal, LayerQuotient):
+        return _stop_primary(baseline, "missing_terminal_layer", layer_result)
+    frozen_hashes = baseline.get("frozen_hashes")
+    if not isinstance(frozen_hashes, Mapping):
+        return _stop_primary(baseline, "missing_frozen_hashes", layer_result)
+    certificate = QuotientCertificate(
+        schema="t28-tail-quotient-certificate-v1",
+        base=19,
+        removed=str(baseline.get("removed", "phase=0,n=0,column=82")),
+        source_digests=tuple(
+            sorted((str(key), str(value)) for key, value in frozen_hashes.items())
+        ),
+        start_layer=31,
+        layers=(layer_result.quotient, terminal),
+        witnesses=layer_result.witnesses,
+    )
+    inputs = baseline.get("_inputs")
+    obligation_count = 0
+    if isinstance(inputs, T28Inputs):
+        check = check_quotient_certificate(inputs, certificate)
+        obligation_count = len(check.obligations)
+        if check.status != "PASS":
+            return _stop_primary(
+                baseline,
+                "primary_certificate_verification_failed",
+                layer_result,
+            )
+    evidence = _public_baseline(baseline)
+    evidence.update(
+        {
+            "status": "PASS",
+            "certificate_sha256": hashlib.sha256(
+                canonical_bytes(certificate)
+            ).hexdigest(),
+            "measurements": {
+                "class_count": len(layer_result.quotient.classes),
+                "node_count": len(layer_result.quotient.nodes),
+                "maximum_path": layer_path_depth(layer_result.quotient),
+                "witness_count": len(layer_result.witnesses),
+                "obligation_count": obligation_count,
+                "iterations": layer_result.iterations,
+                "candidate_atom_count": layer_result.candidate_atom_count,
+            },
+        }
+    )
+    return evidence, certificate
+
+
 def load_t28_inputs(
     root: Path,
     *,
@@ -1467,3 +1599,238 @@ def explicit_relation_payload(
             }
         )
     return {"layers": layers}
+
+
+def _obligation_payload(obligation: QuotientObligation) -> dict[str, object]:
+    return {
+        "kind": obligation.kind,
+        "layer": obligation.layer,
+        "class_label": obligation.class_label,
+        "status": obligation.status,
+        "checked_count": obligation.checked_count,
+        "counterexample": obligation.counterexample,
+    }
+
+
+def _primary_baseline(
+    inputs: T28Inputs,
+    partitions: tuple[CandidatePartition, ...],
+    terminal: LayerQuotient,
+    terminal_check: QuotientCheck,
+) -> dict[str, object]:
+    limits = GuardLimits()
+    layer31 = next(item for item in partitions if item.layer == 31)
+    candidate_counts = {
+        str(partition.layer): {
+            "reachable_state_count": sum(
+                len(class_spec.members) for class_spec in partition.classes
+            ),
+            "class_count": len(partition.classes),
+            "member_sizes": sorted(
+                len(class_spec.members) for class_spec in partition.classes
+            ),
+        }
+        for partition in partitions
+    }
+    attempted_partition = {
+        "status": "hypothesis_only",
+        "layer": 31,
+        "variables": list(layer31.variables),
+        "classes": [
+            {
+                "label": class_spec.label,
+                "kind": "live" if class_spec.allowed_next else "dead",
+                "allowed_next": list(class_spec.allowed_next),
+                "member_count": len(class_spec.members),
+                "representative": list(class_spec.members[0]),
+            }
+            for class_spec in layer31.classes
+        ],
+        "decision_dag": None,
+    }
+    return {
+        "schema": "t28-base19-tail-quotient-evidence-v1",
+        "base": 19,
+        "removed": inputs.frontier.removed,
+        "through_layer": 31,
+        "input_status": "PASS",
+        "terminal_status": terminal_check.status,
+        "digests_match": True,
+        "frozen_hashes": {
+            "equations": inputs.manifest.content_sha256,
+            "frontier": inputs.frontier.content_sha256,
+            "provenances": inputs.frontier.provenances_sha256,
+            "t27_evidence": inputs.t27_evidence_sha256,
+        },
+        "candidate_counts": candidate_counts,
+        "attempted_partition": attempted_partition,
+        "layer31_variables": layer31.variables,
+        "terminal": {
+            "layer": 32,
+            "class_labels": [class_spec.label for class_spec in terminal.classes],
+            "class_count": len(terminal.classes),
+            "node_count": len(terminal.nodes),
+            "maximum_path": layer_path_depth(terminal),
+            "obligations": [
+                _obligation_payload(obligation)
+                for obligation in terminal_check.obligations
+            ],
+        },
+        "prism_status": "MathFrameStoreOfflineMigrationRequired",
+        "prism_failure": {
+            "reason": "unrecognized_structural_layout_exceeds_inline_cap",
+            "generation": 2,
+            "schema_cookie": 150,
+            "role": "hypothesis_generator_only",
+        },
+        "grammar_limits": {
+            "coefficients": list(limits.coefficients),
+            "moduli": list(limits.moduli),
+            "max_classes": limits.max_classes,
+            "max_nodes": limits.max_nodes,
+            "max_depth": limits.max_depth,
+        },
+        "primary_sources": [
+            "https://arxiv.org/abs/1610.01722",
+            "https://arxiv.org/abs/0906.4492",
+        ],
+        "claim_boundary": [
+            "the frozen base-19 radial obstruction only",
+            "the exact layer-31 to layer-32 local relation only",
+            "the frozen affine and congruence guard grammar only",
+        ],
+        "limitations": [
+            "A STOP is not an impossibility theorem for human-readable invariants.",
+            "No lower layer, other base, or other topology is classified.",
+            "No Lean theorem is claimed or required by this gate.",
+            "Prism produced no usable frame artifact and supplied no premise.",
+            "The attempted layer-31 partition is a repository-derived hypothesis, not a theorem.",
+        ],
+        "_inputs": inputs,
+        "_terminal_layer": terminal,
+    }
+
+
+def _build_primary_bundle(
+    root: Path,
+    through_layer: int = 31,
+) -> tuple[dict[str, object], QuotientCertificate | None]:
+    if through_layer != 31:
+        raise ValueError("the primary gate is frozen at through-layer 31")
+    inputs = load_t28_inputs(root)
+    partitions = discover_reachable_quotient(inputs, 25, 32)
+    terminal = build_terminal_seed(inputs)
+    terminal_check = check_terminal_classes(inputs, terminal)
+    baseline = _primary_baseline(inputs, partitions, terminal, terminal_check)
+    layer31 = next(item for item in partitions if item.layer == 31)
+    layer_result = synthesize_layer(inputs, layer31, terminal, GuardLimits())
+    return decide_primary_gate(baseline, layer_result)
+
+
+def build_primary(root: Path, through_layer: int = 31) -> dict[str, object]:
+    """Build deterministic primary evidence for the layer-31 gate."""
+    evidence, _ = _build_primary_bundle(Path(root), through_layer)
+    return evidence
+
+
+def render_primary_report(evidence: Mapping[str, object]) -> str:
+    """Render a compact report from the exact primary evidence object."""
+    lines = [
+        "# T28 base-19 tail quotient: primary layer-31 gate",
+        "",
+        f"Status: **{evidence['status']}**",
+        f"Claim boundary: base {evidence['base']}, layer 31 to 32, frozen radial obstruction.",
+        "",
+        "## Verified terminal seed",
+        "",
+    ]
+    terminal = evidence["terminal"]
+    assert isinstance(terminal, Mapping)
+    labels = terminal["class_labels"]
+    assert isinstance(labels, list)
+    lines.extend(
+        [
+            f"- Classes: {', '.join(str(label) for label in labels)}",
+            f"- Decision nodes: {terminal['node_count']}",
+            f"- Exact terminal obligations: {len(terminal['obligations'])}",
+            "",
+            "## Attempted layer 31",
+            "",
+        ]
+    )
+    attempted = evidence["attempted_partition"]
+    assert isinstance(attempted, Mapping)
+    lines.append(
+        "The four-class partition below is a reachable-state hypothesis, not a theorem."
+    )
+    lines.append("")
+    for class_spec in attempted["classes"]:
+        assert isinstance(class_spec, Mapping)
+        edges = class_spec["allowed_next"]
+        assert isinstance(edges, list)
+        lines.append(
+            f"- `{class_spec['label']}` ({class_spec['kind']}), "
+            f"members={class_spec['member_count']}, "
+            f"edges={','.join(str(edge) for edge in edges) or 'none'}"
+        )
+    lines.extend(
+        [
+            "",
+            "No candidate decision DAG is serialized because the synthesis gate stopped.",
+            "",
+            "## Outcome",
+            "",
+        ]
+    )
+    if evidence["status"] == "STOP":
+        lines.append(
+            f"STOP at layer {evidence['stop_layer']}: `{evidence['stop_reason']}`."
+        )
+        counterexample = evidence.get("counterexample")
+        if isinstance(counterexample, Mapping):
+            lines.extend(
+                [
+                    "",
+                    f"Rejected class: `{counterexample['rejected_class']}`",
+                    f"Failed obligation: `{counterexample['obligation']}`",
+                    "Exact counterexample: "
+                    f"`{json.dumps(counterexample['state'], sort_keys=True)}`",
+                ]
+            )
+    else:
+        lines.append(f"Certificate SHA-256: `{evidence['certificate_sha256']}`")
+    lines.extend(
+        [
+            "",
+            "## Limitations",
+            "",
+            *(f"- {item}" for item in evidence["limitations"]),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _write_canonical_json(path: Path, payload: object) -> None:
+    path.write_bytes(canonical_bytes(payload) + b"\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--through-layer", type=int, default=31)
+    parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--certificate", type=Path, required=True)
+    parser.add_argument("--report", type=Path, required=True)
+    arguments = parser.parse_args()
+    root = Path(__file__).resolve().parents[2]
+    evidence, certificate = _build_primary_bundle(root, arguments.through_layer)
+    _write_canonical_json(arguments.evidence, evidence)
+    arguments.report.write_text(render_primary_report(evidence), encoding="utf-8")
+    if certificate is None:
+        arguments.certificate.unlink(missing_ok=True)
+    else:
+        _write_canonical_json(arguments.certificate, certificate)
+
+
+if __name__ == "__main__":
+    main()

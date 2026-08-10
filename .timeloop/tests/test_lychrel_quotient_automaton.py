@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -27,9 +29,12 @@ from t28_base19_tail_quotient import (  # noqa: E402
     CandidateClass,
     CandidatePartition,
     ExplicitTransfer,
+    GuardCounterexample,
     GuardLimits,
     GuardSynthesisError,
+    LayerSynthesis,
     build_layer31_milestone,
+    build_primary,
     build_reduced_decision_dag,
     build_terminal_seed,
     check_explicit_layer,
@@ -37,6 +42,7 @@ from t28_base19_tail_quotient import (  # noqa: E402
     check_quotient_certificate,
     check_reachable_coverage,
     check_terminal_classes,
+    decide_primary_gate,
     derive_guard_atoms,
     discover_reachable_quotient,
     explicit_relation_payload,
@@ -688,3 +694,167 @@ def test_layer31_experiment_has_a_scoped_exact_outcome() -> None:
     assert result.stop_reason == "decision_depth_exceeded"
     assert result.counterexample is not None
     assert result.counterexample.reason == "dead_has_no_successor"
+
+
+def primary_baseline_fixture() -> dict[str, object]:
+    return {
+        "schema": "t28-base19-tail-quotient-evidence-v1",
+        "base": 19,
+        "through_layer": 31,
+        "input_status": "PASS",
+        "terminal_status": "PASS",
+        "digests_match": True,
+        "frozen_hashes": {
+            "equations": EQUATIONS_CONTENT_SHA256,
+            "frontier": FRONTIER_CONTENT_SHA256,
+            "provenances": PROVENANCES_SHA256,
+            "t27_evidence": T27_EVIDENCE_SHA256,
+        },
+        "candidate_counts": {str(layer): layer - 20 for layer in range(25, 33)},
+        "prism_status": "MathFrameStoreOfflineMigrationRequired",
+        "grammar_limits": {
+            "coefficients": list(range(-3, 4)),
+            "moduli": list(range(2, 21)),
+            "max_classes": 8,
+            "max_nodes": 64,
+            "max_depth": 10,
+        },
+        "limitations": ["layer-31-only"],
+    }
+
+
+def failed_layer_fixture(reason: str) -> LayerSynthesis:
+    return LayerSynthesis(
+        status="STOP",
+        layer=31,
+        quotient=None,
+        witnesses=(),
+        iterations=3,
+        candidate_atom_count=7,
+        stop_reason=reason,
+        counterexample=GuardCounterexample((0, 0), "DEAD", "dead_has_no_successor"),
+    )
+
+
+def test_primary_gate_never_promotes_a_failed_layer31_result() -> None:
+    evidence, certificate = decide_primary_gate(
+        primary_baseline_fixture(),
+        failed_layer_fixture("guard_separator_not_found"),
+    )
+
+    assert evidence["status"] == "STOP"
+    assert evidence["stop_layer"] == 31
+    assert evidence["stop_reason"] == "guard_separator_not_found"
+    assert certificate is None
+    assert "certificate_sha256" not in evidence
+    assert all(key not in evidence for key in ("lower_layers", "other_bases", "lean"))
+
+
+@pytest.mark.parametrize(
+    ("baseline_change", "reason"),
+    [
+        ({"input_status": "UNKNOWN"}, "input_status_unknown"),
+        ({"digests_match": False}, "frozen_digest_mismatch"),
+        ({"terminal_status": "FAIL"}, "terminal_class_failure"),
+    ],
+)
+def test_primary_gate_fails_closed_before_certificate_construction(
+    baseline_change: dict[str, object], reason: str
+) -> None:
+    baseline = {**primary_baseline_fixture(), **baseline_change}
+    evidence, certificate = decide_primary_gate(
+        baseline,
+        failed_layer_fixture("decision_depth_exceeded"),
+    )
+
+    assert evidence["status"] == "STOP"
+    assert evidence["stop_reason"] == reason
+    assert certificate is None
+
+
+def test_primary_gate_rejects_wrong_pass_shape_and_missing_witnesses() -> None:
+    layer = LayerQuotient(
+        31,
+        ("x",),
+        "class:ONLY",
+        (ClassSpec("ONLY", "dead", ()),),
+        (),
+    )
+    claimed = LayerSynthesis("PASS", 31, layer, (), 1, 1)
+
+    evidence, certificate = decide_primary_gate(primary_baseline_fixture(), claimed)
+
+    assert evidence["status"] == "STOP"
+    assert evidence["stop_reason"] == "wrong_layer31_class_count"
+    assert certificate is None
+
+    four_classes = LayerQuotient(
+        31,
+        ("x",),
+        "class:DEAD",
+        tuple(ClassSpec(label, "dead", ()) for label in ("DEAD", "Q00", "Q01", "Q02")),
+        (),
+    )
+    missing = LayerSynthesis("PASS", 31, four_classes, (), 1, 1)
+    evidence, certificate = decide_primary_gate(primary_baseline_fixture(), missing)
+    assert evidence["stop_reason"] == "missing_edge_witnesses"
+    assert certificate is None
+
+
+def test_primary_gate_emits_a_certificate_only_for_a_well_shaped_pass() -> None:
+    fixture = quotient_fixture_certificate()
+    source = replace(
+        fixture.layers[0],
+        classes=(
+            *fixture.layers[0].classes,
+            ClassSpec("Q01", "dead", ()),
+            ClassSpec("Q02", "dead", ()),
+        ),
+    )
+    baseline = {
+        **primary_baseline_fixture(),
+        "_terminal_layer": fixture.layers[-1],
+    }
+    passed = LayerSynthesis(
+        "PASS",
+        31,
+        source,
+        fixture.witnesses,
+        2,
+        3,
+    )
+
+    evidence, certificate = decide_primary_gate(baseline, passed)
+
+    assert evidence["status"] == "PASS"
+    assert certificate is not None
+    assert evidence["certificate_sha256"] == hashlib.sha256(
+        canonical_bytes(certificate)
+    ).hexdigest()
+
+
+def test_build_primary_reproduces_the_real_scoped_stop() -> None:
+    evidence = build_primary(ROOT)
+
+    assert evidence["schema"] == "t28-base19-tail-quotient-evidence-v1"
+    assert evidence["status"] == "STOP"
+    assert evidence["stop_layer"] == 31
+    assert evidence["stop_reason"] == "decision_depth_exceeded"
+    assert "certificate_sha256" not in evidence
+
+
+def test_primary_cli_bootstraps_repository_imports() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / ".timeloop" / "runs" / "t28_base19_tail_quotient.py"),
+            "--help",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--through-layer" in completed.stdout
