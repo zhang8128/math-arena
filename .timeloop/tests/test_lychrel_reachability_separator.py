@@ -1,11 +1,38 @@
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+INDEPENDENT = (
+    ROOT
+    / ".timeloop"
+    / "runs"
+    / "t29_base19_reachability_separator_independent.py"
+)
+T29_EVIDENCE = ROOT / ".timeloop" / "runs" / "t29_base19_reachability_separator.json"
+T29_TRACE = (
+    ROOT / ".timeloop" / "runs" / "t29_base19_reachability_separator_trace.json"
+)
+T29_DATASET = (
+    ROOT / ".timeloop" / "runs" / "t29_base19_reachability_separator_dataset.json"
+)
+T29_CERTIFICATE = (
+    ROOT
+    / ".timeloop"
+    / "runs"
+    / "t29_base19_reachability_separator_certificate.json"
+)
+T29_INDEPENDENT_AUDIT = (
+    ROOT
+    / ".timeloop"
+    / "runs"
+    / "t29_base19_reachability_separator_independent.json"
+)
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
 
@@ -506,3 +533,143 @@ def test_primary_gate_preserves_finite_pass_with_semantic_counterexample() -> No
     assert "FINITE_SEPARATOR_PASS_SEMANTIC_STOP" in report
     assert "finite-only" in report
     assert "semantic successor" in report
+
+
+def test_independent_checker_starts_under_isolated_python() -> None:
+    """Assurance must not rely on repository imports or site packages."""
+    completed = subprocess.run(
+        [sys.executable, "-I", str(INDEPENDENT), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert all(
+        name in completed.stdout
+        for name in (
+            "EQUATIONS",
+            "FRONTIER",
+            "T28_EVIDENCE",
+            "TRACE",
+            "DATASET",
+            "T29_EVIDENCE",
+        )
+    )
+
+
+def independent_command(
+    *,
+    trace: Path = T29_TRACE,
+    dataset: Path = T29_DATASET,
+    evidence: Path = T29_EVIDENCE,
+    certificate: Path = T29_CERTIFICATE,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-I",
+        str(INDEPENDENT),
+        str(ROOT / "publication" / "base19-radial" / "instance" / "equations.json"),
+        str(
+            ROOT
+            / "publication"
+            / "base19-radial"
+            / "certificates"
+            / "minimal-core-frontier.json"
+        ),
+        str(ROOT / ".timeloop" / "runs" / "t28_base19_tail_quotient.json"),
+        str(trace),
+        str(dataset),
+        str(evidence),
+        str(certificate),
+    ]
+
+
+def test_independent_checker_accepts_durable_t29_artifacts() -> None:
+    """The isolated checker must reproduce the primary achieved boundary."""
+    completed = subprocess.run(
+        independent_command(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    audit = json.loads(completed.stdout)
+    assert audit["status"] == "FINITE_SEPARATOR_PASS_SEMANTIC_STOP"
+    assert audit["repository_imports"] == []
+    assert audit["finite_replay_counts"] == {
+        "positives": 12,
+        "trace_negatives": 221,
+        "live_controls": 6,
+    }
+    assert audit["semantic_successor_replayed"] is True
+    assert completed.stdout == T29_INDEPENDENT_AUDIT.read_text(encoding="utf-8")
+
+
+def test_independent_checker_rejects_a_mutated_predicate(
+    tmp_path: Path,
+) -> None:
+    """A finite atom mutation must never survive isolated assurance."""
+    payload = json.loads(T29_CERTIFICATE.read_text(encoding="utf-8"))
+    payload["predicate"]["clauses"][0]["atoms"][0]["constant"] += 1
+    mutated = tmp_path / "mutated-certificate.json"
+    mutated.write_bytes(canonical_bytes(payload) + b"\n")
+
+    completed = subprocess.run(
+        independent_command(certificate=mutated),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert completed.stderr.startswith("REJECT:")
+
+
+@pytest.mark.parametrize(
+    "target",
+    ("trace_iteration", "live_control", "source_digest", "semantic_witness"),
+)
+def test_independent_checker_rejects_mutated_assurance_inputs(
+    target: str,
+    tmp_path: Path,
+) -> None:
+    """Trace, dataset, identity, and equation-witness mutations all fail closed."""
+    paths = {
+        "trace": T29_TRACE,
+        "dataset": T29_DATASET,
+        "evidence": T29_EVIDENCE,
+        "certificate": T29_CERTIFICATE,
+    }
+    selected = {
+        "trace_iteration": "trace",
+        "live_control": "dataset",
+        "source_digest": "evidence",
+        "semantic_witness": "certificate",
+    }[target]
+    payload = json.loads(paths[selected].read_text(encoding="utf-8"))
+    if target == "trace_iteration":
+        payload["steps"][0]["iteration"] = 2
+    elif target == "live_control":
+        payload["live_controls"][0][0] += 1
+    elif target == "source_digest":
+        payload["source_digests"]["equations"] = "0" * 64
+    else:
+        local = payload["semantic_witness"]["local_state"]
+        local[next(iter(sorted(local)))] += 1
+    mutated = tmp_path / f"mutated-{selected}.json"
+    mutated.write_bytes(canonical_bytes(payload) + b"\n")
+    paths[selected] = mutated
+
+    completed = subprocess.run(
+        independent_command(**paths),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert completed.stderr.startswith("REJECT:")
