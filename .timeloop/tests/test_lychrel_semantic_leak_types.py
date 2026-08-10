@@ -24,6 +24,14 @@ from lychrel_semantic_leak_types import (  # noqa: E402
     generate_literal_pool,
     parse_semantic_leak_types_certificate,
 )
+from t32_base19_semantic_leak_types import (  # noqa: E402
+    T31_SOURCE_DIGESTS,
+    EvidenceError,
+    failure_mask,
+    load_t32_inputs,
+    q0_residuals,
+    structural_view,
+)
 
 
 def digest_entries(names: set[str]) -> tuple[tuple[str, str], ...]:
@@ -222,3 +230,44 @@ def test_certificate_parser_rejects_extra_keys() -> None:
     payload["unexpected"] = 1
     with pytest.raises(ValueError, match="keys differ"):
         parse_semantic_leak_types_certificate(payload)
+
+
+def test_t32_adapter_replays_the_complete_t31_stop_boundary() -> None:
+    inputs = load_t32_inputs(ROOT)
+    assert inputs.t31_status == "NO_CANDIDATE"
+    assert inputs.t31_projected_atom_count == 26
+    assert inputs.t31_stop_detail == (
+        "no projected atom excludes the first exact bad image"
+    )
+    assert inputs.t31_replay_residuals == (0,) * 12
+    assert inputs.t31_q0_holds is False
+    assert q0_residuals(inputs, inputs.t31_witness) == (1, -1, 0, -3, -10)
+    assert failure_mask(inputs, inputs.t31_witness) == (
+        True,
+        True,
+        False,
+        True,
+        True,
+    )
+    assert dict(inputs.t31_source_digests) == T31_SOURCE_DIGESTS
+
+
+def test_canonical_t31_witness_has_the_expected_structural_view() -> None:
+    inputs = load_t32_inputs(ROOT)
+    view = structural_view(inputs, inputs.t31_witness)
+    assert tuple(view[f"a{i}"] for i in range(6)) == (0, 1, 1, 2, 4, 9)
+    assert tuple(view[f"b{i}"] for i in range(6)) == (0, 0, 1, 2, 4, 9)
+    assert tuple(view[f"Lin{i}"] for i in range(6)) == (0, 0, 0, 0, 1, 0)
+    assert tuple(view[f"Rin{i}"] for i in range(6)) == (0, 0, 0, 0, 0, 1)
+    assert tuple(view[f"Lout{i}"] for i in range(6)) == (0, 0, 0, 0, 0, 0)
+    assert tuple(view[f"Rout{i}"] for i in range(6)) == (0, 0, 0, 0, 1, 1)
+
+
+def test_t32_adapter_rejects_a_mutated_t31_source(tmp_path: Path) -> None:
+    changed = tmp_path / "t31.py"
+    changed.write_bytes(
+        (ROOT / ".timeloop/runs/t31_base19_bad_image_projection.py").read_bytes()
+        + b"\n"
+    )
+    with pytest.raises(EvidenceError, match="T31 runner raw SHA-256 changed"):
+        load_t32_inputs(ROOT, t31_runner_path=changed)
