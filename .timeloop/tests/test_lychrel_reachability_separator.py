@@ -27,6 +27,13 @@ from lychrel_reachability_separator import (  # noqa: E402
 from t28_base19_tail_quotient import (  # noqa: E402
     replay_layer31_counterexample_trace,
 )
+from t29_base19_reachability_separator import (  # noqa: E402
+    SeparatorLimits,
+    build_separator_dataset,
+    dataset_payload,
+    load_t29_inputs,
+    trace_payload,
+)
 
 
 def test_trace_distinguishes_terminal_iteration_from_counterexample_count() -> None:
@@ -270,4 +277,26 @@ def test_real_t28_trace_replay_stops_after_221_exact_counterexamples() -> None:
         "R3": 0,
         "R4": 0,
         "R5": 1,
+    }
+
+
+def test_real_t29_adapter_builds_the_frozen_disjoint_dataset() -> None:
+    """The finite question has 12 positives and 227 distinct controls."""
+    inputs = load_t29_inputs(ROOT)
+    _, trace = replay_layer31_counterexample_trace(ROOT)
+    dataset = build_separator_dataset(inputs, trace)
+
+    assert len(dataset.positives) == 12
+    assert len(dataset.trace_negatives) == 221
+    assert len(dataset.live_controls) == 6
+    assert not set(dataset.positives) & set(dataset.trace_negatives)
+    assert not set(dataset.positives) & set(dataset.live_controls)
+    assert not set(dataset.trace_negatives) & set(dataset.live_controls)
+    assert SeparatorLimits().coefficients == tuple(range(-3, 4))
+    assert SeparatorLimits().moduli == tuple(range(2, 21))
+    assert trace_payload(trace)["counts"] == {"counterexamples": 221}
+    assert dataset_payload(dataset)["counts"] == {
+        "positives": 12,
+        "trace_negatives": 221,
+        "live_controls": 6,
     }
