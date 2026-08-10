@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from lychrel_invariant_certificate import LayerPredicate
+from lychrel_invariant_certificate import LayerPredicate, LinearAtom, canonical_bytes
 from lychrel_quotient_automaton import (
     ClassSpec,
     DecisionNode,
@@ -16,6 +16,7 @@ from lychrel_quotient_automaton import (
     LayerQuotient,
     QuotientCertificate,
     classify_state,
+    layer_path_depth,
 )
 from t27_base19_invariant_lift import (
     EquationManifest,
@@ -25,6 +26,7 @@ from t27_base19_invariant_lift import (
     canonical_variable,
     canonicalize_state,
     load_promoted_inputs,
+    separate_counterexample,
     synthesize_terminal_predicate,
 )
 
@@ -54,6 +56,285 @@ class CandidatePartition:
     layer: int
     variables: tuple[str, ...]
     classes: tuple[CandidateClass, ...]
+
+
+@dataclass(frozen=True)
+class GuardLimits:
+    coefficients: tuple[int, ...] = (-3, -2, -1, 0, 1, 2, 3)
+    moduli: tuple[int, ...] = tuple(range(2, 21))
+    max_classes: int = 8
+    max_nodes: int = 64
+    max_depth: int = 10
+
+    def __post_init__(self) -> None:
+        if self.coefficients != (-3, -2, -1, 0, 1, 2, 3):
+            raise ValueError("T28 coefficients are frozen at -3..3")
+        if self.moduli != tuple(range(2, 21)):
+            raise ValueError("T28 congruence moduli are frozen at 2..20")
+        if not 1 <= self.max_classes <= 8:
+            raise ValueError("T28 class limit must be in 1..8")
+        if not 1 <= self.max_nodes <= 64:
+            raise ValueError("T28 node limit must be in 1..64")
+        if not 0 <= self.max_depth <= 10:
+            raise ValueError("T28 depth limit must be in 0..10")
+
+
+class GuardSynthesisError(EvidenceError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _atom_holds_row(
+    atom: LinearAtom,
+    variables: tuple[str, ...],
+    state: tuple[int, ...],
+) -> bool:
+    assignment = dict(zip(variables, state, strict=True))
+    total = sum(coefficient * assignment[name] for name, coefficient in atom.terms)
+    if atom.relation == "eq":
+        return total == atom.constant
+    if atom.relation == "le":
+        return total <= atom.constant
+    assert atom.modulus is not None
+    return (total - atom.constant) % atom.modulus == 0
+
+
+def _label_conflicts(rows: tuple[tuple[tuple[int, ...], str], ...]) -> int:
+    return sum(
+        left_label != right_label
+        for index, (_, left_label) in enumerate(rows)
+        for _, right_label in rows[index + 1 :]
+    )
+
+
+def build_reduced_decision_dag(
+    partition: CandidatePartition,
+    atoms: tuple[LinearAtom, ...],
+    limits: GuardLimits,
+    outside_members: tuple[tuple[int, ...], ...] = (),
+) -> LayerQuotient:
+    """Fit a deterministic reduced decision DAG to a promoted partition."""
+    if len(partition.classes) > limits.max_classes:
+        raise GuardSynthesisError("class_limit_exceeded")
+    examples = tuple(
+        sorted(
+            (
+                *(
+                    (member, class_spec.label)
+                    for class_spec in partition.classes
+                    for member in class_spec.members
+                ),
+                *((member, "outside") for member in outside_members),
+            )
+        )
+    )
+    if not examples or any(len(state) != len(partition.variables) for state, _ in examples):
+        raise ValueError("candidate partition members must match their variables")
+    if len({state for state, _ in examples}) != len(examples):
+        raise ValueError("candidate partition members must be disjoint")
+    candidates = tuple(sorted(set(atoms), key=canonical_bytes))
+
+    Tree = tuple[object, ...]
+
+    def learn(
+        rows: tuple[tuple[tuple[int, ...], str], ...],
+        available: tuple[LinearAtom, ...],
+    ) -> Tree:
+        labels = {label for _, label in rows}
+        if len(labels) == 1:
+            return ("leaf", next(iter(labels)))
+        ranked = []
+        parent_conflicts = _label_conflicts(rows)
+        for atom in available:
+            true_rows = tuple(
+                row for row in rows if _atom_holds_row(atom, partition.variables, row[0])
+            )
+            false_rows = tuple(row for row in rows if row not in true_rows)
+            if not true_rows or not false_rows:
+                continue
+            conflicts = _label_conflicts(true_rows) + _label_conflicts(false_rows)
+            if conflicts >= parent_conflicts:
+                continue
+            relation_rank = {"eq": 0, "le": 1, "congruent": 2}[atom.relation]
+            ranked.append(
+                (
+                    (
+                        conflicts,
+                        max(len(true_rows), len(false_rows)),
+                        len(atom.terms),
+                        sum(abs(coefficient) for _, coefficient in atom.terms),
+                        relation_rank,
+                        atom.modulus or 0,
+                        canonical_bytes(atom),
+                    ),
+                    atom,
+                    true_rows,
+                    false_rows,
+                )
+            )
+        if not ranked:
+            raise GuardSynthesisError("guard_separator_not_found")
+        _, chosen, true_rows, false_rows = min(ranked, key=lambda item: item[0])
+        remaining = tuple(atom for atom in available if atom != chosen)
+        return (
+            "node",
+            chosen,
+            learn(true_rows, remaining),
+            learn(false_rows, remaining),
+        )
+
+    root = learn(examples, candidates)
+
+    def tree_depth(tree: Tree) -> int:
+        if tree[0] == "leaf":
+            return 0
+        return 1 + max(
+            tree_depth(tree[2]),  # type: ignore[arg-type]
+            tree_depth(tree[3]),  # type: ignore[arg-type]
+        )
+
+    if tree_depth(root) > limits.max_depth:
+        raise GuardSynthesisError("decision_depth_exceeded")
+    unique_nodes: set[Tree] = set()
+
+    def collect(tree: Tree) -> None:
+        if tree[0] != "node" or tree in unique_nodes:
+            return
+        unique_nodes.add(tree)
+        collect(tree[2])  # type: ignore[arg-type]
+        collect(tree[3])  # type: ignore[arg-type]
+
+    collect(root)
+    if len(unique_nodes) > limits.max_nodes:
+        raise GuardSynthesisError("decision_node_limit_exceeded")
+
+    parents: dict[Tree, set[Tree]] = {tree: set() for tree in unique_nodes}
+    for tree in unique_nodes:
+        for child in (tree[2], tree[3]):
+            if child[0] == "node":
+                parents[child].add(tree)  # type: ignore[index]
+    ready = [tree for tree, incoming in parents.items() if not incoming]
+    ordered_nodes = []
+    while ready:
+        tree = min(ready, key=repr)
+        ready.remove(tree)
+        ordered_nodes.append(tree)
+        for child in (tree[2], tree[3]):
+            if child[0] != "node":
+                continue
+            parents[child].remove(tree)  # type: ignore[index]
+            if not parents[child]:  # type: ignore[index]
+                ready.append(child)  # type: ignore[arg-type]
+    if len(ordered_nodes) != len(unique_nodes):
+        raise EvidenceError("learned decision graph is cyclic")
+    identifiers = {tree: index for index, tree in enumerate(ordered_nodes)}
+
+    def target(tree: Tree) -> str:
+        if tree[0] == "leaf":
+            return "outside" if tree[1] == "outside" else f"class:{tree[1]}"
+        return f"node:{identifiers[tree]}"
+
+    nodes = tuple(
+        DecisionNode(
+            identifiers[tree],
+            tree[1],  # type: ignore[arg-type]
+            target(tree[2]),  # type: ignore[arg-type]
+            target(tree[3]),  # type: ignore[arg-type]
+        )
+        for tree in ordered_nodes
+    )
+    classes = tuple(
+        ClassSpec(
+            item.label,
+            "live" if item.allowed_next else "dead",
+            item.allowed_next,
+        )
+        for item in partition.classes
+    )
+    layer = LayerQuotient(
+        partition.layer,
+        partition.variables,
+        target(root),
+        classes,
+        nodes,
+    )
+    if layer_path_depth(layer) > limits.max_depth:
+        raise GuardSynthesisError("decision_depth_exceeded")
+    return layer
+
+
+@dataclass(frozen=True)
+class GuardCounterexample:
+    state: tuple[int, ...]
+    rejected_class: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class LayerSynthesis:
+    status: str
+    layer: int
+    quotient: LayerQuotient | None
+    witnesses: tuple[EdgeWitness, ...]
+    iterations: int
+    candidate_atom_count: int
+    stop_reason: str | None = None
+    counterexample: GuardCounterexample | None = None
+
+
+def _state_assignment(
+    variables: tuple[str, ...],
+    state: tuple[int, ...],
+) -> dict[str, int]:
+    return dict(zip(variables, state, strict=True))
+
+
+def _derive_separator_atom(
+    partition: CandidatePartition,
+    class_spec: CandidateClass,
+    state: tuple[int, ...],
+    limits: GuardLimits,
+) -> LinearAtom | None:
+    candidate = separate_counterexample(
+        tuple(
+            _state_assignment(partition.variables, member)
+            for member in class_spec.members
+        ),
+        _state_assignment(partition.variables, state),
+        partition.variables,
+        GrammarLimits(
+            coefficients=limits.coefficients,
+            moduli=limits.moduli,
+        ),
+    )
+    return None if candidate is None else candidate.atom
+
+
+def derive_guard_atoms(
+    partition: CandidatePartition,
+    counterexamples: tuple[GuardCounterexample, ...],
+    limits: GuardLimits,
+) -> tuple[LinearAtom, ...]:
+    """Derive frozen-grammar atoms separating promoted classes and CEGIS models."""
+    atoms = set()
+    for class_spec in partition.classes:
+        negatives = [
+            state
+            for other in partition.classes
+            if other.label != class_spec.label
+            for state in other.members
+        ]
+        negatives.extend(
+            item.state
+            for item in counterexamples
+            if item.rejected_class == class_spec.label
+        )
+        for state in sorted(set(negatives)):
+            atom = _derive_separator_atom(partition, class_spec, state, limits)
+            if atom is not None:
+                atoms.add(atom)
+    return tuple(sorted(atoms, key=canonical_bytes))
 
 
 @dataclass(frozen=True)
@@ -780,6 +1061,188 @@ def check_quotient_certificate(
     terminal = check_terminal_classes(inputs, certificate.layers[-1])
     obligations.extend(terminal.obligations)
     return QuotientCheck(terminal.status, tuple(obligations))
+
+
+def _extract_edge_witnesses(
+    inputs: T28Inputs,
+    current: LayerQuotient,
+    following: LayerQuotient,
+) -> tuple[EdgeWitness, ...]:
+    z3, transfer, variables, constraints, _ = _z3_layer_problem(inputs, following.layer)
+    input_mapping = _canonical_to_original(transfer, "input")
+    output_mapping = _canonical_to_original(transfer, "output")
+    source_classifier, source_codes = _z3_classifier(
+        z3, current, input_mapping, variables
+    )
+    target_classifier, target_codes = _z3_classifier(
+        z3, following, output_mapping, variables
+    )
+    frontier_names = set(transfer.input_variables) | set(transfer.output_variables)
+    local_names = tuple(sorted(set(variables) - frontier_names))
+    ordered_names = tuple(
+        dict.fromkeys((*transfer.input_variables, *transfer.output_variables, *local_names))
+    )
+    witnesses = []
+    for class_spec in current.classes:
+        for target_label in class_spec.allowed_next:
+            solver = z3.Solver()
+            solver.add(
+                *constraints,
+                source_classifier == source_codes[class_spec.label],
+                target_classifier == target_codes[target_label],
+            )
+            status = _check_status(z3, solver, "edge witness extraction")
+            if status != z3.sat:
+                raise EvidenceError(
+                    f"declared quotient edge has no exact model: "
+                    f"{class_spec.label}->{target_label}"
+                )
+            model = _lexicographic_model(
+                z3,
+                solver,
+                variables,
+                ordered_names,
+                inputs.manifest.base,
+            )
+            witnesses.append(
+                EdgeWitness(
+                    current.layer,
+                    class_spec.label,
+                    target_label,
+                    tuple(sorted(
+                        (canonical, model.eval(variables[original]).as_long())
+                        for canonical, original in input_mapping.items()
+                    )),
+                    tuple(sorted(
+                        (canonical, model.eval(variables[original]).as_long())
+                        for canonical, original in output_mapping.items()
+                    )),
+                    tuple(sorted(
+                        (name, model.eval(variables[name]).as_long())
+                        for name in local_names
+                    )),
+                )
+            )
+    return tuple(witnesses)
+
+
+def _fallback_counterexample(partition: CandidatePartition, reason: str) -> GuardCounterexample:
+    first = partition.classes[0]
+    other = next(item for item in partition.classes[1:] if item.members)
+    return GuardCounterexample(other.members[0], first.label, reason)
+
+
+def synthesize_layer(
+    inputs: T28Inputs,
+    partition: CandidatePartition,
+    following: LayerQuotient,
+    limits: GuardLimits,
+) -> LayerSynthesis:
+    """Refine one promoted quotient partition from exact semantic models."""
+    counterexamples: tuple[GuardCounterexample, ...] = ()
+    atoms = derive_guard_atoms(partition, (), limits)
+    atom_count = len(atoms)
+    iteration = 0
+    while True:
+        iteration += 1
+        try:
+            quotient = build_reduced_decision_dag(
+                partition,
+                atoms,
+                limits,
+                outside_members=tuple(item.state for item in counterexamples),
+            )
+        except GuardSynthesisError as error:
+            return LayerSynthesis(
+                "STOP",
+                partition.layer,
+                None,
+                (),
+                iteration,
+                atom_count,
+                error.reason,
+                counterexamples[-1]
+                if counterexamples
+                else _fallback_counterexample(partition, error.reason),
+            )
+        coverage = check_reachable_coverage(inputs, quotient)
+        if coverage.status != "PASS":
+            raise EvidenceError("learned quotient misses its promoted training states")
+        witnesses = _extract_edge_witnesses(inputs, quotient, following)
+        exact = check_layer_semantics(inputs, quotient, following, witnesses)
+        if exact.status == "PASS":
+            return LayerSynthesis(
+                "PASS",
+                partition.layer,
+                quotient,
+                witnesses,
+                iteration,
+                atom_count,
+            )
+        obligation = exact.obligations[-1]
+        if obligation.counterexample is None or "input" not in obligation.counterexample:
+            raise EvidenceError("failed exact guard check omitted its input counterexample")
+        state = tuple(
+            obligation.counterexample["input"][variable]
+            for variable in partition.variables
+        )
+        counterexample = GuardCounterexample(
+            state,
+            obligation.class_label,
+            obligation.kind,
+        )
+        if counterexample in counterexamples:
+            return LayerSynthesis(
+                "STOP",
+                partition.layer,
+                None,
+                (),
+                iteration,
+                atom_count,
+                "counterexample_cycle",
+                counterexample,
+            )
+        class_spec = next(
+            item
+            for item in partition.classes
+            if item.label == counterexample.rejected_class
+        )
+        atom = _derive_separator_atom(
+            partition,
+            class_spec,
+            counterexample.state,
+            limits,
+        )
+        if atom is None:
+            return LayerSynthesis(
+                "STOP",
+                partition.layer,
+                None,
+                (),
+                iteration,
+                atom_count,
+                "guard_separator_not_found",
+                counterexample,
+            )
+        atoms = tuple(sorted({*atoms, atom}, key=canonical_bytes))
+        atom_count = len(atoms)
+        counterexamples = (*counterexamples, counterexample)
+
+
+def build_layer31_milestone(root: Path) -> LayerSynthesis:
+    """Prove or finitely stop the exact four-class layer-31 milestone."""
+    inputs = load_t28_inputs(root)
+    partitions = discover_reachable_quotient(inputs, 31, 32)
+    partition = partitions[0]
+    if len(partition.classes) != 4 or sorted(
+        len(item.members) for item in partition.classes
+    ) != [1, 2, 3, 12]:
+        raise EvidenceError("layer-31 candidate partition changed")
+    terminal = build_terminal_seed(inputs)
+    terminal_check = check_terminal_classes(inputs, terminal)
+    if terminal_check.status != "PASS":
+        raise EvidenceError("terminal seed failed before layer-31 synthesis")
+    return synthesize_layer(inputs, partition, terminal, GuardLimits())
 
 
 def load_t28_inputs(

@@ -24,13 +24,20 @@ from lychrel_quotient_automaton import (  # noqa: E402
 )
 from t27_base19_invariant_lift import EvidenceError, canonicalize_state  # noqa: E402
 from t28_base19_tail_quotient import (  # noqa: E402
+    CandidateClass,
+    CandidatePartition,
     ExplicitTransfer,
+    GuardLimits,
+    GuardSynthesisError,
+    build_layer31_milestone,
+    build_reduced_decision_dag,
     build_terminal_seed,
     check_explicit_layer,
     check_layer_semantics,
     check_quotient_certificate,
     check_reachable_coverage,
     check_terminal_classes,
+    derive_guard_atoms,
     discover_reachable_quotient,
     explicit_relation_payload,
     load_t28_inputs,
@@ -591,3 +598,93 @@ def test_certificate_checker_stops_at_a_false_layer_semantics() -> None:
         "dead_has_no_successor",
     ]
     assert check.obligations[-1].counterexample is not None
+
+
+def candidate_partition_fixture() -> CandidatePartition:
+    return CandidatePartition(
+        layer=31,
+        variables=("x", "y"),
+        classes=(
+            CandidateClass("DEAD", (), ((0, 0), (0, 1))),
+            CandidateClass("Q00", ("T0",), ((1, 0), (1, 1))),
+        ),
+    )
+
+
+def test_guard_learner_builds_a_reduced_two_class_dag() -> None:
+    """Choosing the wrong separator must misclassify a literal fixture row."""
+    learned = build_reduced_decision_dag(
+        candidate_partition_fixture(),
+        atoms=(LinearAtom("eq", (("x", 1),), 0),),
+        limits=GuardLimits(),
+    )
+
+    assert len(learned.nodes) == 1
+    assert {
+        classify_state(learned, {"x": x, "y": y}) for x, y in ((0, 0), (0, 1))
+    } == {"DEAD"}
+    assert {
+        classify_state(learned, {"x": x, "y": y}) for x, y in ((1, 0), (1, 1))
+    } == {"Q00"}
+
+
+def test_guard_learner_is_canonical_under_atom_input_order() -> None:
+    """Depending on atom insertion order must make evidence nondeterministic."""
+    atoms = (
+        LinearAtom("eq", (("y", 1),), 0),
+        LinearAtom("eq", (("x", 1),), 0),
+    )
+
+    left = build_reduced_decision_dag(candidate_partition_fixture(), atoms, GuardLimits())
+    right = build_reduced_decision_dag(
+        candidate_partition_fixture(), tuple(reversed(atoms)), GuardLimits()
+    )
+
+    assert canonical_bytes(left) == canonical_bytes(right)
+
+
+def test_guard_learner_reports_an_inseparable_partition() -> None:
+    """Inventing a branch must hide that the bounded atom pool is insufficient."""
+    with pytest.raises(GuardSynthesisError) as captured:
+        build_reduced_decision_dag(
+            candidate_partition_fixture(),
+            atoms=(LinearAtom("eq", (("y", 1),), 0),),
+            limits=GuardLimits(),
+        )
+
+    assert captured.value.reason == "guard_separator_not_found"
+
+
+def test_guard_learner_enforces_the_depth_limit() -> None:
+    """Ignoring depth must admit a decision tree outside the readability gate."""
+    with pytest.raises(GuardSynthesisError) as captured:
+        build_reduced_decision_dag(
+            candidate_partition_fixture(),
+            atoms=(LinearAtom("eq", (("x", 1),), 0),),
+            limits=GuardLimits(max_depth=0),
+        )
+
+    assert captured.value.reason == "decision_depth_exceeded"
+
+
+def test_guard_atom_derivation_finds_a_literal_class_separator() -> None:
+    """Dropping exact separator derivation must leave the fixture inseparable."""
+    atoms = derive_guard_atoms(candidate_partition_fixture(), (), GuardLimits())
+
+    assert LinearAtom("eq", (("x", 1),), 0) in atoms
+    assert atoms == tuple(sorted(set(atoms), key=canonical_bytes))
+    assert all(
+        max(abs(coefficient) for _, coefficient in atom.terms) <= 3 for atom in atoms
+    )
+    assert all(atom.modulus is None or 2 <= atom.modulus <= 20 for atom in atoms)
+
+
+def test_layer31_experiment_has_a_scoped_exact_outcome() -> None:
+    """An incomplete search must never be serialized as a layer-31 theorem."""
+    result = build_layer31_milestone(ROOT)
+
+    assert result.status == "STOP"
+    assert result.quotient is None
+    assert result.stop_reason == "decision_depth_exceeded"
+    assert result.counterexample is not None
+    assert result.counterexample.reason == "dead_has_no_successor"
