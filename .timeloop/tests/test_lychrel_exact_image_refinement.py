@@ -28,9 +28,16 @@ from lychrel_reachability_separator import SemanticWitness  # noqa: E402
 from t30_base19_exact_image_refinement import (  # noqa: E402
     T29_ARTIFACT_DIGESTS,
     EvidenceError,
+    FiniteBoundaryCheck,
+    RefinedSemanticCheck,
     build_q0,
+    build_t30_primary,
+    check_finite_boundary,
     check_predecessor_implication,
+    check_refined_semantics,
+    decide_t30_gate,
     load_t30_inputs,
+    render_t30_report,
 )
 
 VARIABLES = (
@@ -403,3 +410,102 @@ def test_predecessor_implication_is_byte_deterministic() -> None:
     assert check_predecessor_implication(inputs, q0) == check_predecessor_implication(
         inputs, q0
     )
+
+
+def test_real_q0_passes_the_frozen_finite_boundary() -> None:
+    inputs = load_t30_inputs(ROOT)
+    result = check_finite_boundary(inputs, build_q0(inputs.variables))
+    assert result.status == "PASS"
+    assert result.q0_positive_count == 12
+    assert result.q0_trace_accepted == 0
+    assert result.q0_live_count == 6
+    assert result.q0_leak_holds is False
+    assert result.combined_failures == ()
+
+
+def test_real_refined_successor_query_is_unsat() -> None:
+    inputs = load_t30_inputs(ROOT)
+    result = check_refined_semantics(inputs, build_q0(inputs.variables))
+    assert result.status == "UNSAT"
+    assert result.equation_count == 12
+    assert result.witness is None
+
+
+def test_two_equation_semantic_control_returns_complete_witness() -> None:
+    inputs = load_t30_inputs(ROOT)
+    q0 = build_q0(inputs.variables)
+    control = LayerPredicate(
+        31,
+        q0.variables,
+        (Conjunction(q0.clauses[0].atoms[:2]),),
+    )
+    result = check_refined_semantics(inputs, control)
+    assert result.status == "SAT"
+    assert result.witness is not None
+    assert len(result.witness.input_state) == 14
+    assert len(result.witness.output_state) == 14
+
+
+def test_gate_pass_keeps_s29_and_q0_separate() -> None:
+    inputs = load_t30_inputs(ROOT)
+    q0 = build_q0(inputs.variables)
+    implication = check_predecessor_implication(inputs, q0)
+    finite = check_finite_boundary(inputs, q0)
+    semantic = check_refined_semantics(inputs, q0)
+    evidence, certificate = decide_t30_gate(
+        inputs, implication, finite, semantic
+    )
+    assert evidence["status"] == "EXACT_IMAGE_REFINEMENT_PASS"
+    assert certificate is not None
+    assert certificate.q0 == q0
+    assert "s29" not in certificate.to_payload()
+    assert dict(certificate.t29_artifact_digests)["certificate"] == (
+        T29_ARTIFACT_DIGESTS["certificate"]
+    )
+
+
+def test_gate_stops_at_the_first_failed_stage() -> None:
+    inputs = load_t30_inputs(ROOT)
+    q0 = build_q0(inputs.variables)
+    implication = check_predecessor_implication(inputs, q0)
+    finite = check_finite_boundary(inputs, q0)
+    semantic = check_refined_semantics(inputs, q0)
+
+    failed_finite = FiniteBoundaryCheck(
+        "STOP",
+        finite.q0_positive_count - 1,
+        finite.q0_trace_accepted,
+        finite.q0_live_count,
+        finite.q0_leak_holds,
+        (("positive", inputs.dataset.positives[0]),),
+    )
+    evidence, certificate = decide_t30_gate(
+        inputs, implication, failed_finite, semantic
+    )
+    assert evidence["stop_reason"] == "finite_boundary_failure"
+    assert certificate is not None
+    assert certificate.semantic_status == "NOT_RUN"
+
+    failed_semantic = RefinedSemanticCheck(
+        "SAT",
+        semantic.equation_count,
+        check_refined_semantics(
+            inputs,
+            LayerPredicate(31, q0.variables, (Conjunction(q0.clauses[0].atoms[:2]),)),
+        ).witness,
+    )
+    evidence, certificate = decide_t30_gate(
+        inputs, implication, finite, failed_semantic
+    )
+    assert evidence["stop_reason"] == "semantic_successor_found"
+    assert certificate is not None
+    assert certificate.semantic_status == "SAT"
+
+
+def test_primary_builder_and_report_state_the_bounded_claim() -> None:
+    evidence, certificate = build_t30_primary(ROOT)
+    assert evidence["status"] == "EXACT_IMAGE_REFINEMENT_PASS"
+    assert certificate is not None
+    report = render_t30_report(evidence)
+    assert "promoted layer-30 frontier" in report
+    assert "EXACT_IMAGE_REFINEMENT_PASS" in report

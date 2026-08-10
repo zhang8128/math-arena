@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
@@ -13,7 +14,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from lychrel_exact_image_refinement import PredecessorImageObligation  # noqa: E402
+from lychrel_exact_image_refinement import (  # noqa: E402
+    ExactImageRefinementCertificate,
+    PredecessorImageObligation,
+)
 from lychrel_invariant_certificate import (  # noqa: E402
     Conjunction,
     LayerPredicate,
@@ -28,7 +32,10 @@ from lychrel_reachability_separator import (  # noqa: E402
     parse_counterexample_trace,
     parse_separator_certificate,
 )
-from t27_base19_invariant_lift import canonicalize_state  # noqa: E402
+from t27_base19_invariant_lift import (  # noqa: E402
+    canonical_variable,
+    canonicalize_state,
+)
 from t29_base19_reachability_separator import (  # noqa: E402
     T29Inputs,
     build_separator_dataset,
@@ -102,6 +109,58 @@ class PredecessorImplicationCheck:
                 raise ValueError("implication SAT must end at the violating obligation")
         else:
             raise ValueError("implication status must be SAT or UNSAT")
+
+
+@dataclass(frozen=True)
+class FiniteBoundaryCheck:
+    status: str
+    q0_positive_count: int
+    q0_trace_accepted: int
+    q0_live_count: int
+    q0_leak_holds: bool
+    combined_failures: tuple[tuple[str, tuple[int, ...]], ...]
+
+    def __post_init__(self) -> None:
+        counts = (
+            self.q0_positive_count,
+            self.q0_trace_accepted,
+            self.q0_live_count,
+        )
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in counts
+        ):
+            raise ValueError("finite counts must be nonnegative integers")
+        if not isinstance(self.q0_leak_holds, bool):
+            raise ValueError("leak result must be boolean")
+        expected_pass = (
+            counts == (12, 0, 6)
+            and not self.q0_leak_holds
+            and not self.combined_failures
+        )
+        if self.status == "PASS" and not expected_pass:
+            raise ValueError("finite PASS requires the exact frozen boundary")
+        if self.status == "STOP" and expected_pass:
+            raise ValueError("finite STOP requires a failed boundary")
+        if self.status not in {"PASS", "STOP"}:
+            raise ValueError("finite status must be PASS or STOP")
+
+
+@dataclass(frozen=True)
+class RefinedSemanticCheck:
+    status: str
+    equation_count: int
+    witness: SemanticWitness | None
+
+    def __post_init__(self) -> None:
+        if self.equation_count != 12:
+            raise ValueError("refined semantics requires exactly 12 equations")
+        if self.status == "SAT" and self.witness is None:
+            raise ValueError("semantic SAT requires a complete witness")
+        if self.status == "UNSAT" and self.witness is not None:
+            raise ValueError("semantic UNSAT cannot carry a witness")
+        if self.status not in {"SAT", "UNSAT"}:
+            raise ValueError("semantic status must be SAT or UNSAT")
 
 
 def _read_mapping(path: Path, context: str) -> tuple[bytes, Mapping[str, object]]:
@@ -568,3 +627,400 @@ def check_predecessor_implication(
                 _semantic_witness(violations[0], transfer),
             )
     return PredecessorImplicationCheck("UNSAT", tuple(obligations), None)
+
+
+def check_finite_boundary(
+    inputs: T30Inputs,
+    q0: LayerPredicate,
+) -> FiniteBoundaryCheck:
+    """Replay Q0 and the separate S29 conjunction on all frozen finite rows."""
+    if q0.layer != 31 or q0.variables != inputs.variables:
+        raise EvidenceError("Q0 scope differs from the frozen finite dataset")
+    s29 = inputs.t29_certificate.predicate
+
+    def assignment(state: tuple[int, ...]) -> dict[str, int]:
+        return dict(zip(inputs.variables, state, strict=True))
+
+    q0_positive_count = sum(
+        evaluate_predicate(q0, assignment(state)) for state in inputs.dataset.positives
+    )
+    q0_trace_accepted = sum(
+        evaluate_predicate(q0, assignment(state))
+        for state in inputs.dataset.trace_negatives
+    )
+    q0_live_count = sum(
+        evaluate_predicate(q0, assignment(state))
+        for state in inputs.dataset.live_controls
+    )
+    leak_assignment = dict(inputs.t29_leak)
+    q0_leak_holds = evaluate_predicate(q0, leak_assignment)
+    failures = []
+    for state in inputs.dataset.positives:
+        state_assignment = assignment(state)
+        if not (
+            evaluate_predicate(s29, state_assignment)
+            and evaluate_predicate(q0, state_assignment)
+        ):
+            failures.append(("positive", state))
+    for state in inputs.dataset.trace_negatives:
+        state_assignment = assignment(state)
+        if evaluate_predicate(q0, state_assignment):
+            failures.append(("trace_negative_q0", state))
+        elif evaluate_predicate(s29, state_assignment) and evaluate_predicate(
+            q0, state_assignment
+        ):
+            failures.append(("trace_negative_combined", state))
+    for state in inputs.dataset.live_controls:
+        state_assignment = assignment(state)
+        if evaluate_predicate(s29, state_assignment) and evaluate_predicate(
+            q0, state_assignment
+        ):
+            failures.append(("live_control", state))
+    if q0_leak_holds:
+        failures.append(
+            ("semantic_leak", tuple(leak_assignment[name] for name in inputs.variables))
+        )
+    passed = (
+        q0_positive_count == 12
+        and q0_trace_accepted == 0
+        and q0_live_count == 6
+        and not q0_leak_holds
+        and not failures
+    )
+    return FiniteBoundaryCheck(
+        "PASS" if passed else "STOP",
+        q0_positive_count,
+        q0_trace_accepted,
+        q0_live_count,
+        q0_leak_holds,
+        tuple(failures),
+    )
+
+
+def _z3_atom(
+    z3: object,
+    atom: LinearAtom,
+    canonical_to_original: Mapping[str, str],
+    variables: Mapping[str, object],
+) -> object:
+    try:
+        total = sum(
+            coefficient * variables[canonical_to_original[name]]
+            for name, coefficient in atom.terms
+        )
+    except KeyError as error:
+        raise EvidenceError(f"predicate references unknown variable: {error.args[0]}") from error
+    if atom.relation == "eq":
+        return total == atom.constant
+    if atom.relation == "le":
+        return total <= atom.constant
+    if atom.relation == "congruent":
+        assert atom.modulus is not None
+        return (total - atom.constant) % atom.modulus == 0
+    raise EvidenceError(f"unsupported predicate relation: {atom.relation}")
+
+
+def _z3_predicate(
+    z3: object,
+    predicate: LayerPredicate,
+    canonical_to_original: Mapping[str, str],
+    variables: Mapping[str, object],
+) -> object:
+    return z3.Or(
+        *(
+            z3.And(
+                *(
+                    _z3_atom(z3, atom, canonical_to_original, variables)
+                    for atom in clause.atoms
+                )
+            )
+            for clause in predicate.clauses
+        )
+    )
+
+
+def _lexicographic_model(
+    z3: object,
+    solver: object,
+    variables: Mapping[str, object],
+    base: int,
+) -> tuple[tuple[str, int], ...]:
+    if _solver_status(z3, solver, "semantic witness search") != z3.sat:
+        raise EvidenceError("cannot canonicalize an UNSAT semantic witness")
+    for name, variable in sorted(variables.items()):
+        if name.startswith("c:"):
+            domain = range(2)
+        else:
+            lower = 1 if name.startswith("digit:p") and ":f0:d0" in name else 0
+            domain = range(lower, base)
+        for value in domain:
+            solver.push()
+            solver.add(variable == value)
+            status = _solver_status(z3, solver, "semantic witness minimization")
+            solver.pop()
+            if status == z3.sat:
+                solver.add(variable == value)
+                break
+        else:
+            raise EvidenceError(f"semantic witness variable has no value: {name}")
+    if _solver_status(z3, solver, "semantic witness finalization") != z3.sat:
+        raise EvidenceError("canonical semantic witness became inconsistent")
+    model = solver.model()
+    return tuple(
+        (name, model.eval(variable, model_completion=False).as_long())
+        for name, variable in sorted(variables.items())
+    )
+
+
+def check_refined_semantics(
+    inputs: T30Inputs,
+    q0: LayerPredicate,
+) -> RefinedSemanticCheck:
+    """Check S29 and Q0 separately against the exact layer-32 relation."""
+    if q0.layer != 31 or q0.variables != inputs.variables:
+        raise EvidenceError("Q0 scope differs from layer-32 input")
+    z3, base_solver, variables, transfer, equations = _layer_relation(inputs, 32)
+    input_mapping = {
+        canonical_variable(name, transfer, "input"): name
+        for name in transfer.input_variables
+    }
+    if tuple(sorted(input_mapping)) != inputs.variables:
+        raise EvidenceError("layer-32 input scope differs from Q0")
+    s29 = inputs.t29_certificate.predicate
+    solver = z3.Solver()
+    solver.add(*base_solver.assertions())
+    solver.add(
+        _z3_predicate(z3, s29, input_mapping, variables),
+        _z3_predicate(z3, q0, input_mapping, variables),
+    )
+    status = _solver_status(z3, solver, "refined semantic query")
+    if status == z3.unsat:
+        return RefinedSemanticCheck("UNSAT", len(equations), None)
+    assignment = _lexicographic_model(
+        z3,
+        solver,
+        variables,
+        inputs.t29_inputs.t28_inputs.manifest.base,
+    )
+    values = dict(assignment)
+    if any(
+        equation.residual(values, inputs.t29_inputs.t28_inputs.manifest.base) != 0
+        for equation in equations
+    ):
+        raise EvidenceError("semantic witness failed exact equation replay")
+    return RefinedSemanticCheck(
+        "SAT", len(equations), _semantic_witness(assignment, transfer)
+    )
+
+
+def _witness_payload(witness: SemanticWitness | None) -> object:
+    return None if witness is None else witness.to_payload()
+
+
+def _obligation_payload(
+    obligations: tuple[PredecessorImageObligation, ...],
+) -> list[dict[str, object]]:
+    return [obligation.to_payload() for obligation in obligations]
+
+
+def decide_t30_gate(
+    inputs: T30Inputs,
+    implication: PredecessorImplicationCheck,
+    finite: FiniteBoundaryCheck | None,
+    semantic: RefinedSemanticCheck | None,
+) -> tuple[dict[str, object], ExactImageRefinementCertificate]:
+    """Select the first mathematical failure and construct canonical evidence."""
+    if implication.status == "SAT":
+        status = "EXACT_IMAGE_REFINEMENT_STOP"
+        stop_reason = "predecessor_implication_counterexample"
+        finite_status = "NOT_RUN"
+        semantic_status = "NOT_RUN"
+        semantic_witness = None
+    elif finite is None:
+        raise EvidenceError("finite boundary result is missing")
+    elif finite.status == "STOP":
+        status = "EXACT_IMAGE_REFINEMENT_STOP"
+        stop_reason = "finite_boundary_failure"
+        finite_status = "STOP"
+        semantic_status = "NOT_RUN"
+        semantic_witness = None
+    elif semantic is None:
+        raise EvidenceError("semantic result is missing")
+    elif semantic.status == "SAT":
+        status = "EXACT_IMAGE_REFINEMENT_STOP"
+        stop_reason = "semantic_successor_found"
+        finite_status = "PASS"
+        semantic_status = "SAT"
+        semantic_witness = semantic.witness
+    else:
+        status = "EXACT_IMAGE_REFINEMENT_PASS"
+        stop_reason = None
+        finite_status = "PASS"
+        semantic_status = "UNSAT"
+        semantic_witness = None
+
+    q0 = build_q0(inputs.variables)
+    certificate = ExactImageRefinementCertificate(
+        schema="t30-base19-exact-image-refinement-certificate-v1",
+        status=status,
+        base=19,
+        removed=_REMOVED,
+        source_digests=inputs.source_digests,
+        t29_artifact_digests=inputs.t29_artifact_digests,
+        q0=q0,
+        predecessor_obligations=implication.obligations,
+        implication_status=implication.status,
+        finite_status=finite_status,
+        semantic_status=semantic_status,
+        implication_witness=implication.witness,
+        semantic_witness=semantic_witness,
+    )
+    layer31 = inputs.t29_inputs.t28_inputs.frontier.layers_by_number[31]
+    evidence: dict[str, object] = {
+        "schema": "t30-base19-exact-image-refinement-evidence-v1",
+        "status": status,
+        "stop_reason": stop_reason,
+        "base": 19,
+        "removed": _REMOVED,
+        "source_digests": dict(inputs.source_digests),
+        "t29_artifact_digests": dict(inputs.t29_artifact_digests),
+        "t29_certificate_sha256": T29_ARTIFACT_DIGESTS["certificate"],
+        "q0": q0.to_payload(),
+        "implication": {
+            "status": implication.status,
+            "predecessor_count": len(implication.obligations),
+            "successor_bearing_predecessor_count": sum(
+                obligation.output_count > 0 for obligation in implication.obligations
+            ),
+            "exact_model_count": sum(
+                obligation.exact_model_count for obligation in implication.obligations
+            ),
+            "distinct_output_count": layer31.output_state_count,
+            "obligations": _obligation_payload(implication.obligations),
+            "witness": _witness_payload(implication.witness),
+        },
+        "finite": None
+        if finite is None
+        else {
+            "status": finite.status,
+            "q0_positive_count": finite.q0_positive_count,
+            "q0_trace_accepted": finite.q0_trace_accepted,
+            "q0_live_count": finite.q0_live_count,
+            "q0_leak_holds": finite.q0_leak_holds,
+            "combined_failures": [
+                [label, list(state)] for label, state in finite.combined_failures
+            ],
+        },
+        "semantic": None
+        if semantic is None
+        else {
+            "status": semantic.status,
+            "equation_count": semantic.equation_count,
+            "witness": _witness_payload(semantic.witness),
+        },
+        "certificate_sha256": hashlib.sha256(
+            canonical_bytes(certificate.to_payload())
+        ).hexdigest(),
+        "claim_boundary": [
+            "the frozen base-19 radial obstruction only",
+            "reachability premise is the 18 promoted layer-30 frontier states",
+            "the exact layer-30-to-31 and layer-31-to-32 local relations only",
+        ],
+        "limitations": [
+            "No arbitrary-predecessor implication is claimed.",
+            "No compact characterization of the layer-30 premise is claimed.",
+            "No lower-layer, symbolic-base, topology, publication, or Lean work ran.",
+        ],
+        "prism": {
+            "status_request": "mathematical_frame_operation_failed",
+            "diverse_frame_request": "mathematical_frame_operation_failed",
+            "usable_artifact": False,
+            "mathematical_premise": False,
+        },
+        "primary_sources": [
+            "https://arxiv.org/abs/2405.01183",
+            "https://arxiv.org/abs/0906.4492",
+            "https://arxiv.org/abs/2504.08617",
+        ],
+    }
+    return evidence, certificate
+
+
+def build_t30_primary(
+    root: Path,
+) -> tuple[dict[str, object], ExactImageRefinementCertificate]:
+    """Run the three ordered primary T30 gates."""
+    inputs = load_t30_inputs(root)
+    q0 = build_q0(inputs.variables)
+    implication = check_predecessor_implication(inputs, q0)
+    if implication.status == "SAT":
+        return decide_t30_gate(inputs, implication, None, None)
+    finite = check_finite_boundary(inputs, q0)
+    if finite.status == "STOP":
+        return decide_t30_gate(inputs, implication, finite, None)
+    semantic = check_refined_semantics(inputs, q0)
+    return decide_t30_gate(inputs, implication, finite, semantic)
+
+
+def render_t30_report(evidence: Mapping[str, object]) -> str:
+    """Render the bounded T30 outcome without widening its claim."""
+    status = str(evidence.get("status"))
+    implication = evidence.get("implication")
+    finite = evidence.get("finite")
+    semantic = evidence.get("semantic")
+    lines = [
+        "# Base-19 Exact-Image Refinement Report",
+        "",
+        f"Status: **{status}**",
+        "",
+        "The reachability premise is exactly the promoted layer-30 frontier; ",
+        "no claim is made for arbitrary predecessor interfaces.",
+        "",
+        "## Exact gates",
+        "",
+        f"- Earlier-layer implication: `{implication}`",
+        f"- Frozen finite boundary: `{finite}`",
+        f"- Refined layer-32 semantics: `{semantic}`",
+        "",
+        "`S29` and `Q0` remain separately serialized predicates.",
+        "The result does not extend to lower layers, other bases, other topologies,",
+        "formalization, or publication claims.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(canonical_bytes(payload) + b"\n")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=ROOT.parent)
+    parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--certificate", type=Path, required=True)
+    parser.add_argument("--report", type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        evidence, certificate = build_t30_primary(args.root)
+    except EvidenceError as error:
+        evidence = {
+            "schema": "t30-base19-exact-image-refinement-evidence-v1",
+            "status": "EXACT_IMAGE_REFINEMENT_STOP",
+            "stop_reason": "source_binding_failure",
+            "error": str(error),
+        }
+        certificate = None
+    _write_json(args.evidence, evidence)
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(render_t30_report(evidence), encoding="utf-8")
+    if certificate is None:
+        args.certificate.unlink(missing_ok=True)
+    else:
+        _write_json(args.certificate, certificate.to_payload())
+    return 0 if evidence["status"] == "EXACT_IMAGE_REFINEMENT_PASS" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
