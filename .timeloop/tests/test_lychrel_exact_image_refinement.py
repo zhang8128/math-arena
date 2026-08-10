@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +25,12 @@ from lychrel_invariant_certificate import (  # noqa: E402
     canonical_bytes,
 )
 from lychrel_reachability_separator import SemanticWitness  # noqa: E402
+from t30_base19_exact_image_refinement import (  # noqa: E402
+    T29_ARTIFACT_DIGESTS,
+    EvidenceError,
+    build_q0,
+    load_t30_inputs,
+)
 
 VARIABLES = (
     "D0",
@@ -262,3 +269,76 @@ def test_pass_requires_exactly_eighteen_obligations() -> None:
             certificate,
             predecessor_obligations=certificate.predecessor_obligations[:-1],
         )
+
+
+def test_q0_is_the_exact_five_atom_closed_grammar_candidate() -> None:
+    inputs = load_t30_inputs(ROOT)
+    q0 = build_q0(inputs.variables)
+    atoms = q0.clauses[0].atoms
+    assert q0.layer == 31
+    assert len(q0.clauses) == 1
+    assert len(atoms) == 5
+    assert {atom.relation for atom in atoms} == {"eq"}
+    assert max(abs(c) for atom in atoms for _, c in atom.terms) == 3
+    assert max(len(atom.terms) for atom in atoms) == 11
+    assert sum(len(atom.terms) for atom in atoms) == 34
+    assert q0 == q0_fixture()
+
+
+def test_t30_adapter_binds_the_complete_t29_boundary() -> None:
+    inputs = load_t30_inputs(ROOT)
+    assert len(inputs.dataset.positives) == 12
+    assert len(inputs.dataset.trace_negatives) == 221
+    assert len(inputs.dataset.live_controls) == 6
+    assert dict(inputs.t29_artifact_digests) == T29_ARTIFACT_DIGESTS
+    assert dict(inputs.t29_leak) == {
+        "D0": 5,
+        "D1": 6,
+        "L0": 0,
+        "L1": 1,
+        "L2": 1,
+        "L3": 0,
+        "L4": 1,
+        "L5": 1,
+        "R0": 0,
+        "R1": 0,
+        "R2": 1,
+        "R3": 0,
+        "R4": 0,
+        "R5": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("override", "relative_path"),
+    [
+        ("evidence_path", ".timeloop/runs/t29_base19_reachability_separator.json"),
+        (
+            "trace_path",
+            ".timeloop/runs/t29_base19_reachability_separator_trace.json",
+        ),
+        (
+            "dataset_path",
+            ".timeloop/runs/t29_base19_reachability_separator_dataset.json",
+        ),
+        (
+            "certificate_path",
+            ".timeloop/runs/t29_base19_reachability_separator_certificate.json",
+        ),
+        (
+            "independent_path",
+            ".timeloop/runs/t29_base19_reachability_separator_independent.json",
+        ),
+    ],
+)
+def test_t30_adapter_rejects_each_raw_t29_mutation(
+    tmp_path: Path,
+    override: str,
+    relative_path: str,
+) -> None:
+    payload = json.loads((ROOT / relative_path).read_text(encoding="utf-8"))
+    payload["mutation"] = True
+    mutated = tmp_path / Path(relative_path).name
+    mutated.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(EvidenceError, match="raw SHA-256"):
+        load_t30_inputs(ROOT, **{override: mutated})
