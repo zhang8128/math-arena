@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
+import importlib.util
+import json
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -9,6 +13,20 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+INDEPENDENT = ROOT / ".timeloop/runs/t33_base19_safe_region_cover_independent.py"
+EQUATIONS = ROOT / "publication/base19-radial/instance/equations.json"
+FRONTIER = ROOT / "publication/base19-radial/certificates/minimal-core-frontier.json"
+T27_EVIDENCE = ROOT / ".timeloop/runs/t27_base19_invariant_lift.json"
+T28_EVIDENCE = ROOT / ".timeloop/runs/t28_base19_tail_quotient.json"
+T28_INDEPENDENT = ROOT / ".timeloop/runs/t28_base19_tail_quotient_independent.json"
+T29_TRACE = ROOT / ".timeloop/runs/t29_base19_reachability_separator_trace.json"
+T29_DATASET = ROOT / ".timeloop/runs/t29_base19_reachability_separator_dataset.json"
+T29_EVIDENCE = ROOT / ".timeloop/runs/t29_base19_reachability_separator.json"
+T29_CERTIFICATE = ROOT / ".timeloop/runs/t29_base19_reachability_separator_certificate.json"
+T29_INDEPENDENT = ROOT / ".timeloop/runs/t29_base19_reachability_separator_independent.json"
+T30_EVIDENCE = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement.json"
+T30_CERTIFICATE = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_certificate.json"
+T30_INDEPENDENT = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_independent.json"
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
 
@@ -350,3 +368,220 @@ def test_t33_adapter_rejects_a_mutated_t32_source(tmp_path: Path) -> None:
     )
     with pytest.raises(EvidenceError, match="T32 runner raw SHA-256 changed"):
         _load_t33_inputs_uncached(ROOT, t32_runner_path=changed)
+
+
+def load_independent_module() -> object:
+    spec = importlib.util.spec_from_file_location("t33_independent_test", INDEPENDENT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_independent_checker_starts_under_isolated_python() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-I", str(INDEPENDENT), "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert "milestone" in completed.stdout
+    assert "full" in completed.stdout
+
+
+def test_independent_checker_has_only_standard_library_imports() -> None:
+    tree = ast.parse(INDEPENDENT.read_text(encoding="utf-8"))
+    roots = {
+        alias.name.split(".", 1)[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    roots.update(
+        node.module.split(".", 1)[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    )
+    assert roots <= {
+        "__future__",
+        "argparse",
+        "dataclasses",
+        "hashlib",
+        "itertools",
+        "json",
+        "math",
+        "re",
+        "sys",
+        "pathlib",
+    }
+
+
+def test_independent_constraint_search_handles_literal_target_both_ways() -> None:
+    module = load_independent_module()
+    equation = {
+        "left": {"variable": "p0:f0:d1"},
+        "right": {"literal": 18},
+        "target": {"variable": "p0:f0:d2"},
+        "carry_in": None,
+        "carry_out": "c:p0:n0:col1",
+    }
+    domains = {
+        "digit:p0:f0:d1": set(range(19)),
+        "digit:p0:f0:d2": set(range(19)),
+        "c:p0:n0:col1": {0, 1},
+    }
+    constraint = module.allowed_equation_tuples(equation, domains, 19)
+    assert module.first_solution(domains, (constraint,)) == (
+        ("c:p0:n0:col1", 0),
+        ("digit:p0:f0:d1", 0),
+        ("digit:p0:f0:d2", 18),
+    )
+    reverse = {name: set(values) for name, values in domains.items()}
+    reverse["digit:p0:f0:d2"] = {0}
+    assert module.first_solution(reverse, (constraint,)) == (
+        ("c:p0:n0:col1", 1),
+        ("digit:p0:f0:d1", 1),
+        ("digit:p0:f0:d2", 0),
+    )
+
+
+def test_independent_affine_atoms_cover_all_relations() -> None:
+    module = load_independent_module()
+    assignment = {name: 0 for name in P30_VARIABLES}
+    assignment["D0"] = 7
+    assert module.affine_atom_holds(
+        {"relation": "eq", "terms": [["L0", 1], ["R0", -1]], "constant": 0},
+        assignment,
+    )
+    assert module.affine_atom_holds(
+        {"relation": "le", "terms": [["D0", 1]], "constant": 7}, assignment
+    )
+    assert module.affine_atom_holds(
+        {
+            "relation": "congruent",
+            "terms": [["D0", 1]],
+            "constant": 1,
+            "modulus": 3,
+        },
+        assignment,
+    )
+
+
+def test_independent_seed_pool_matches_primary_canonical_bytes() -> None:
+    module = load_independent_module()
+    first = (0,) * 13
+    second = (0,) * 12 + (1,)
+    primary = [atom.to_payload() for atom in generate_seed_pair_pool(first, second)]
+    assert module.generate_seed_pair_pool(first, second) == primary
+
+
+def weak_milestone_payload() -> dict[str, object]:
+    frontier = json.loads(FRONTIER.read_text(encoding="utf-8"))
+    layer = next(item for item in frontier["layers"] if item["layer"] == 31)
+    rows = [transition["input_state"] for transition in layer["transitions"]]
+    atom = {"relation": "le", "terms": [["D0", 1]], "constant": 18}
+    atom_digest = hashlib.sha256(canonical_bytes(atom)).hexdigest()
+    core_digest = hashlib.sha256(canonical_bytes([atom])).hexdigest()
+    return {
+        "schema": "t33-base19-safe-region-milestone-v1",
+        "source_digests": {
+            "equations": "ff79f31cbc55d7c463e6a14faedaad58d880509d5769e56b9a4bd06ebacd9040",
+            "frontier": "0d25cf4645b3c187c74511b0677ea1481c4ba6c923a726ffea9747ee1b4a64c0",
+            "provenances": "cac34c9317e8209bfea6a4e4fb37ef204346ccde54424f8c93dd8a8e40619302",
+        },
+        "t29_artifact_digests": {
+            "certificate": "1c234891f001cb3a59e5670560ab26e3cb248a943e249aee049aac7d32c7db5a",
+            "dataset": "6603e381805db845ef9388d234e36f31eba510d838ac98c143c238c2ff144995",
+            "evidence": "c1e3dc4bc4ab07207a6ab49d6a9c9fd86486013abeaf016b6ecd59c9755e1d32",
+            "independent": "9f926208cc7416e24d811f6cd54485d19741b6f8ffe44f3b365b2f816e579644",
+            "trace": "c56877975293c10575009a691b1d1bbde376838f805d232a2c18a4d00b2c4715",
+        },
+        "t30_artifact_digests": {
+            "certificate": "3ac0b6ae254ad8bb7c7b19754335ea6a81bea77a0dc808e7eda1cd8994839892",
+            "evidence": "4b327e826a8b2462eedffa2cf572b77155fc95d8e7b94a4430d7f0331f75bd2a",
+            "independent": "56037d658f628ffa526f9adb710746231806450717f7bde5c0655f4ed6388639",
+            "report": "3ea55f8410887d3a522436be38bf3d9b5c010ac3c412d48405cd69f19828b95c",
+        },
+        "t32_source_digests": T32_SOURCE_DIGESTS,
+        "t32_commits": ["df191a5", "515bbdd", "b5ff122", "e4bc16d", "9d17f77"],
+        "t32_design_sha256": "93cecb3d3ce2c6a2610454f63302e26e2bbe57c7eba1825474bc808ad9ff76bd",
+        "t33_design_sha256": "dadd1fe42f32d6f61b72609394f2172ca4fac3a6979660d03453058a221322a0",
+        "clause": {"atoms": [atom]},
+        "provenance": {
+            "clause": {"atoms": [atom]},
+            "seed_pair": {"indices": [0, 1], "rows": rows[:2]},
+            "pool_size": 1,
+            "pool_sha256": hashlib.sha256(canonical_bytes([atom])).hexdigest(),
+            "solver_version": "test",
+            "solver_parameters": [["phase_selection", 0], ["random_seed", 0]],
+            "named_core": [atom],
+            "named_core_sha256": core_digest,
+            "minimization_trace": [
+                {
+                    "removed_atom_sha256": atom_digest,
+                    "candidate_sha256": hashlib.sha256(canonical_bytes([])).hexdigest(),
+                    "status": "SAT",
+                    "retained": True,
+                }
+            ],
+            "promoted_indices": list(range(18)),
+            "bounded_extent": 77_824,
+        },
+        "primary_safety_status": "UNSAT",
+    }
+
+
+def run_independent_milestone(
+    candidate: Path, *, equations: Path = EQUATIONS
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(INDEPENDENT),
+            "milestone",
+            str(equations),
+            str(FRONTIER),
+            str(T27_EVIDENCE),
+            str(T28_EVIDENCE),
+            str(T28_INDEPENDENT),
+            str(T29_TRACE),
+            str(T29_DATASET),
+            str(T29_EVIDENCE),
+            str(T29_CERTIFICATE),
+            str(T29_INDEPENDENT),
+            str(T30_EVIDENCE),
+            str(T30_CERTIFICATE),
+            str(T30_INDEPENDENT),
+            str(candidate),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_independent_milestone_rejects_a_bad_successor(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate.json"
+    candidate.write_bytes(canonical_bytes(weak_milestone_payload()) + b"\n")
+    completed = run_independent_milestone(candidate)
+    assert completed.returncode != 0
+    assert "safe-region counterexample" in completed.stderr
+
+
+def test_independent_milestone_rejects_a_mutated_equation_source(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.json"
+    candidate.write_bytes(canonical_bytes(weak_milestone_payload()) + b"\n")
+    equations = tmp_path / "equations.json"
+    changed_equations = json.loads(EQUATIONS.read_text(encoding="utf-8"))
+    changed_equations["base"] = 18
+    equations.write_bytes(canonical_bytes(changed_equations) + b"\n")
+    completed = run_independent_milestone(candidate, equations=equations)
+    assert completed.returncode != 0
+    assert "equation content digest changed" in completed.stderr
