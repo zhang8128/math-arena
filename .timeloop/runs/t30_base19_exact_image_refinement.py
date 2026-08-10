@@ -13,18 +13,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from lychrel_exact_image_refinement import PredecessorImageObligation  # noqa: E402
 from lychrel_invariant_certificate import (  # noqa: E402
     Conjunction,
     LayerPredicate,
     LinearAtom,
     canonical_bytes,
+    evaluate_predicate,
 )
 from lychrel_reachability_separator import (  # noqa: E402
+    SemanticWitness,
     SeparatorCertificate,
     SeparatorDataset,
     parse_counterexample_trace,
     parse_separator_certificate,
 )
+from t27_base19_invariant_lift import canonicalize_state  # noqa: E402
 from t29_base19_reachability_separator import (  # noqa: E402
     T29Inputs,
     build_separator_dataset,
@@ -74,6 +78,30 @@ class T30Inputs:
             raise ValueError("T30 variable scope differs")
         if tuple(name for name, _ in self.t29_leak) != self.variables:
             raise ValueError("T30 leak scope differs")
+
+
+@dataclass(frozen=True)
+class PredecessorImplicationCheck:
+    status: str
+    obligations: tuple[PredecessorImageObligation, ...]
+    witness: SemanticWitness | None
+
+    def __post_init__(self) -> None:
+        if self.status == "UNSAT":
+            if len(self.obligations) != 18 or self.witness is not None:
+                raise ValueError("implication UNSAT requires 18 obligations and no witness")
+            if any(
+                obligation.q0_violation_status != "UNSAT"
+                for obligation in self.obligations
+            ):
+                raise ValueError("implication UNSAT obligations must all be UNSAT")
+        elif self.status == "SAT":
+            if not self.obligations or self.witness is None:
+                raise ValueError("implication SAT requires obligations and a witness")
+            if self.obligations[-1].q0_violation_status != "SAT":
+                raise ValueError("implication SAT must end at the violating obligation")
+        else:
+            raise ValueError("implication status must be SAT or UNSAT")
 
 
 def _read_mapping(path: Path, context: str) -> tuple[bytes, Mapping[str, object]]:
@@ -346,3 +374,197 @@ def load_t30_inputs(
         source_digests=_SOURCE_DIGESTS,
         t29_artifact_digests=tuple(sorted(T29_ARTIFACT_DIGESTS.items())),
     )
+
+
+def _solver_status(z3: object, solver: object, context: str) -> object:
+    status = solver.check()
+    if status == z3.unknown:
+        raise EvidenceError(f"{context} returned UNKNOWN: {solver.reason_unknown()}")
+    return status
+
+
+def _layer_relation(
+    inputs: T30Inputs, layer_number: int
+) -> tuple[object, object, dict[str, object], object, tuple[object, ...]]:
+    try:
+        import z3  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise EvidenceError("exact-image checking requires z3-solver") from error
+    transfer = inputs.t29_inputs.t28_inputs.frontier.layers_by_number[layer_number]
+    manifest = inputs.t29_inputs.t28_inputs.manifest
+    equations = tuple(
+        manifest.by_provenance[provenance]
+        for provenance in transfer.equation_provenances
+    )
+    names = tuple(
+        sorted(
+            set(transfer.input_variables)
+            | set(transfer.output_variables)
+            | {name for equation in equations for name in equation.variables}
+        )
+    )
+    variables = {
+        name: z3.Int(
+            f"t30_layer_{layer_number}_"
+            + "".join(character if character.isalnum() else "_" for character in name)
+        )
+        for name in names
+    }
+    solver = z3.Solver()
+    for name, variable in variables.items():
+        if name.startswith("c:"):
+            solver.add(variable >= 0, variable <= 1)
+        else:
+            lower = 1 if name.startswith("digit:p") and ":f0:d0" in name else 0
+            solver.add(variable >= lower, variable < manifest.base)
+    solver.add(*(equation.residual(variables, manifest.base) == 0 for equation in equations))
+    return z3, solver, variables, transfer, equations
+
+
+def _complete_models(
+    z3: object,
+    solver: object,
+    variables: Mapping[str, object],
+    context: str,
+) -> tuple[tuple[tuple[str, int], ...], ...]:
+    models: list[tuple[tuple[str, int], ...]] = []
+    seen: set[tuple[tuple[str, int], ...]] = set()
+    while True:
+        status = _solver_status(z3, solver, context)
+        if status == z3.unsat:
+            break
+        model = solver.model()
+        if any(model[variable] is None for variable in variables.values()):
+            raise EvidenceError(f"{context} produced an unbound variable")
+        assignment = tuple(
+            (name, model.eval(variable, model_completion=False).as_long())
+            for name, variable in sorted(variables.items())
+        )
+        if assignment in seen:
+            raise EvidenceError(f"{context} produced a duplicate complete model")
+        seen.add(assignment)
+        models.append(assignment)
+        solver.add(
+            z3.Or(
+                *(
+                    variables[name] != value
+                    for name, value in assignment
+                )
+            )
+        )
+    return tuple(sorted(models))
+
+
+def _semantic_witness(
+    assignment: tuple[tuple[str, int], ...], transfer: object
+) -> SemanticWitness:
+    values = dict(assignment)
+    input_names = set(transfer.input_variables)
+    output_names = set(transfer.output_variables)
+    input_assignment = canonicalize_state(
+        transfer,
+        "input",
+        tuple(values[name] for name in transfer.input_variables),
+    )
+    input_state = tuple(
+        sorted((f"input:{name}", value) for name, value in input_assignment.items())
+    )
+    output_assignment = canonicalize_state(
+        transfer,
+        "output",
+        tuple(values[name] for name in transfer.output_variables),
+    )
+    output_state = tuple(
+        sorted((f"output:{name}", value) for name, value in output_assignment.items())
+    )
+    local_state = tuple(
+        (f"local:{name}", values[name])
+        for name in sorted(set(values) - input_names - output_names)
+    )
+    return SemanticWitness(input_state, output_state, local_state)
+
+
+def check_predecessor_implication(
+    inputs: T30Inputs,
+    q0: LayerPredicate,
+) -> PredecessorImplicationCheck:
+    """Enumerate every exact layer-31 model from each promoted predecessor."""
+    if q0.layer != 31 or q0.variables != inputs.variables:
+        raise EvidenceError("Q0 scope differs from the frozen layer-31 scope")
+    z3, base_solver, variables, transfer, equations = _layer_relation(inputs, 31)
+    obligations = []
+    manifest = inputs.t29_inputs.t28_inputs.manifest
+    for index, transition in enumerate(transfer.transitions):
+        solver = z3.Solver()
+        solver.add(*base_solver.assertions())
+        solver.add(
+            *(
+                variables[name] == value
+                for name, value in zip(
+                    transfer.input_variables, transition.input_state, strict=True
+                )
+            )
+        )
+        models = _complete_models(
+            z3, solver, variables, f"predecessor {index} enumeration"
+        )
+        assignments = tuple(dict(model) for model in models)
+        if any(
+            equation.residual(assignment, manifest.base) != 0
+            for assignment in assignments
+            for equation in equations
+        ):
+            raise EvidenceError(f"predecessor {index} failed equation replay")
+        raw_outputs = tuple(
+            sorted(
+                {
+                    tuple(assignment[name] for name in transfer.output_variables)
+                    for assignment in assignments
+                }
+            )
+        )
+        if raw_outputs != transition.output_states or len(models) != len(
+            transition.output_states
+        ):
+            raise EvidenceError(f"predecessor {index} disagrees with the frontier")
+        canonical_outputs = tuple(
+            sorted(
+                tuple(
+                    canonicalize_state(transfer, "output", output)[name]
+                    for name in inputs.variables
+                )
+                for output in raw_outputs
+            )
+        )
+        violations = tuple(
+            model
+            for model, assignment in zip(models, assignments, strict=True)
+            if not evaluate_predicate(
+                q0,
+                canonicalize_state(
+                    transfer,
+                    "output",
+                    tuple(assignment[name] for name in transfer.output_variables),
+                ),
+            )
+        )
+        obligation = PredecessorImageObligation(
+            predecessor_index=index,
+            predecessor_sha256=hashlib.sha256(
+                canonical_bytes(list(transition.input_state))
+            ).hexdigest(),
+            exact_model_count=len(models),
+            output_count=len(canonical_outputs),
+            output_sha256=hashlib.sha256(
+                canonical_bytes([list(output) for output in canonical_outputs])
+            ).hexdigest(),
+            q0_violation_status="SAT" if violations else "UNSAT",
+        )
+        obligations.append(obligation)
+        if violations:
+            return PredecessorImplicationCheck(
+                "SAT",
+                tuple(obligations),
+                _semantic_witness(violations[0], transfer),
+            )
+    return PredecessorImplicationCheck("UNSAT", tuple(obligations), None)

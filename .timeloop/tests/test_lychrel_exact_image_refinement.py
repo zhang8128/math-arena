@@ -29,6 +29,7 @@ from t30_base19_exact_image_refinement import (  # noqa: E402
     T29_ARTIFACT_DIGESTS,
     EvidenceError,
     build_q0,
+    check_predecessor_implication,
     load_t30_inputs,
 )
 
@@ -342,3 +343,63 @@ def test_t30_adapter_rejects_each_raw_t29_mutation(
     mutated.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(EvidenceError, match="raw SHA-256"):
         load_t30_inputs(ROOT, **{override: mutated})
+
+
+def test_real_predecessor_image_implies_q0_exactly() -> None:
+    inputs = load_t30_inputs(ROOT)
+    result = check_predecessor_implication(inputs, build_q0(inputs.variables))
+    assert result.status == "UNSAT"
+    assert result.witness is None
+    assert len(result.obligations) == 18
+    assert [item.exact_model_count for item in result.obligations] == [
+        0,
+        0,
+        0,
+        0,
+        0,
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        4,
+        4,
+        0,
+        4,
+        2,
+        0,
+    ]
+    assert sum(item.output_count for item in result.obligations) == 18
+    assert sum(item.output_count > 0 for item in result.obligations) == 5
+    assert {item.q0_violation_status for item in result.obligations} == {"UNSAT"}
+
+
+def test_mutated_q0_returns_a_complete_implication_witness() -> None:
+    inputs = load_t30_inputs(ROOT)
+    q0 = build_q0(inputs.variables)
+    atoms = list(q0.clauses[0].atoms)
+    atom = next(
+        item
+        for item in atoms
+        if {name for name, _ in item.terms} == {"D0", "D1", "L0", "R0", "R5"}
+    )
+    atoms[atoms.index(atom)] = LinearAtom(
+        atom.relation, atom.terms, atom.constant + 1
+    )
+    mutated = LayerPredicate(31, q0.variables, (Conjunction(tuple(atoms)),))
+    result = check_predecessor_implication(inputs, mutated)
+    assert result.status == "SAT"
+    assert result.witness is not None
+    assert len(result.witness.input_state) == 13
+    assert len(result.witness.output_state) == 14
+    assert result.obligations[-1].q0_violation_status == "SAT"
+
+
+def test_predecessor_implication_is_byte_deterministic() -> None:
+    inputs = load_t30_inputs(ROOT)
+    q0 = build_q0(inputs.variables)
+    assert check_predecessor_implication(inputs, q0) == check_predecessor_implication(
+        inputs, q0
+    )
