@@ -10,6 +10,28 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+INDEPENDENT = (
+    ROOT
+    / ".timeloop"
+    / "runs"
+    / "t30_base19_exact_image_refinement_independent.py"
+)
+EQUATIONS = ROOT / "publication/base19-radial/instance/equations.json"
+FRONTIER = (
+    ROOT / "publication/base19-radial/certificates/minimal-core-frontier.json"
+)
+T27_EVIDENCE = ROOT / ".timeloop/runs/t27_base19_invariant_lift.json"
+T28_EVIDENCE = ROOT / ".timeloop/runs/t28_base19_tail_quotient.json"
+T28_INDEPENDENT = ROOT / ".timeloop/runs/t28_base19_tail_quotient_independent.json"
+T29_TRACE = ROOT / ".timeloop/runs/t29_base19_reachability_separator_trace.json"
+T29_DATASET = ROOT / ".timeloop/runs/t29_base19_reachability_separator_dataset.json"
+T29_EVIDENCE = ROOT / ".timeloop/runs/t29_base19_reachability_separator.json"
+T29_CERTIFICATE = (
+    ROOT / ".timeloop/runs/t29_base19_reachability_separator_certificate.json"
+)
+T29_INDEPENDENT = (
+    ROOT / ".timeloop/runs/t29_base19_reachability_separator_independent.json"
+)
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -535,3 +557,112 @@ def test_primary_cli_preserves_predecessor_obligation_order(tmp_path: Path) -> N
         item["predecessor_index"]
         for item in payload["implication"]["predecessor_obligations"]
     ] == list(range(18))
+
+
+def write_primary_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    evidence = tmp_path / "evidence.json"
+    certificate = tmp_path / "certificate.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / ".timeloop/runs/t30_base19_exact_image_refinement.py"),
+            "--evidence",
+            str(evidence),
+            "--certificate",
+            str(certificate),
+            "--report",
+            str(tmp_path / "report.md"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return evidence, certificate
+
+
+def independent_command(*, evidence: Path, certificate: Path) -> list[str]:
+    return [
+        sys.executable,
+        "-I",
+        str(INDEPENDENT),
+        str(EQUATIONS),
+        str(FRONTIER),
+        str(T27_EVIDENCE),
+        str(T28_EVIDENCE),
+        str(T28_INDEPENDENT),
+        str(T29_TRACE),
+        str(T29_DATASET),
+        str(T29_EVIDENCE),
+        str(T29_CERTIFICATE),
+        str(T29_INDEPENDENT),
+        str(evidence),
+        str(certificate),
+    ]
+
+
+def test_independent_checker_starts_under_isolated_python() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-I", str(INDEPENDENT), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert "T30_CERTIFICATE" in completed.stdout
+
+
+def test_independent_checker_accepts_primary_temporary_artifacts(
+    tmp_path: Path,
+) -> None:
+    evidence, certificate = write_primary_fixture(tmp_path)
+    completed = subprocess.run(
+        independent_command(evidence=evidence, certificate=certificate),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    audit = json.loads(completed.stdout)
+    assert audit["status"] == "EXACT_IMAGE_REFINEMENT_PASS"
+    assert audit["repository_imports"] == []
+    assert audit["predecessor_obligation_count"] == 18
+    assert audit["successor_bearing_predecessor_count"] == 5
+    assert audit["exact_model_count"] == 18
+    assert audit["semantic_status"] == "UNSAT"
+
+
+@pytest.mark.parametrize(
+    ("target", "mutation"),
+    [
+        ("evidence", "q0"),
+        ("evidence", "obligation"),
+        ("certificate", "q0"),
+        ("certificate", "obligation"),
+        ("certificate", "semantic_status"),
+    ],
+)
+def test_independent_checker_rejects_t30_mutations(
+    tmp_path: Path,
+    target: str,
+    mutation: str,
+) -> None:
+    evidence, certificate = write_primary_fixture(tmp_path)
+    path = evidence if target == "evidence" else certificate
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if mutation == "q0":
+        payload["q0"]["clauses"][0]["atoms"][0]["constant"] += 1
+    elif mutation == "obligation":
+        container = payload["implication"] if target == "evidence" else payload
+        container["predecessor_obligations"][0]["exact_model_count"] += 1
+    else:
+        payload["semantic_status"] = "SAT"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    completed = subprocess.run(
+        independent_command(evidence=evidence, certificate=certificate),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 2
+    assert completed.stderr.startswith("REJECT:")
