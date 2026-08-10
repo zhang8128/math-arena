@@ -32,6 +32,14 @@ T29_CERTIFICATE = (
 T29_INDEPENDENT = (
     ROOT / ".timeloop/runs/t29_base19_reachability_separator_independent.json"
 )
+T30_EVIDENCE = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement.json"
+T30_CERTIFICATE = (
+    ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_certificate.json"
+)
+T30_INDEPENDENT = (
+    ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_independent.json"
+)
+T30_REPORT = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_report.md"
 
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
 sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
@@ -532,6 +540,7 @@ def test_primary_builder_and_report_state_the_bounded_claim() -> None:
     report = render_t30_report(evidence)
     assert "promoted layer-30 frontier" in report
     assert "EXACT_IMAGE_REFINEMENT_PASS" in report
+    assert all(line == line.rstrip() for line in report.splitlines())
 
 
 def test_primary_cli_preserves_predecessor_obligation_order(tmp_path: Path) -> None:
@@ -666,3 +675,72 @@ def test_independent_checker_rejects_t30_mutations(
     )
     assert completed.returncode == 2
     assert completed.stderr.startswith("REJECT:")
+
+
+def run_primary_cli(directory: Path) -> tuple[Path, Path, Path]:
+    directory.mkdir(parents=True)
+    evidence = directory / "evidence.json"
+    certificate = directory / "certificate.json"
+    report = directory / "report.md"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / ".timeloop/runs/t30_base19_exact_image_refinement.py"),
+            "--evidence",
+            str(evidence),
+            "--certificate",
+            str(certificate),
+            "--report",
+            str(report),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return evidence, certificate, report
+
+
+def run_independent_cli(
+    primary: tuple[Path, Path, Path], output: Path
+) -> Path:
+    completed = subprocess.run(
+        independent_command(evidence=primary[0], certificate=primary[1]),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    output.write_text(completed.stdout, encoding="utf-8")
+    return output
+
+
+def test_primary_and_independent_cli_are_byte_deterministic(
+    tmp_path: Path,
+) -> None:
+    first = run_primary_cli(tmp_path / "first")
+    second = run_primary_cli(tmp_path / "second")
+    assert first[0].read_bytes() == second[0].read_bytes()
+    assert first[1].read_bytes() == second[1].read_bytes()
+    assert first[2].read_bytes() == second[2].read_bytes()
+    audit_one = run_independent_cli(first, tmp_path / "audit-one.json")
+    audit_two = run_independent_cli(second, tmp_path / "audit-two.json")
+    assert audit_one.read_bytes() == audit_two.read_bytes()
+
+
+def test_durable_t30_artifacts_are_bound_and_parseable() -> None:
+    for path in (T30_EVIDENCE, T30_CERTIFICATE, T30_INDEPENDENT, T30_REPORT):
+        assert path.is_file()
+    evidence = json.loads(T30_EVIDENCE.read_text(encoding="utf-8"))
+    certificate = parse_exact_image_refinement_certificate(
+        json.loads(T30_CERTIFICATE.read_text(encoding="utf-8"))
+    )
+    audit = json.loads(T30_INDEPENDENT.read_text(encoding="utf-8"))
+    assert evidence["status"] == "EXACT_IMAGE_REFINEMENT_PASS"
+    assert certificate.status == "EXACT_IMAGE_REFINEMENT_PASS"
+    assert audit["primary_evidence_sha256"] == hashlib.sha256(
+        T30_EVIDENCE.read_bytes()
+    ).hexdigest()
+    assert audit["certificate_file_sha256"] == hashlib.sha256(
+        T30_CERTIFICATE.read_bytes()
+    ).hexdigest()

@@ -975,7 +975,7 @@ def render_t30_report(evidence: Mapping[str, object]) -> str:
         "",
         f"Status: **{status}**",
         "",
-        "The reachability premise is exactly the promoted layer-30 frontier; ",
+        "The reachability premise is exactly the promoted layer-30 frontier;",
         "no claim is made for arbitrary predecessor interfaces.",
         "",
         "## Exact gates",
