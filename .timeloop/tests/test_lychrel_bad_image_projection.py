@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -9,6 +10,25 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / ".timeloop" / "lib"))
+sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
+
+T29_EVIDENCE = ROOT / ".timeloop/runs/t29_base19_reachability_separator.json"
+T29_TRACE = ROOT / ".timeloop/runs/t29_base19_reachability_separator_trace.json"
+T29_DATASET = ROOT / ".timeloop/runs/t29_base19_reachability_separator_dataset.json"
+T29_CERTIFICATE = (
+    ROOT / ".timeloop/runs/t29_base19_reachability_separator_certificate.json"
+)
+T29_INDEPENDENT = (
+    ROOT / ".timeloop/runs/t29_base19_reachability_separator_independent.json"
+)
+T30_EVIDENCE = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement.json"
+T30_CERTIFICATE = (
+    ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_certificate.json"
+)
+T30_INDEPENDENT = (
+    ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_independent.json"
+)
+T30_REPORT = ROOT / ".timeloop/runs/t30_base19_exact_image_refinement_report.md"
 
 from lychrel_bad_image_projection import (  # noqa: E402
     BadImageProjectionCertificate,
@@ -22,6 +42,13 @@ from lychrel_bad_image_projection import (  # noqa: E402
 )
 from lychrel_invariant_certificate import canonical_bytes  # noqa: E402
 from lychrel_reachability_separator import SemanticWitness  # noqa: E402
+from t31_base19_bad_image_projection import (  # noqa: E402
+    T30_ARTIFACT_DIGESTS,
+    EvidenceError,
+    _walk_projection_atoms,
+    load_t31_inputs,
+    project_bad_image_atoms,
+)
 
 P30_VARIABLES = (
     "L0",
@@ -282,3 +309,78 @@ def test_sat_status_requires_witness_and_unsat_forbids_it() -> None:
             implication_status="UNSAT",
             failure_witness=complete_witness(),
         )
+
+
+def test_t31_adapter_binds_the_complete_t30_boundary() -> None:
+    inputs = load_t31_inputs(ROOT)
+    assert inputs.p30_variables == P30_VARIABLES
+    assert len(inputs.promoted_rows) == 18
+    assert len(set(inputs.promoted_rows)) == 18
+    assert inputs.promoted_rows[0] == (0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 2)
+    assert inputs.promoted_rows[-1] == (1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 15)
+    assert dict(inputs.t30_artifact_digests) == T30_ARTIFACT_DIGESTS
+    assert inputs.q0.to_payload() == inputs.t30_certificate.q0.to_payload()
+
+
+BOUND_ARTIFACTS = (
+    ("t29_evidence_path", T29_EVIDENCE),
+    ("t29_trace_path", T29_TRACE),
+    ("t29_dataset_path", T29_DATASET),
+    ("t29_certificate_path", T29_CERTIFICATE),
+    ("t29_independent_path", T29_INDEPENDENT),
+    ("t30_evidence_path", T30_EVIDENCE),
+    ("t30_certificate_path", T30_CERTIFICATE),
+    ("t30_independent_path", T30_INDEPENDENT),
+    ("t30_report_path", T30_REPORT),
+)
+
+
+@pytest.mark.parametrize(("argument", "source"), BOUND_ARTIFACTS)
+def test_t31_adapter_rejects_each_raw_upstream_mutation(
+    tmp_path: Path,
+    argument: str,
+    source: Path,
+) -> None:
+    mutated = tmp_path / source.name
+    mutated.write_bytes(source.read_bytes() + b" ")
+    with pytest.raises(EvidenceError, match="SHA-256"):
+        load_t31_inputs(ROOT, **{argument: mutated})
+
+
+def test_t31_adapter_rejects_t30_status_mutation(tmp_path: Path) -> None:
+    payload = json.loads(T30_EVIDENCE.read_bytes())
+    payload["status"] = "EXACT_IMAGE_REFINEMENT_STOP"
+    mutated = tmp_path / "t30.json"
+    mutated.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(EvidenceError, match="SHA-256"):
+        load_t31_inputs(ROOT, t30_evidence_path=mutated)
+
+
+def test_projection_walker_ignores_quantified_only_arithmetic() -> None:
+    import z3
+
+    bound = z3.Int("bound")
+    formula = z3.Exists((bound,), bound <= 1)
+    assert _walk_projection_atoms(z3, formula, {}) == ()
+
+
+def test_bad_image_atoms_have_exact_projection_provenance() -> None:
+    records = project_bad_image_atoms(load_t31_inputs(ROOT))
+    assert records
+    assert records == tuple(
+        sorted(records, key=lambda item: canonical_bytes(item.atom.to_payload()))
+    )
+    assert {item.origin.failed_q0_equation for item in records} <= set(range(5))
+    assert all(item.origin.atom_sha256 == hashlib.sha256(
+        canonical_bytes(item.atom.to_payload())
+    ).hexdigest() for item in records)
+    assert all(len(item.origin.qe_formula_sha256) == 64 for item in records)
+    assert all(item.origin.expression_path for item in records)
+    assert all(item.holds_on_all_promoted for item in records)
+
+
+def test_bad_image_projection_is_byte_deterministic() -> None:
+    inputs = load_t31_inputs(ROOT)
+    first = project_bad_image_atoms(inputs)
+    second = project_bad_image_atoms(inputs)
+    assert canonical_bytes(first) == canonical_bytes(second)
