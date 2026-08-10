@@ -21,6 +21,28 @@ JSON types, `z3-solver` 5.x for primary synthesis and exact semantic checks,
 Python standard-library constraint propagation/backtracking for independent
 assurance, pytest 8.x, Ruff, SHA-256, and deterministic JSON/Markdown artifacts.
 
+## Execution outcome (2026-08-09)
+
+- Tasks 1--4 executed: T28 replay produced 221 exact counterexamples before
+  candidate 222's depth failure; the frozen dataset has 12 positives, 221
+  trace negatives, and six live controls; the deterministic pool has 83 atoms;
+  and the finite optimum is one ten-atom conjunction.
+- Task 5 semantic branch executed because finite synthesis passed. The exact
+  12-equation query returned SAT, so the achieved status is
+  `FINITE_SEPARATOR_PASS_SEMANTIC_STOP`; semantic UNSAT promotion was not
+  applicable.
+- Task 6 executed with an isolated standard-library checker. It replayed all
+  239 finite classifications and the complete SAT witness, and mutation tests
+  failed closed. The certificate was retained for the finite PASS.
+- Task 7 durable artifacts and notebook boundary were completed. Primary
+  evidence raw SHA-256 is
+  `c1e3dc4bc4ab07207a6ab49d6a9c9fd86486013abeaf016b6ecd59c9755e1d32`;
+  independent audit raw SHA-256 is
+  `9f926208cc7416e24d811f6cd54485d19741b6f8ffe44f3b365b2f816e579644`.
+- The semantic-UNSAT independent search branch and all lower-layer, other-base,
+  topology, publication, and Lean branches were skipped as inapplicable or
+  out of scope. The broader reachability-invariant target remains open.
+
 ## Global Constraints
 
 - Work in `/Users/kairos/Projects/personal/math` inline without subagents.

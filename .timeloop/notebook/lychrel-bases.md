@@ -1024,3 +1024,110 @@ counterexample set while remaining implied by an exact earlier-layer
 reachability condition. Stop if that requires an unbounded state table or
 changes the frozen topology. Treat a symbolic lift in base `b`, other bases,
 and Lean as separate later decisions.
+
+## T29 STATUS — A COMPACT FINITE SEPARATOR EXISTS, BUT IT IS NOT A DEAD REGION
+
+### STATUS
+
+`FINITE_SEPARATOR_PASS_SEMANTIC_STOP`. Primary synthesis and isolated
+assurance agree: one ten-atom conjunction separates the frozen finite dataset,
+but the exact 12-equation query finds a semantic successor inside it.
+
+### CLAIM
+
+For the frozen base-19 radial obstruction and removed coordinate
+`phase=0,n=0,column=82`, the following conjunction contains all 12 promoted
+layer-31 `DEAD` states and excludes all 221 exact T28 counterexamples plus all
+six promoted live controls:
+
+`L1+L3 >= 1`, `L2+L3 >= 1`, `D1-2*R2 >= 4`, `D0+L4 >= 6`,
+`L0=L3`, `R1 <= R0`, `R0+R3 <= 1`, `D1-3*R2 <= 15`,
+`D0-D1+R2 <= 2`, and `L5+R0+R5 <= 2`.
+
+This is an independently checked finite separator over 239 serialized states.
+It is not a reachability invariant, inductive invariant, semantic congruence,
+or universal no-successor theorem.
+
+### RELATION TO PREPRINT, T27, AND T28
+
+The preprint's 35-layer certificate remains the obstruction proof. T27's
+three-family layer-32 predicate remains the positive terminal lemma. T28's
+four-class quotient still stops at candidate 222. T29 explains more of that
+STOP: the 221 exact counterexamples are highly structured enough to admit a
+short common exclusion rule, but finite exclusion alone does not characterize
+the complete semantic dead region.
+
+### TRACE
+
+T28 replay yields exactly 221 distinct `DEAD` / `dead_has_no_successor`
+counterexamples at iterations 1 through 221. Candidate 222 fails during DAG
+construction with `decision_depth_exceeded`; it does not produce a 222nd
+model. The final trace state equals T28's durable counterexample. The trace
+artifact raw SHA-256 is
+`c56877975293c10575009a691b1d1bbde376838f805d232a2c18a4d00b2c4715`.
+
+### FINITE SEPARATOR
+
+The deterministic candidate pool has 83 atoms and reconstructs T28's 37-atom
+final refinement pool before enrichment. The lexicographic optimum has one
+clause, ten atoms, maximum width ten, coefficient support 22, absolute
+coefficient sum 25, relation code 9, and modulus code 0. Direct replay passes
+all `12/221/6` examples. The dataset raw SHA-256 is
+`6603e381805db845ef9388d234e36f31eba510d838ac98c143c238c2ff144995`;
+the certificate raw SHA-256 is
+`1c234891f001cb3a59e5670560ab26e3cb248a943e249aee049aac7d32c7db5a`.
+
+### SEMANTIC CHECK
+
+The exact layer-31-to-32 successor query is SAT. Its lexicographically first
+input inside the finite predicate is
+
+`D0=5, D1=6, L0=0, L1=1, L2=1, L3=0, L4=1, L5=1, R0=0, R1=0, R2=1, R3=0, R4=0, R5=1`.
+
+The full output and ten local digit values are serialized in the certificate.
+All 12 original integer equations replay exactly. This witness is new evidence
+that the compact conjunction captures a large finite pattern without being
+the missing reachability condition.
+
+### INDEPENDENT CHECK
+
+The isolated standard-library checker imports no repository module. It
+recomputes frozen source identities, checks the 221-step trace and
+`12/221/6` dataset, evaluates the predicate directly on all 239 states, and
+replays the complete SAT witness against the 12 serialized equations. It
+rejects mutations to source digests, trace iterations, live controls,
+predicate constants, and witness values. Its raw SHA-256 is
+`9f926208cc7416e24d811f6cd54485d19741b6f8ffe44f3b365b2f816e579644`.
+
+### PRISM AND RESEARCH
+
+Math Prism was checked first but returned no usable artifact, so it supplied
+no mathematical premise. CEGAR, symbolic-automata, and interpolation sources
+motivated the falsifiable separator/preimage framing only: König et al.
+<https://arxiv.org/abs/2504.08617>, D'Antoni, Kincaid, and Wang
+<https://arxiv.org/abs/1610.01722>, and Cimatti, Griggio, and Sebastiani
+<https://arxiv.org/abs/0906.4492>.
+
+### STOP CONDITION
+
+Semantic SAT is the approved stop. The finite grammar was not enlarged, and no
+lower-layer extension, symbolic base lift, base-17/base-19 classification,
+topology scan, publication change, or Lean work ran.
+
+### LIMITATIONS
+
+- The 221 counterexamples are solver-derived examples, not a complete
+  characterization of all successor-bearing layer-31 states.
+- The ten-atom predicate may still be useful as one component of a stronger
+  reachable-state invariant, but T29 proves no such implication.
+- The semantic witness falsifies universal deadness, not finite separation.
+- No novelty or cross-base classification claim is made.
+
+### NEXT
+
+Use the new semantic witness as a positive counterexample to the separator and
+ask for one additional predicate that is implied by exact earlier-layer
+reachability, holds on the 12 promoted `DEAD` states, and excludes both the 221
+trace models and this semantic leak. Stop if the added condition is merely a
+state table or fails exact preimage replay. Only a semantic PASS should reopen
+lower-layer extension or symbolic lifting in the base.
