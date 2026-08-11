@@ -11,6 +11,7 @@ from functools import cache
 
 from lychrel_bad_image_projection import P30_VARIABLES, ProjectionAtom
 from lychrel_invariant_certificate import canonical_bytes
+from lychrel_reachability_separator import SemanticWitness
 
 _SCHEMA = "t33-base19-safe-region-cover-certificate-v1"
 _PASS = "SAFE_REGION_COVER_PASS"
@@ -134,6 +135,47 @@ def _atom_holds(atom: ProjectionAtom, assignment: Mapping[str, int]) -> bool:
         return total <= atom.constant
     assert atom.modulus is not None
     return (total - atom.constant) % atom.modulus == 0
+
+
+def evaluate_safe_atom(atom: ProjectionAtom, assignment: Mapping[str, int]) -> bool:
+    """Evaluate one strict T33 atom on a complete bounded input."""
+    _validate_atom(atom, "safe-region atom")
+    _validate_assignment(assignment)
+    return _atom_holds(atom, assignment)
+
+
+def canonical_conjunction(
+    atoms: tuple[ProjectionAtom, ...], *, allow_empty: bool, maximum: int
+) -> tuple[ProjectionAtom, ...]:
+    """Return a validated canonical conjunction without silently deduplicating."""
+    if not _is_int(maximum) or not 0 <= maximum <= 6:
+        raise ValueError("conjunction maximum must be in 0..6")
+    if not atoms and not allow_empty:
+        raise ValueError("query conjunction must be nonempty")
+    if len(atoms) > maximum:
+        if maximum == 6:
+            raise ValueError("query conjunction may contain at most six atoms")
+        raise ValueError(f"query conjunction may contain at most {maximum} atoms")
+    if len(set(atoms)) != len(atoms):
+        raise ValueError("query conjunction must be canonical and distinct")
+    for atom in atoms:
+        if not isinstance(atom, ProjectionAtom):
+            raise ValueError("query conjunction entries must be projection atoms")
+        _validate_atom(atom, "query atom")
+    canonical = tuple(sorted(atoms, key=canonical_bytes))
+    if canonical != atoms:
+        raise ValueError("query conjunction must be canonical and distinct")
+    return canonical
+
+
+def canonical_union(
+    conjunction: tuple[ProjectionAtom, ...], atom: ProjectionAtom
+) -> tuple[ProjectionAtom, ...]:
+    """Add one absent atom to a bounded conjunction in canonical order."""
+    canonical_conjunction(conjunction, allow_empty=True, maximum=6)
+    if atom in conjunction:
+        raise ValueError("query conjunction already contains branch atom")
+    return tuple(sorted((*conjunction, atom), key=canonical_bytes))
 
 
 def evaluate_safe_clause(
@@ -329,6 +371,219 @@ class CoreReductionStep:
         }
 
 
+def _conjunction_digest(conjunction: tuple[ProjectionAtom, ...]) -> str:
+    return hashlib.sha256(
+        canonical_bytes([atom.to_payload() for atom in conjunction])
+    ).hexdigest()
+
+
+@dataclass(frozen=True)
+class RegionQueryRecord:
+    conjunction: tuple[ProjectionAtom, ...]
+    conjunction_sha256: str
+    status: str
+    witness: SemanticWitness | None
+    equation_residuals: tuple[int, ...]
+    q0_holds: bool | None
+
+    def __post_init__(self) -> None:
+        canonical_conjunction(self.conjunction, allow_empty=True, maximum=6)
+        _validate_digest(self.conjunction_sha256, "query conjunction digest")
+        if self.conjunction_sha256 != _conjunction_digest(self.conjunction):
+            raise ValueError("query conjunction digest differs")
+        if self.status == "SAT":
+            if (
+                not isinstance(self.witness, SemanticWitness)
+                or self.equation_residuals != (0,) * 12
+                or self.q0_holds is not False
+            ):
+                raise ValueError("SAT query requires an exact non-Q0 witness")
+        elif self.status == "UNSAT":
+            if (
+                self.witness is not None
+                or self.equation_residuals
+                or self.q0_holds is not None
+            ):
+                raise ValueError("UNSAT query forbids witness replay fields")
+        else:
+            raise ValueError("query status must be SAT or UNSAT")
+
+    @classmethod
+    def from_query(
+        cls,
+        conjunction: tuple[ProjectionAtom, ...],
+        *,
+        status: str,
+        witness: SemanticWitness | None = None,
+        equation_residuals: tuple[int, ...] = (),
+        q0_holds: bool | None = None,
+    ) -> RegionQueryRecord:
+        canonical = canonical_conjunction(
+            conjunction, allow_empty=True, maximum=6
+        )
+        return cls(
+            canonical,
+            _conjunction_digest(canonical),
+            status,
+            witness,
+            equation_residuals,
+            q0_holds,
+        )
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "conjunction": [
+                hashlib.sha256(canonical_bytes(atom)).hexdigest()
+                for atom in self.conjunction
+            ],
+            "conjunction_sha256": self.conjunction_sha256,
+            "status": self.status,
+            "witness": None if self.witness is None else self.witness.to_payload(),
+            "equation_residuals": list(self.equation_residuals),
+            "q0_holds": self.q0_holds,
+        }
+
+
+@dataclass(frozen=True)
+class SearchVisit:
+    purpose: str
+    parent_sha256: str | None
+    query_sha256: str
+    fresh_query: bool
+    violated_atom_sha256s: tuple[str, ...]
+    branch_atom_sha256s: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.purpose not in {
+            "ROOT",
+            "SEARCH",
+            "REDUCTION",
+            "ACCEPTANCE_REPLAY",
+        }:
+            raise ValueError("search-visit purpose differs")
+        if self.parent_sha256 is not None:
+            _validate_digest(self.parent_sha256, "search-visit parent digest")
+        _validate_digest(self.query_sha256, "search-visit query digest")
+        if not isinstance(self.fresh_query, bool):
+            raise ValueError("search-visit fresh-query flag must be Boolean")
+        for digest in (*self.violated_atom_sha256s, *self.branch_atom_sha256s):
+            _validate_digest(digest, "search-visit atom digest")
+        if (
+            len(set(self.violated_atom_sha256s))
+            != len(self.violated_atom_sha256s)
+            or len(set(self.branch_atom_sha256s))
+            != len(self.branch_atom_sha256s)
+            or set(self.violated_atom_sha256s) != set(self.branch_atom_sha256s)
+        ):
+            raise ValueError("search-visit branch atoms differ from violated atoms")
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "purpose": self.purpose,
+            "parent_sha256": self.parent_sha256,
+            "query_sha256": self.query_sha256,
+            "fresh_query": self.fresh_query,
+            "violated_atom_sha256s": list(self.violated_atom_sha256s),
+            "branch_atom_sha256s": list(self.branch_atom_sha256s),
+        }
+
+
+@dataclass(frozen=True)
+class SeedPairSearchTrace:
+    seed_pair: SeedPair
+    pool_size: int
+    pool_sha256: str
+    visits: tuple[SearchVisit, ...]
+
+    def __post_init__(self) -> None:
+        pool = generate_seed_pair_pool(*self.seed_pair.rows)
+        if self.pool_size != len(pool):
+            raise ValueError("search-trace pool size differs from its seeds")
+        _validate_digest(self.pool_sha256, "search-trace pool digest")
+        actual_digest = hashlib.sha256(
+            canonical_bytes([atom.to_payload() for atom in pool])
+        ).hexdigest()
+        if self.pool_sha256 != actual_digest:
+            raise ValueError("search-trace pool digest differs from its seeds")
+        if not self.visits or any(
+            not isinstance(visit, SearchVisit) for visit in self.visits
+        ):
+            raise ValueError("search trace must contain visits")
+        pool_digests = {
+            hashlib.sha256(canonical_bytes(atom)).hexdigest() for atom in pool
+        }
+        if any(
+            digest not in pool_digests
+            for visit in self.visits
+            for digest in (
+                *visit.violated_atom_sha256s,
+                *visit.branch_atom_sha256s,
+            )
+        ):
+            raise ValueError("search visit names an atom outside the seed pool")
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "seed_pair": self.seed_pair.to_payload(),
+            "pool_size": self.pool_size,
+            "pool_sha256": self.pool_sha256,
+            "visits": [visit.to_payload() for visit in self.visits],
+        }
+
+
+@dataclass(frozen=True)
+class IncrementalSearchTranscript:
+    queries: tuple[RegionQueryRecord, ...]
+    pairs: tuple[SeedPairSearchTrace, ...]
+
+    def __post_init__(self) -> None:
+        if not self.queries or not self.pairs:
+            raise ValueError("incremental transcript must contain queries and pairs")
+        if len({query.conjunction_sha256 for query in self.queries}) != len(
+            self.queries
+        ):
+            raise ValueError("incremental transcript repeats a query")
+        if tuple(pair.seed_pair.indices for pair in self.pairs) != tuple(
+            sorted(pair.seed_pair.indices for pair in self.pairs)
+        ) or len({pair.seed_pair.indices for pair in self.pairs}) != len(self.pairs):
+            raise ValueError("incremental transcript seed pairs are not ordered")
+        query_by_digest = {
+            query.conjunction_sha256: query for query in self.queries
+        }
+        fresh_digests = []
+        for pair in self.pairs:
+            pool = set(generate_seed_pair_pool(*pair.seed_pair.rows))
+            seen_in_pair: set[str] = set()
+            for visit in pair.visits:
+                query = query_by_digest.get(visit.query_sha256)
+                if query is None:
+                    raise ValueError("search visit does not resolve to a query record")
+                if not set(query.conjunction) <= pool:
+                    raise ValueError("search query contains an atom outside the seed pool")
+                if visit.parent_sha256 is not None and (
+                    visit.parent_sha256 not in query_by_digest
+                    or visit.parent_sha256 not in seen_in_pair
+                ):
+                    raise ValueError("search-visit parent does not resolve earlier")
+                if query.status == "UNSAT" and (
+                    visit.violated_atom_sha256s or visit.branch_atom_sha256s
+                ):
+                    raise ValueError("UNSAT search visit cannot carry branch atoms")
+                if visit.fresh_query:
+                    fresh_digests.append(visit.query_sha256)
+                seen_in_pair.add(visit.query_sha256)
+        if tuple(fresh_digests) != tuple(
+            query.conjunction_sha256 for query in self.queries
+        ) or len(set(fresh_digests)) != len(fresh_digests):
+            raise ValueError("each query must have exactly one fresh visit in first-query order")
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "queries": [query.to_payload() for query in self.queries],
+            "pairs": [pair.to_payload() for pair in self.pairs],
+        }
+
+
 @dataclass(frozen=True)
 class SafeRegionProvenance:
     clause: SafeRegionClause
@@ -337,14 +592,15 @@ class SafeRegionProvenance:
     pool_sha256: str
     solver_version: str
     solver_parameters: tuple[tuple[str, int], ...]
-    named_core: tuple[ProjectionAtom, ...]
-    named_core_sha256: str
+    core_candidate: tuple[ProjectionAtom, ...]
+    core_candidate_sha256: str
+    acquisition_query_sha256: str
     minimization_trace: tuple[CoreReductionStep, ...]
     promoted_indices: tuple[int, ...]
     bounded_extent: int
 
     def __post_init__(self) -> None:
-        if not _is_int(self.pool_size) or self.pool_size < len(self.named_core):
+        if not _is_int(self.pool_size) or self.pool_size < len(self.core_candidate):
             raise ValueError("safe-region pool size differs")
         _validate_digest(self.pool_sha256, "safe-region pool digest")
         regenerated_pool = generate_seed_pair_pool(*self.seed_pair.rows)
@@ -362,27 +618,25 @@ class SafeRegionProvenance:
             for name, value in self.solver_parameters
         ):
             raise ValueError("safe-region solver parameters differ")
-        if not self.named_core or len(set(self.named_core)) != len(self.named_core):
-            raise ValueError("named core must be nonempty and distinct")
-        if tuple(sorted(self.named_core, key=canonical_bytes)) != self.named_core:
-            raise ValueError("named core must be canonically ordered")
-        for atom in self.named_core:
-            _validate_atom(atom, "named-core atom")
-        if not set(self.named_core) <= set(regenerated_pool):
-            raise ValueError("named core contains an atom outside the seed pool")
-        _validate_digest(self.named_core_sha256, "named-core digest")
+        canonical_conjunction(self.core_candidate, allow_empty=False, maximum=6)
+        if not set(self.core_candidate) <= set(regenerated_pool):
+            raise ValueError("core candidate contains an atom outside the seed pool")
+        _validate_digest(self.core_candidate_sha256, "core-candidate digest")
         actual_core = hashlib.sha256(
-            canonical_bytes([atom.to_payload() for atom in self.named_core])
+            canonical_bytes([atom.to_payload() for atom in self.core_candidate])
         ).hexdigest()
-        if self.named_core_sha256 != actual_core:
-            raise ValueError("named-core digest differs")
-        if not set(self.clause.atoms) <= set(self.named_core):
-            raise ValueError("safe-region clause is not a subset of its named core")
+        if self.core_candidate_sha256 != actual_core:
+            raise ValueError("core-candidate digest differs")
+        _validate_digest(self.acquisition_query_sha256, "acquisition query digest")
+        if self.acquisition_query_sha256 != actual_core:
+            raise ValueError("acquisition query digest differs from core candidate")
+        if not set(self.clause.atoms) <= set(self.core_candidate):
+            raise ValueError("safe-region clause is not a subset of its core candidate")
         if not self.minimization_trace:
             raise ValueError("safe-region minimization trace must be nonempty")
         core_digests = {
             hashlib.sha256(canonical_bytes(atom)).hexdigest()
-            for atom in self.named_core
+            for atom in self.core_candidate
         }
         if any(
             step.removed_atom_sha256 not in core_digests
@@ -408,8 +662,9 @@ class SafeRegionProvenance:
             "pool_sha256": self.pool_sha256,
             "solver_version": self.solver_version,
             "solver_parameters": [list(item) for item in self.solver_parameters],
-            "named_core": [atom.to_payload() for atom in self.named_core],
-            "named_core_sha256": self.named_core_sha256,
+            "core_candidate": [atom.to_payload() for atom in self.core_candidate],
+            "core_candidate_sha256": self.core_candidate_sha256,
+            "acquisition_query_sha256": self.acquisition_query_sha256,
             "minimization_trace": [step.to_payload() for step in self.minimization_trace],
             "promoted_indices": list(self.promoted_indices),
             "bounded_extent": self.bounded_extent,
@@ -706,6 +961,198 @@ def _parse_reduction(value: object) -> CoreReductionStep:
     )
 
 
+def _parse_witness_assignment(
+    value: object, context: str, *, allow_empty: bool = False
+) -> tuple[tuple[str, int], ...]:
+    if not isinstance(value, Mapping) or (not value and not allow_empty):
+        raise ValueError(f"{context} must be an object")
+    if any(
+        not isinstance(name, str) or not name or not _is_int(item)
+        for name, item in value.items()
+    ):
+        raise ValueError(f"{context} is malformed")
+    return tuple(sorted((name, item) for name, item in value.items()))
+
+
+def _parse_semantic_witness(value: object) -> SemanticWitness:
+    if not isinstance(value, Mapping):
+        raise ValueError("semantic witness must be an object")
+    _require_keys(
+        value,
+        {"input_state", "output_state", "local_state"},
+        "semantic witness",
+    )
+    return SemanticWitness(
+        _parse_witness_assignment(value["input_state"], "witness input"),
+        _parse_witness_assignment(value["output_state"], "witness output"),
+        _parse_witness_assignment(
+            value["local_state"], "witness local", allow_empty=True
+        ),
+    )
+
+
+def parse_region_query_record(
+    value: object, atom_by_sha256: Mapping[str, ProjectionAtom]
+) -> RegionQueryRecord:
+    """Strictly parse one digest-bound incremental query record."""
+    if not isinstance(value, Mapping):
+        raise ValueError("region query record must be an object")
+    _require_keys(
+        value,
+        {
+            "conjunction",
+            "conjunction_sha256",
+            "status",
+            "witness",
+            "equation_residuals",
+            "q0_holds",
+        },
+        "region query record",
+    )
+    conjunction_value = value["conjunction"]
+    if not isinstance(conjunction_value, list) or any(
+        not isinstance(digest, str) for digest in conjunction_value
+    ):
+        raise ValueError("query conjunction digests must be a string list")
+    for digest, atom in atom_by_sha256.items():
+        _validate_digest(digest, "query atom-map digest")
+        if digest != hashlib.sha256(canonical_bytes(atom)).hexdigest():
+            raise ValueError("query atom-map digest differs")
+    try:
+        conjunction = tuple(atom_by_sha256[digest] for digest in conjunction_value)
+    except KeyError as error:
+        raise ValueError("query conjunction atom digest does not resolve") from error
+    if not isinstance(value["conjunction_sha256"], str) or not isinstance(
+        value["status"], str
+    ):
+        raise ValueError("region query record header is malformed")
+    residuals = _parse_int_tuple(value["equation_residuals"], "equation residuals")
+    q0_holds = value["q0_holds"]
+    if q0_holds is not None and not isinstance(q0_holds, bool):
+        raise ValueError("query Q0 replay field must be Boolean or null")
+    witness_value = value["witness"]
+    record = RegionQueryRecord(
+        conjunction=conjunction,
+        conjunction_sha256=value["conjunction_sha256"],
+        status=value["status"],
+        witness=(
+            None
+            if witness_value is None
+            else _parse_semantic_witness(witness_value)
+        ),
+        equation_residuals=residuals,
+        q0_holds=q0_holds,
+    )
+    if record.to_payload() != dict(value):
+        raise ValueError("region query record is not canonical")
+    return record
+
+
+def parse_search_visit(value: object) -> SearchVisit:
+    """Strictly parse one pair-local solver submission."""
+    if not isinstance(value, Mapping):
+        raise ValueError("search visit must be an object")
+    _require_keys(
+        value,
+        {
+            "purpose",
+            "parent_sha256",
+            "query_sha256",
+            "fresh_query",
+            "violated_atom_sha256s",
+            "branch_atom_sha256s",
+        },
+        "search visit",
+    )
+    if (
+        not isinstance(value["purpose"], str)
+        or not isinstance(value["query_sha256"], str)
+        or not isinstance(value["fresh_query"], bool)
+        or (
+            value["parent_sha256"] is not None
+            and not isinstance(value["parent_sha256"], str)
+        )
+    ):
+        raise ValueError("search visit header is malformed")
+    digest_fields = []
+    for name in ("violated_atom_sha256s", "branch_atom_sha256s"):
+        field_value = value[name]
+        if not isinstance(field_value, list) or any(
+            not isinstance(item, str) for item in field_value
+        ):
+            raise ValueError(f"search visit {name} must be a string list")
+        digest_fields.append(tuple(field_value))
+    visit = SearchVisit(
+        value["purpose"],
+        value["parent_sha256"],
+        value["query_sha256"],
+        value["fresh_query"],
+        digest_fields[0],
+        digest_fields[1],
+    )
+    if visit.to_payload() != dict(value):
+        raise ValueError("search visit is not canonical")
+    return visit
+
+
+def parse_seed_pair_search_trace(value: object) -> SeedPairSearchTrace:
+    """Strictly parse one seed-pair search trace."""
+    if not isinstance(value, Mapping):
+        raise ValueError("seed-pair search trace must be an object")
+    _require_keys(
+        value,
+        {"seed_pair", "pool_size", "pool_sha256", "visits"},
+        "seed-pair search trace",
+    )
+    visits_value = value["visits"]
+    if (
+        not _is_int(value["pool_size"])
+        or not isinstance(value["pool_sha256"], str)
+        or not isinstance(visits_value, list)
+    ):
+        raise ValueError("seed-pair search trace is malformed")
+    trace = SeedPairSearchTrace(
+        _parse_seed_pair(value["seed_pair"]),
+        value["pool_size"],
+        value["pool_sha256"],
+        tuple(parse_search_visit(item) for item in visits_value),
+    )
+    if trace.to_payload() != dict(value):
+        raise ValueError("seed-pair search trace is not canonical")
+    return trace
+
+
+def parse_incremental_search_transcript(
+    value: object,
+) -> IncrementalSearchTranscript:
+    """Strictly parse a complete bounded-search transcript."""
+    if not isinstance(value, Mapping):
+        raise ValueError("incremental search transcript must be an object")
+    _require_keys(value, {"queries", "pairs"}, "incremental search transcript")
+    query_values = value["queries"]
+    pair_values = value["pairs"]
+    if not isinstance(query_values, list) or not isinstance(pair_values, list):
+        raise ValueError("incremental search transcript lists are malformed")
+    pairs = tuple(parse_seed_pair_search_trace(item) for item in pair_values)
+    atom_by_sha256: dict[str, ProjectionAtom] = {}
+    for pair in pairs:
+        for atom in generate_seed_pair_pool(*pair.seed_pair.rows):
+            digest = hashlib.sha256(canonical_bytes(atom)).hexdigest()
+            previous = atom_by_sha256.setdefault(digest, atom)
+            if previous != atom:
+                raise ValueError("seed-pool atom digest collision")
+    transcript = IncrementalSearchTranscript(
+        tuple(
+            parse_region_query_record(item, atom_by_sha256)
+            for item in query_values
+        ),
+        pairs,
+    )
+    if transcript.to_payload() != dict(value):
+        raise ValueError("incremental search transcript is not canonical")
+    return transcript
+
+
 def _parse_provenance(value: object) -> SafeRegionProvenance:
     if not isinstance(value, Mapping):
         raise ValueError("safe-region provenance must be an object")
@@ -716,8 +1163,9 @@ def _parse_provenance(value: object) -> SafeRegionProvenance:
         "pool_sha256",
         "solver_version",
         "solver_parameters",
-        "named_core",
-        "named_core_sha256",
+        "core_candidate",
+        "core_candidate_sha256",
+        "acquisition_query_sha256",
         "minimization_trace",
         "promoted_indices",
         "bounded_extent",
@@ -736,7 +1184,7 @@ def _parse_provenance(value: object) -> SafeRegionProvenance:
         ):
             raise ValueError("solver parameter is malformed")
         parameters.append((item[0], item[1]))
-    core_value = value["named_core"]
+    core_value = value["core_candidate"]
     trace_value = value["minimization_trace"]
     if not isinstance(core_value, list) or not isinstance(trace_value, list):
         raise ValueError("core or minimization trace is malformed")
@@ -744,7 +1192,8 @@ def _parse_provenance(value: object) -> SafeRegionProvenance:
     scalar_strings = (
         value["pool_sha256"],
         value["solver_version"],
-        value["named_core_sha256"],
+        value["core_candidate_sha256"],
+        value["acquisition_query_sha256"],
     )
     if any(not _is_int(item) for item in scalar_ints) or any(
         not isinstance(item, str) for item in scalar_strings
@@ -757,8 +1206,9 @@ def _parse_provenance(value: object) -> SafeRegionProvenance:
         pool_sha256=value["pool_sha256"],  # type: ignore[arg-type]
         solver_version=value["solver_version"],  # type: ignore[arg-type]
         solver_parameters=tuple(parameters),
-        named_core=tuple(_parse_atom(item) for item in core_value),
-        named_core_sha256=value["named_core_sha256"],  # type: ignore[arg-type]
+        core_candidate=tuple(_parse_atom(item) for item in core_value),
+        core_candidate_sha256=value["core_candidate_sha256"],  # type: ignore[arg-type]
+        acquisition_query_sha256=value["acquisition_query_sha256"],  # type: ignore[arg-type]
         minimization_trace=tuple(_parse_reduction(item) for item in trace_value),
         promoted_indices=_parse_int_tuple(value["promoted_indices"], "promoted indices"),
         bounded_extent=value["bounded_extent"],  # type: ignore[arg-type]

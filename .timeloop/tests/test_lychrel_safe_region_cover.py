@@ -32,29 +32,47 @@ sys.path.insert(0, str(ROOT / ".timeloop" / "runs"))
 
 from lychrel_bad_image_projection import P30_VARIABLES, ProjectionAtom  # noqa: E402
 from lychrel_invariant_certificate import canonical_bytes  # noqa: E402
+from lychrel_reachability_separator import SemanticWitness  # noqa: E402
 from lychrel_safe_region_cover import (  # noqa: E402
     CoreReductionStep,
+    IncrementalSearchTranscript,
+    RegionQueryRecord,
     SafeRegionClause,
     SafeRegionCoverCertificate,
     SafeRegionPredicate,
     SafeRegionProvenance,
+    SearchVisit,
     SeedPair,
+    SeedPairSearchTrace,
     bounded_layer30_rows,
     clause_extent,
     compactness_bytes,
+    evaluate_safe_atom,
     evaluate_safe_clause,
     evaluate_safe_predicate,
     first_match_ownership,
     generate_seed_pair_pool,
+    parse_incremental_search_transcript,
+    parse_region_query_record,
     parse_safe_region_cover_certificate,
 )
 from t33_base19_safe_region_cover import (  # noqa: E402
     T32_SOURCE_DIGESTS,
+    CandidateDecision,
     EvidenceError,
+    PairBudgetExhausted,
+    RegionBudgetExhausted,
+    RegionSearchBudget,
     _load_t33_inputs_uncached,
+    branch_atoms,
+    countermodel_guided_search,
+    deletion_minimize_core,
     exact_bad_input_status,
+    find_first_safe_region,
     load_t33_inputs,
     query_bad_input,
+    query_safe_conjunction,
+    verify_region_candidate,
 )
 
 
@@ -66,6 +84,36 @@ def digest_entries(names: set[str]) -> tuple[tuple[str, str], ...]:
 
 def row_assignment(row: tuple[int, ...]) -> dict[str, int]:
     return dict(zip(P30_VARIABLES, row, strict=True))
+
+
+def semantic_witness_for_row(row: tuple[int, ...]) -> SemanticWitness:
+    return SemanticWitness(
+        input_state=tuple(
+            sorted(
+                (f"input:{name}", value)
+                for name, value in zip(P30_VARIABLES, row, strict=True)
+            )
+        ),
+        output_state=(("output:D0", 0),),
+        local_state=(),
+    )
+
+
+def finite_oracle(models: tuple[dict[str, int], ...]):
+    def decide(atoms: tuple[ProjectionAtom, ...]) -> RegionQueryRecord:
+        for model in models:
+            if all(evaluate_safe_atom(atom, model) for atom in atoms):
+                row = tuple(model[name] for name in P30_VARIABLES)
+                return RegionQueryRecord.from_query(
+                    atoms,
+                    status="SAT",
+                    witness=semantic_witness_for_row(row),
+                    equation_residuals=(0,) * 12,
+                    q0_holds=False,
+                )
+        return RegionQueryRecord.from_query(atoms, status="UNSAT")
+
+    return decide
 
 
 def test_t33_clause_rejects_t31_atoms_outside_the_small_grammar() -> None:
@@ -200,6 +248,97 @@ def test_seed_pair_pool_is_finite_canonical_and_seed_true() -> None:
         assert clause_extent(clause) < 77_824
 
 
+def test_incremental_query_records_are_strict_and_round_trip() -> None:
+    atoms = tuple(
+        ProjectionAtom("eq", ((f"L{index}", 1),), 0) for index in range(6)
+    )
+    witness = semantic_witness_for_row((0,) * len(P30_VARIABLES))
+    record = RegionQueryRecord.from_query(
+        atoms,
+        status="SAT",
+        witness=witness,
+        equation_residuals=(0,) * 12,
+        q0_holds=False,
+    )
+    atom_by_sha256 = {
+        hashlib.sha256(canonical_bytes(atom)).hexdigest(): atom for atom in atoms
+    }
+    assert parse_region_query_record(record.to_payload(), atom_by_sha256) == record
+
+    changed = copy.deepcopy(record.to_payload())
+    changed["conjunction_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="conjunction digest"):
+        parse_region_query_record(changed, atom_by_sha256)
+    with pytest.raises(ValueError, match="at most six"):
+        RegionQueryRecord.from_query(
+            (*atoms, ProjectionAtom("eq", (("R5", 1),), 0)),
+            status="UNSAT",
+        )
+    with pytest.raises(ValueError, match="canonical and distinct"):
+        RegionQueryRecord.from_query(tuple(reversed(atoms)), status="UNSAT")
+
+
+def test_incremental_query_status_union_is_strict() -> None:
+    empty = RegionQueryRecord.from_query((), status="UNSAT")
+    assert empty.conjunction == ()
+    with pytest.raises(ValueError, match="SAT query requires"):
+        RegionQueryRecord.from_query((), status="SAT")
+    with pytest.raises(ValueError, match="SAT query requires"):
+        RegionQueryRecord.from_query(
+            (),
+            status="SAT",
+            witness=semantic_witness_for_row((0,) * len(P30_VARIABLES)),
+            equation_residuals=(0,) * 11,
+            q0_holds=False,
+        )
+    with pytest.raises(ValueError, match="UNSAT query forbids"):
+        RegionQueryRecord.from_query(
+            (),
+            status="UNSAT",
+            witness=semantic_witness_for_row((0,) * len(P30_VARIABLES)),
+        )
+
+
+def test_incremental_transcript_cross_links_queries_and_seed_pools() -> None:
+    first_row = (0,) * len(P30_VARIABLES)
+    second_row = (0,) * (len(P30_VARIABLES) - 1) + (1,)
+    seed_pair = SeedPair((0, 1), (first_row, second_row))
+    pool = generate_seed_pair_pool(*seed_pair.rows)
+    pool_sha256 = hashlib.sha256(
+        canonical_bytes([atom.to_payload() for atom in pool])
+    ).hexdigest()
+    query = RegionQueryRecord.from_query((), status="UNSAT")
+    visit = SearchVisit(
+        purpose="ROOT",
+        parent_sha256=None,
+        query_sha256=query.conjunction_sha256,
+        fresh_query=True,
+        violated_atom_sha256s=(),
+        branch_atom_sha256s=(),
+    )
+    pair_trace = SeedPairSearchTrace(
+        seed_pair=seed_pair,
+        pool_size=len(pool),
+        pool_sha256=pool_sha256,
+        visits=(visit,),
+    )
+    transcript = IncrementalSearchTranscript((query,), (pair_trace,))
+    assert parse_incremental_search_transcript(transcript.to_payload()) == transcript
+
+    duplicate_fresh = copy.deepcopy(transcript.to_payload())
+    duplicate_fresh["pairs"][0]["visits"].append(
+        copy.deepcopy(duplicate_fresh["pairs"][0]["visits"][0])
+    )
+    with pytest.raises(ValueError, match="exactly one fresh"):
+        parse_incremental_search_transcript(duplicate_fresh)
+
+    outside_pool = copy.deepcopy(transcript.to_payload())
+    outside_pool["pairs"][0]["visits"][0]["violated_atom_sha256s"] = ["0" * 64]
+    outside_pool["pairs"][0]["visits"][0]["branch_atom_sha256s"] = ["0" * 64]
+    with pytest.raises(ValueError, match="seed pool"):
+        parse_incremental_search_transcript(outside_pool)
+
+
 def certificate_fixture() -> SafeRegionCoverCertificate:
     first_row = (0,) * 13
     second_row = (0,) * 12 + (1,)
@@ -220,8 +359,11 @@ def certificate_fixture() -> SafeRegionCoverCertificate:
         ).hexdigest(),
         solver_version="4.15.3",
         solver_parameters=(("phase_selection", 0), ("random_seed", 0)),
-        named_core=clause.atoms,
-        named_core_sha256=hashlib.sha256(
+        core_candidate=clause.atoms,
+        core_candidate_sha256=hashlib.sha256(
+            canonical_bytes([atom.to_payload() for atom in clause.atoms])
+        ).hexdigest(),
+        acquisition_query_sha256=hashlib.sha256(
             canonical_bytes([atom.to_payload() for atom in clause.atoms])
         ).hexdigest(),
         minimization_trace=trace,
@@ -360,6 +502,96 @@ def test_bad_input_query_replays_a_sat_countermodel() -> None:
     assert result.q0_holds is False
 
 
+def test_exact_empty_conjunction_returns_replayed_sat_record() -> None:
+    record = query_safe_conjunction(load_t33_inputs(ROOT), ())
+    assert record.status == "SAT"
+    assert record.witness is not None
+    assert record.equation_residuals == (0,) * 12
+    assert record.q0_holds is False
+
+
+def test_exact_oracle_rejects_more_than_six_atoms() -> None:
+    atoms = tuple(
+        sorted(
+            (
+                ProjectionAtom("le", ((name, 1),), 0)
+                for name in P30_VARIABLES[:7]
+            ),
+            key=canonical_bytes,
+        )
+    )
+    with pytest.raises(ValueError, match="at most six"):
+        query_safe_conjunction(load_t33_inputs(ROOT), atoms)
+
+
+def test_candidate_gate_requires_a_fresh_unsat_replay() -> None:
+    inputs = load_t33_inputs(ROOT)
+    seed_pair = SeedPair((0, 1), inputs.promoted_rows[:2])
+    pool = generate_seed_pair_pool(*seed_pair.rows)
+    promoted = tuple(row_assignment(row) for row in inputs.promoted_rows)
+    atom = next(
+        candidate
+        for candidate in pool
+        if len(
+            tuple(
+                row
+                for row in promoted
+                if evaluate_safe_atom(candidate, row)
+            )
+        )
+        >= 2
+    )
+    core = (atom,)
+    acquisition = RegionQueryRecord.from_query(core, status="UNSAT")
+    atom_digest = hashlib.sha256(canonical_bytes(atom)).hexdigest()
+    reduction = (
+        CoreReductionStep(
+            atom_digest,
+            hashlib.sha256(canonical_bytes([])).hexdigest(),
+            "SAT",
+            True,
+        ),
+    )
+
+    def sat_replay(atoms: tuple[ProjectionAtom, ...]) -> RegionQueryRecord:
+        return RegionQueryRecord.from_query(
+            atoms,
+            status="SAT",
+            witness=semantic_witness_for_row((0,) * len(P30_VARIABLES)),
+            equation_residuals=(0,) * 12,
+            q0_holds=False,
+        )
+
+    rejected = verify_region_candidate(
+        inputs,
+        seed_pair,
+        pool,
+        promoted,
+        core,
+        core,
+        reduction,
+        acquisition,
+        sat_replay,
+    )
+    assert rejected.status == "REJECT"
+    assert rejected.detail == "fresh primary query is not UNSAT"
+
+    accepted = verify_region_candidate(
+        inputs,
+        seed_pair,
+        pool,
+        promoted,
+        core,
+        core,
+        reduction,
+        acquisition,
+        lambda atoms: RegionQueryRecord.from_query(atoms, status="UNSAT"),
+    )
+    assert accepted.status == "PASS"
+    assert accepted.provenance is not None
+    assert accepted.provenance.acquisition_query_sha256 == acquisition.conjunction_sha256
+
+
 def test_t33_adapter_rejects_a_mutated_t32_source(tmp_path: Path) -> None:
     changed = tmp_path / "t32.py"
     changed.write_bytes(
@@ -368,6 +600,19 @@ def test_t33_adapter_rejects_a_mutated_t32_source(tmp_path: Path) -> None:
     )
     with pytest.raises(EvidenceError, match="T32 runner raw SHA-256 changed"):
         _load_t33_inputs_uncached(ROOT, t32_runner_path=changed)
+
+
+def test_t33_adapter_rejects_a_mutated_restart_design(tmp_path: Path) -> None:
+    changed = tmp_path / "restart-design.md"
+    restart_design = ROOT / (
+        "docs/superpowers/specs/"
+        "2026-08-10-base19-safe-region-incremental-core-restart-design.md"
+    )
+    changed.write_bytes(
+        restart_design.read_bytes() + b"\n"
+    )
+    with pytest.raises(EvidenceError, match="restart design raw SHA-256 changed"):
+        _load_t33_inputs_uncached(ROOT, restart_design_path=changed)
 
 
 def load_independent_module() -> object:
@@ -585,3 +830,232 @@ def test_independent_milestone_rejects_a_mutated_equation_source(
     completed = run_independent_milestone(candidate, equations=equations)
     assert completed.returncode != 0
     assert "equation content digest changed" in completed.stderr
+
+
+def test_region_budget_counts_only_distinct_conjunctions_and_stops_exactly() -> None:
+    budget = RegionSearchBudget(pair_limit=2, region_limit=2)
+    budget.enter_pair()
+    budget.enter_pair()
+    with pytest.raises(PairBudgetExhausted):
+        budget.enter_pair()
+    assert budget.register_query(hashlib.sha256(b"first").hexdigest())
+    assert not budget.register_query(hashlib.sha256(b"first").hexdigest())
+    assert budget.register_query(hashlib.sha256(b"second").hexdigest())
+    with pytest.raises(RegionBudgetExhausted):
+        budget.register_query(hashlib.sha256(b"third").hexdigest())
+    assert budget.seed_pair_count == 2
+    assert budget.region_test_count == 2
+
+
+def synthetic_search_fixture():
+    first_row = (0,) * len(P30_VARIABLES)
+    second_row = (0,) * (len(P30_VARIABLES) - 1) + (1,)
+    pair = SeedPair((0, 1), (first_row, second_row))
+    pool = tuple(
+        sorted(
+            (
+                ProjectionAtom("eq", (("L0", 1),), 0),
+                ProjectionAtom("eq", (("R0", 1),), 0),
+                ProjectionAtom("eq", (("L1", 1),), 0),
+            ),
+            key=canonical_bytes,
+        )
+    )
+    assert set(pool) <= set(generate_seed_pair_pool(*pair.rows))
+
+    def model(**changes: int) -> dict[str, int]:
+        assignment = {name: 0 for name in P30_VARIABLES}
+        assignment.update({"L0": 1, "R0": 1, "L1": 1})
+        assignment.update(changes)
+        return assignment
+
+    models = (
+        model(L0=0),
+        model(R0=0),
+        model(L1=0),
+    )
+    promoted = tuple(row_assignment(row) for row in pair.rows)
+    return pair, pool, models, promoted
+
+
+def test_branch_atoms_are_exactly_the_replayed_model_violations() -> None:
+    _, pool, models, promoted = synthetic_search_fixture()
+    record = finite_oracle(models)(())
+    violated, branches = branch_atoms(record, pool, (), promoted)
+    assignment = models[0]
+    assert set(violated) == {
+        atom for atom in pool if not evaluate_safe_atom(atom, assignment)
+    }
+    assert set(branches) == set(violated)
+
+
+def test_countermodel_guided_search_finds_a_minimal_two_atom_core() -> None:
+    pair, pool, models, promoted = synthetic_search_fixture()
+    budget = RegionSearchBudget(pair_limit=1, region_limit=20)
+    budget.enter_pair()
+    query_cache: dict[str, RegionQueryRecord] = {}
+    queried_lengths: list[int] = []
+
+    def query_exact(atoms: tuple[ProjectionAtom, ...]) -> RegionQueryRecord:
+        queried_lengths.append(len(atoms))
+        assert len(atoms) <= 2
+        return finite_oracle(models)(atoms)
+
+    def verify_candidate(
+        minimized: tuple[ProjectionAtom, ...],
+        core_candidate: tuple[ProjectionAtom, ...],
+        reduction: tuple[CoreReductionStep, ...],
+        acquisition: RegionQueryRecord,
+        fresh_acceptance,
+    ) -> CandidateDecision:
+        assert len(minimized) == 2
+        assert fresh_acceptance(minimized).status == "UNSAT"
+        clause = SafeRegionClause(minimized)
+        full_pool = generate_seed_pair_pool(*pair.rows)
+        digest = hashlib.sha256(
+            canonical_bytes([atom.to_payload() for atom in core_candidate])
+        ).hexdigest()
+        provenance = SafeRegionProvenance(
+            clause=clause,
+            seed_pair=pair,
+            pool_size=len(full_pool),
+            pool_sha256=hashlib.sha256(
+                canonical_bytes([atom.to_payload() for atom in full_pool])
+            ).hexdigest(),
+            solver_version="synthetic",
+            solver_parameters=(('phase_selection', 0), ('random_seed', 0)),
+            core_candidate=core_candidate,
+            core_candidate_sha256=digest,
+            acquisition_query_sha256=acquisition.conjunction_sha256,
+            minimization_trace=reduction,
+            promoted_indices=(0, 1),
+            bounded_extent=clause_extent(clause),
+        )
+        return CandidateDecision("PASS", provenance, None)
+
+    result = countermodel_guided_search(
+        pair,
+        pool,
+        promoted,
+        budget,
+        query_cache,
+        query_exact,
+        verify_candidate,
+        max_atoms=2,
+    )
+    assert result.status == "PASS"
+    assert result.provenance is not None
+    assert len(result.provenance.clause.atoms) == 2
+    assert max(queried_lengths) <= 2
+    assert budget.region_test_count == len(query_cache)
+    assert any(visit.purpose == "ACCEPTANCE_REPLAY" for visit in result.trace.visits)
+
+
+def test_countermodel_search_closes_when_model_violates_no_pool_atom() -> None:
+    pair, pool, _, promoted = synthetic_search_fixture()
+    all_true = ({name: 0 for name in P30_VARIABLES},)
+    budget = RegionSearchBudget(pair_limit=1, region_limit=5)
+    budget.enter_pair()
+    result = countermodel_guided_search(
+        pair,
+        pool,
+        promoted,
+        budget,
+        {},
+        finite_oracle(all_true),
+        lambda *_: pytest.fail("SAT-only search must not verify a candidate"),
+        max_atoms=2,
+    )
+    assert result.status == "EXHAUSTED"
+    assert result.trace.visits[0].violated_atom_sha256s == ()
+
+
+def test_countermodel_search_reuses_global_queries_without_recounting() -> None:
+    pair, pool, _, promoted = synthetic_search_fixture()
+    all_true = ({name: 0 for name in P30_VARIABLES},)
+    budget = RegionSearchBudget(pair_limit=2, region_limit=5)
+    cache: dict[str, RegionQueryRecord] = {}
+    traces = []
+    for _ in range(2):
+        budget.enter_pair()
+        result = countermodel_guided_search(
+            pair,
+            pool,
+            promoted,
+            budget,
+            cache,
+            finite_oracle(all_true),
+            lambda *_: pytest.fail("SAT-only search must not verify a candidate"),
+            max_atoms=2,
+        )
+        traces.append(result.trace)
+    assert budget.region_test_count == 1
+    assert traces[0].visits[0].fresh_query is True
+    assert traces[1].visits[0].fresh_query is False
+
+
+def test_countermodel_search_propagates_unknown_without_more_queries() -> None:
+    pair, pool, models, promoted = synthetic_search_fixture()
+    budget = RegionSearchBudget(pair_limit=1, region_limit=20)
+    budget.enter_pair()
+
+    result = countermodel_guided_search(
+        pair,
+        pool,
+        promoted,
+        budget,
+        {},
+        finite_oracle(models),
+        lambda *_: CandidateDecision("UNKNOWN", None, "synthetic gate stopped"),
+        max_atoms=2,
+    )
+    assert result.status == "UNKNOWN"
+    assert result.stop_detail == "synthetic gate stopped"
+    assert budget.region_test_count == len(
+        {visit.query_sha256 for visit in result.trace.visits if visit.fresh_query}
+    )
+
+
+def test_deletion_minimization_is_canonical_and_irreducible() -> None:
+    atoms = (
+        ProjectionAtom("eq", (("L0", 1),), 0),
+        ProjectionAtom("eq", (("R0", 1),), 0),
+        ProjectionAtom("eq", (("L1", 1),), 0),
+    )
+    ordered = tuple(sorted(atoms, key=canonical_bytes))
+
+    def status(candidate: tuple[ProjectionAtom, ...]) -> str:
+        names = {name for atom in candidate for name, _ in atom.terms}
+        return "UNSAT" if {"L0", "R0"} <= names else "SAT"
+
+    minimized, trace = deletion_minimize_core(tuple(reversed(atoms)), status)
+    assert minimized == tuple(atom for atom in ordered if atom.terms[0][0] != "L1")
+    assert tuple(step.status for step in trace) == ("SAT", "UNSAT", "SAT")
+    assert tuple(step.retained for step in trace) == (True, False, True)
+
+
+def test_repository_first_safe_region_reaches_pass_or_exact_stop() -> None:
+    result = find_first_safe_region(load_t33_inputs(ROOT))
+    assert result.status in {
+        "PASS",
+        "NO_SAFE_REGION",
+        "PAIR_BUDGET_EXHAUSTED",
+        "REGION_BUDGET_EXHAUSTED",
+        "UNKNOWN",
+        "INDEPENDENT_DISAGREEMENT",
+    }
+    assert 1 <= result.seed_pair_count <= 153
+    assert 0 <= result.region_test_count <= 2_000
+    if result.status == "PASS":
+        assert result.clause is not None
+        assert result.provenance is not None
+        assert len(result.clause.atoms) <= 6
+        assert result.provenance.bounded_extent >= 4
+        assert len(result.provenance.promoted_indices) >= 2
+        assert result.primary_safety_status == "UNSAT"
+        assert result.independent_status == "PASS"
+        assert result.stop_detail is None
+    else:
+        assert result.clause is None
+        assert result.provenance is None
+        assert result.stop_detail
