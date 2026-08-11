@@ -1043,6 +1043,7 @@ def _run_independent_milestone(
         return "REJECT", f"independent output is malformed: {error}"
     if (
         not isinstance(audit, dict)
+        or audit.get("schema") != "t33-base19-safe-region-milestone-independent-v2"
         or audit.get("status") != "PASS"
         or audit.get("repository_imports") != []
         or audit.get("safety_status") != "UNSAT"
@@ -1050,6 +1051,12 @@ def _run_independent_milestone(
         or audit.get("promoted_indices") != list(provenance.promoted_indices)
         or audit.get("bounded_extent") != provenance.bounded_extent
         or audit.get("enumerated_input_count") != 77_824
+        or audit.get("seed_pair_count") != len(transcript.pairs)
+        or audit.get("region_test_count") != len(transcript.queries)
+        or audit.get("query_record_count") != len(transcript.queries)
+        or audit.get("transcript_status") != "PASS"
+        or audit.get("t33_restart_design_sha256")
+        != T33_RESTART_DESIGN_SHA256
     ):
         return "REJECT", "independent milestone gates differ"
     return "PASS", None

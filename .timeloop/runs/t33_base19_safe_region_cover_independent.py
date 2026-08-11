@@ -42,6 +42,9 @@ T32_DIGESTS = {
 T32_COMMITS = ["df191a5", "515bbdd", "b5ff122", "e4bc16d", "9d17f77"]
 T32_DESIGN_SHA256 = "93cecb3d3ce2c6a2610454f63302e26e2bbe57c7eba1825474bc808ad9ff76bd"
 T33_DESIGN_SHA256 = "dadd1fe42f32d6f61b72609394f2172ca4fac3a6979660d03453058a221322a0"
+T33_RESTART_DESIGN_SHA256 = (
+    "10feaf957e889ca33b9f06441f88258179e2674e13248f72355adcd629b9c854"
+)
 
 P30_VARIABLES = (
     "L0",
@@ -710,6 +713,325 @@ def parse_seed_pair(value: object, promoted: tuple[tuple[int, ...], ...]) -> tup
     return index_tuple, row_tuple
 
 
+def atom_sha256(atom: dict[str, object]) -> str:
+    return hashlib.sha256(canonical_bytes(atom)).hexdigest()
+
+
+def conjunction_sha256(atoms: list[dict[str, object]]) -> str:
+    return hashlib.sha256(canonical_bytes(atoms)).hexdigest()
+
+
+def singleton_extent(atom: dict[str, object]) -> int:
+    names = tuple(
+        name for name in P30_VARIABLES if any(term[0] == name for term in atom["terms"])
+    )
+    domains = tuple(range(19) if name == "D0" else (0, 1) for name in names)
+    satisfying = 0
+    for values in itertools.product(*domains):
+        assignment = dict(zip(names, values, strict=True))
+        if affine_atom_holds(atom, assignment):
+            satisfying += 1
+    free_multiplier = math.prod(
+        19 if name == "D0" else 2 for name in P30_VARIABLES if name not in names
+    )
+    return satisfying * free_multiplier
+
+
+def q0_holds(q0: dict[str, object], output: dict[str, int]) -> bool:
+    clauses = q0.get("clauses")
+    if not isinstance(clauses, list):
+        raise Reject("Q0 clauses changed")
+    return any(
+        isinstance(clause, dict)
+        and isinstance(clause.get("atoms"), list)
+        and all(q0_atom_holds(atom, output) for atom in clause["atoms"])
+        for clause in clauses
+    )
+
+
+def replay_witness(
+    witness: object,
+    selected: tuple[dict[str, object], ...],
+    domains: dict[str, set[int]],
+    input_map: dict[str, str],
+    output_map: dict[str, str],
+    q0: dict[str, object],
+) -> tuple[dict[str, int], dict[str, int], tuple[int, ...], bool]:
+    if not isinstance(witness, dict):
+        raise Reject("SAT query witness must be an object")
+    require_keys(
+        witness, {"input_state", "output_state", "local_state"}, "SAT query witness"
+    )
+    sections = tuple(witness[name] for name in ("input_state", "output_state", "local_state"))
+    if any(not isinstance(section, dict) for section in sections):
+        raise Reject("SAT query witness sections differ")
+    input_value, output_value, local_value = sections
+    expected_input = {f"input:{name}" for name in input_map}
+    expected_output = {f"output:{name}" for name in output_map}
+    if set(input_value) != expected_input or set(output_value) != expected_output:
+        raise Reject("SAT query witness boundary variables differ")
+    assignment: dict[str, int] = {}
+    input_assignment: dict[str, int] = {}
+    output_assignment: dict[str, int] = {}
+    for scoped, value in input_value.items():
+        canonical = scoped.removeprefix("input:")
+        if not is_int(value):
+            raise Reject("SAT query witness input value differs")
+        assignment[input_map[canonical]] = value
+        input_assignment[canonical] = value
+    for scoped, value in output_value.items():
+        canonical = scoped.removeprefix("output:")
+        if not is_int(value):
+            raise Reject("SAT query witness output value differs")
+        assignment[output_map[canonical]] = value
+        output_assignment[canonical] = value
+    for scoped, value in local_value.items():
+        if not isinstance(scoped, str) or not scoped.startswith("local:") or not is_int(value):
+            raise Reject("SAT query witness local value differs")
+        original = scoped.removeprefix("local:")
+        if original in assignment:
+            raise Reject("SAT query witness sections overlap")
+        assignment[original] = value
+    if set(assignment) != set(domains) or any(
+        value not in domains[name] for name, value in assignment.items()
+    ):
+        raise Reject("SAT query witness full assignment differs")
+    residuals = tuple(equation_residual(equation, assignment, 19) for equation in selected)
+    return input_assignment, output_assignment, residuals, q0_holds(q0, output_assignment)
+
+
+def parse_incremental_transcript(
+    value: object,
+    promoted: tuple[tuple[int, ...], ...],
+    domains: dict[str, set[int]],
+    constraints: tuple[Constraint, ...],
+    selected: tuple[dict[str, object], ...],
+    input_map: dict[str, str],
+    output_map: dict[str, str],
+    q0: dict[str, object],
+) -> tuple[
+    dict[str, tuple[list[dict[str, object]], str]],
+    list[dict[str, object]],
+]:
+    if not isinstance(value, dict):
+        raise Reject("incremental transcript must be an object")
+    require_keys(value, {"queries", "pairs"}, "incremental transcript")
+    queries_value = value["queries"]
+    pairs_value = value["pairs"]
+    if not isinstance(queries_value, list) or not isinstance(pairs_value, list):
+        raise Reject("incremental transcript lists differ")
+    pairs: list[dict[str, object]] = []
+    atom_by_digest: dict[str, dict[str, object]] = {}
+    expected_pairs = list(itertools.combinations(range(18), 2))
+    for pair_index, pair_value in enumerate(pairs_value):
+        if not isinstance(pair_value, dict):
+            raise Reject("pair trace must be an object")
+        require_keys(
+            pair_value,
+            {"seed_pair", "pool_size", "pool_sha256", "visits"},
+            "pair trace",
+        )
+        indices, rows = parse_seed_pair(pair_value["seed_pair"], promoted)
+        if pair_index >= len(expected_pairs) or indices != expected_pairs[pair_index]:
+            raise Reject("pair trace order differs")
+        pool = generate_seed_pair_pool(*rows)
+        if pair_value["pool_size"] != len(pool) or pair_value["pool_sha256"] != hashlib.sha256(
+            canonical_bytes(pool)
+        ).hexdigest():
+            raise Reject("pair trace pool boundary differs")
+        visits = pair_value["visits"]
+        if not isinstance(visits, list) or not visits:
+            raise Reject("pair trace visits differ")
+        pool_by_digest = {atom_sha256(atom): atom for atom in pool}
+        for digest, atom in pool_by_digest.items():
+            previous = atom_by_digest.setdefault(digest, atom)
+            if previous != atom:
+                raise Reject("seed-pool atom digest collision")
+        pairs.append(
+            {
+                "indices": indices,
+                "pool": pool,
+                "pool_by_digest": pool_by_digest,
+                "visits": visits,
+            }
+        )
+
+    query_by_digest: dict[str, tuple[list[dict[str, object]], str]] = {}
+    query_order: list[str] = []
+    query_payload_by_digest: dict[str, dict[str, object]] = {}
+    for query in queries_value:
+        if not isinstance(query, dict):
+            raise Reject("query record must be an object")
+        require_keys(
+            query,
+            {
+                "conjunction",
+                "conjunction_sha256",
+                "status",
+                "witness",
+                "equation_residuals",
+                "q0_holds",
+            },
+            "query record",
+        )
+        digests = query["conjunction"]
+        if not isinstance(digests, list) or len(digests) > 6 or any(
+            not isinstance(digest, str) or digest not in atom_by_digest for digest in digests
+        ):
+            raise Reject("query conjunction atom digests differ")
+        atoms = [atom_by_digest[digest] for digest in digests]
+        if [canonical_bytes(atom) for atom in atoms] != sorted(
+            {canonical_bytes(atom) for atom in atoms}
+        ):
+            raise Reject("query conjunction is not canonical and distinct")
+        digest = conjunction_sha256(atoms)
+        if query["conjunction_sha256"] != digest:
+            raise Reject("query digest differs")
+        if digest in query_by_digest:
+            raise Reject("query record digest repeats")
+        status = query["status"]
+        if status == "SAT":
+            if query["witness"] is None or query["equation_residuals"] != [0] * 12 or query[
+                "q0_holds"
+            ] is not False:
+                raise Reject("SAT query replay fields differ")
+        elif status == "UNSAT":
+            if query["witness"] is not None or query["equation_residuals"] != [] or query[
+                "q0_holds"
+            ] is not None:
+                raise Reject("UNSAT query replay fields differ")
+        else:
+            raise Reject("query status differs")
+        query_by_digest[digest] = (atoms, status)
+        query_payload_by_digest[digest] = query
+        query_order.append(digest)
+
+    fresh_order: list[str] = []
+    for pair in pairs:
+        pool = pair["pool"]
+        pool_by_digest = pair["pool_by_digest"]
+        visits = pair["visits"]
+        seen: dict[str, dict[str, object]] = {}
+        prior_inputs: list[tuple[tuple[str, int], ...]] = []
+        for visit_index, visit in enumerate(visits):
+            if not isinstance(visit, dict):
+                raise Reject("search visit must be an object")
+            require_keys(
+                visit,
+                {
+                    "purpose",
+                    "parent_sha256",
+                    "query_sha256",
+                    "fresh_query",
+                    "violated_atom_sha256s",
+                    "branch_atom_sha256s",
+                },
+                "search visit",
+            )
+            purpose = visit["purpose"]
+            digest = visit["query_sha256"]
+            parent = visit["parent_sha256"]
+            if purpose not in {"ROOT", "SEARCH", "REDUCTION", "ACCEPTANCE_REPLAY"}:
+                raise Reject("search visit purpose differs")
+            if digest not in query_by_digest or not isinstance(visit["fresh_query"], bool):
+                raise Reject("search visit query link differs")
+            atoms, status = query_by_digest[digest]
+            if not {canonical_bytes(atom) for atom in atoms} <= {
+                canonical_bytes(atom) for atom in pool
+            }:
+                raise Reject("search query leaves its pair pool")
+            if visit_index == 0:
+                if purpose != "ROOT" or parent is not None or atoms:
+                    raise Reject("pair root visit differs")
+            elif purpose == "ROOT":
+                raise Reject("pair repeats its root visit")
+            if parent is not None and parent not in seen:
+                raise Reject("search visit parent link differs")
+            if purpose == "SEARCH":
+                if parent is None:
+                    raise Reject("search child omits its parent")
+                parent_atoms = query_by_digest[parent][0]
+                if len(atoms) != len(parent_atoms) + 1 or not {
+                    canonical_bytes(atom) for atom in parent_atoms
+                } < {canonical_bytes(atom) for atom in atoms}:
+                    raise Reject("search child conjunction differs")
+            violated = visit["violated_atom_sha256s"]
+            branches = visit["branch_atom_sha256s"]
+            if (
+                not isinstance(violated, list)
+                or not isinstance(branches, list)
+                or len(set(violated)) != len(violated)
+                or set(violated) != set(branches)
+                or any(digest not in pool_by_digest for digest in violated)
+            ):
+                raise Reject("search visit branch set differs")
+            query_payload = query_payload_by_digest[digest]
+            if status == "UNSAT":
+                if violated or branches:
+                    raise Reject("UNSAT search visit has branch atoms")
+            else:
+                input_assignment, _, residuals, witness_q0 = replay_witness(
+                    query_payload["witness"],
+                    selected,
+                    domains,
+                    input_map,
+                    output_map,
+                    q0,
+                )
+                if residuals != tuple(query_payload["equation_residuals"]) or any(residuals):
+                    raise Reject("SAT query equation replay differs")
+                if witness_q0 is not query_payload["q0_holds"] or witness_q0:
+                    raise Reject("SAT query Q0 replay differs")
+                if not all(affine_atom_holds(atom, input_assignment) for atom in atoms):
+                    raise Reject("SAT query witness violates its conjunction")
+                canonical_input = tuple((name, input_assignment[name]) for name in P30_VARIABLES)
+                if canonical_input not in prior_inputs:
+                    prior_inputs.append(canonical_input)
+                actual_violated = [
+                    atom_sha256(atom)
+                    for atom in pool
+                    if not affine_atom_holds(atom, input_assignment)
+                ]
+
+                def branch_key(
+                    atom_digest: str,
+                    _pool_by_digest: dict[str, dict[str, object]] = pool_by_digest,
+                    _prior_inputs: list[tuple[tuple[str, int], ...]] = prior_inputs,
+                ) -> tuple[object, ...]:
+                    atom = _pool_by_digest[atom_digest]
+                    excluded = sum(
+                        not affine_atom_holds(atom, dict(prior))
+                        for prior in _prior_inputs
+                    )
+                    coverage = sum(
+                        row_holds([atom], promoted_row) for promoted_row in promoted
+                    )
+                    return (
+                        -excluded,
+                        -coverage,
+                        -singleton_extent(atom),
+                        canonical_bytes(atom),
+                    )
+
+                actual_branches = sorted(actual_violated, key=branch_key)
+                if violated != actual_violated:
+                    raise Reject("search visit violated atoms differ")
+                if branches != actual_branches:
+                    raise Reject("search visit branch order differs")
+            if visit["fresh_query"]:
+                fresh_order.append(digest)
+            seen[digest] = visit
+    if fresh_order != query_order or len(set(fresh_order)) != len(fresh_order):
+        raise Reject("fresh-query order differs")
+
+    for digest, (atoms, status) in query_by_digest.items():
+        bad = first_bad_solution(domains, constraints, input_map, output_map, q0, atoms)
+        actual_status = "SAT" if bad is not None else "UNSAT"
+        if status != actual_status:
+            raise Reject(f"claimed {status} query is {actual_status}: {digest}")
+    return query_by_digest, pairs
+
+
 def verify_provenance(
     provenance: object,
     clause_atoms: list[dict[str, object]],
@@ -719,6 +1041,8 @@ def verify_provenance(
     input_map: dict[str, str],
     output_map: dict[str, str],
     q0: dict[str, object],
+    query_by_digest: dict[str, tuple[list[dict[str, object]], str]],
+    pairs: list[dict[str, object]],
 ) -> tuple[tuple[int, int], tuple[int, ...], int]:
     if not isinstance(provenance, dict):
         raise Reject("safe-region provenance must be an object")
@@ -731,8 +1055,9 @@ def verify_provenance(
             "pool_sha256",
             "solver_version",
             "solver_parameters",
-            "named_core",
-            "named_core_sha256",
+            "core_candidate",
+            "core_candidate_sha256",
+            "acquisition_query_sha256",
             "minimization_trace",
             "promoted_indices",
             "bounded_extent",
@@ -757,22 +1082,37 @@ def verify_provenance(
         "solver_version"
     ]:
         raise Reject("solver version differs")
-    named_core_value = provenance["named_core"]
-    if not isinstance(named_core_value, list):
-        raise Reject("named core must be a list")
-    named_core = [parse_affine_atom(atom) for atom in named_core_value]
-    core_bytes = [canonical_bytes(atom) for atom in named_core]
-    if not named_core or core_bytes != sorted(set(core_bytes)):
-        raise Reject("named core is not canonical and distinct")
+    core_value = provenance["core_candidate"]
+    if not isinstance(core_value, list):
+        raise Reject("core candidate must be a list")
+    core_candidate = [parse_affine_atom(atom) for atom in core_value]
+    core_bytes = [canonical_bytes(atom) for atom in core_candidate]
+    if not 1 <= len(core_candidate) <= 6 or core_bytes != sorted(set(core_bytes)):
+        raise Reject("core candidate is not canonical and distinct")
     if not set(core_bytes) <= {canonical_bytes(atom) for atom in pool}:
-        raise Reject("named core contains an atom outside the seed pool")
-    core_digest = hashlib.sha256(canonical_bytes(named_core)).hexdigest()
-    if provenance["named_core_sha256"] != core_digest:
-        raise Reject("named-core digest differs")
+        raise Reject("core candidate contains an atom outside the seed pool")
+    core_digest = hashlib.sha256(canonical_bytes(core_candidate)).hexdigest()
+    if (
+        provenance["core_candidate_sha256"] != core_digest
+        or provenance["acquisition_query_sha256"] != core_digest
+    ):
+        raise Reject("acquisition core digest differs")
+    if query_by_digest.get(core_digest) != (core_candidate, "UNSAT"):
+        raise Reject("acquisition query record differs")
+    pair = next((item for item in pairs if item["indices"] == seed_indices), None)
+    if pair is None:
+        raise Reject("acquisition seed pair has no trace")
+    visits = pair["visits"]
+    if not any(
+        visit["query_sha256"] == core_digest
+        and visit["purpose"] in {"ROOT", "SEARCH"}
+        for visit in visits
+    ):
+        raise Reject("acquisition search visit is missing")
     trace = provenance["minimization_trace"]
     if not isinstance(trace, list) or not trace:
         raise Reject("minimization trace is empty")
-    current = list(named_core)
+    current = list(core_candidate)
     for step in trace:
         if not isinstance(step, dict):
             raise Reject("core-reduction step must be an object")
@@ -801,12 +1141,28 @@ def verify_provenance(
         status = "SAT" if found is not None else "UNSAT"
         if step["status"] != status or step["retained"] != (status == "SAT"):
             raise Reject("core-reduction status differs")
+        candidate_digest = hashlib.sha256(canonical_bytes(candidate)).hexdigest()
+        if not any(
+            visit["purpose"] == "REDUCTION"
+            and visit["parent_sha256"] == core_digest
+            and visit["query_sha256"] == candidate_digest
+            for visit in visits
+        ):
+            raise Reject("core-reduction visit is missing")
         if status == "UNSAT":
             current = candidate
     if [canonical_bytes(atom) for atom in current] != [
         canonical_bytes(atom) for atom in clause_atoms
     ]:
         raise Reject("minimization trace does not produce the clause")
+    clause_digest = hashlib.sha256(canonical_bytes(clause_atoms)).hexdigest()
+    if not any(
+        visit["purpose"] == "ACCEPTANCE_REPLAY"
+        and visit["parent_sha256"] == core_digest
+        and visit["query_sha256"] == clause_digest
+        for visit in visits
+    ):
+        raise Reject("fresh acceptance replay is missing")
     indices = provenance["promoted_indices"]
     if not isinstance(indices, list) or indices != sorted(set(indices)) or any(
         not is_int(index) or not 0 <= index < 18 for index in indices
@@ -878,12 +1234,13 @@ def load_frozen_sources(
 
 
 def parse_milestone(payload: dict[str, object]) -> tuple[
-    list[dict[str, object]], object
+    list[dict[str, object]], object, object, int, int
 ]:
     require_keys(
         payload,
         {
             "schema",
+            "status",
             "source_digests",
             "t29_artifact_digests",
             "t30_artifact_digests",
@@ -891,14 +1248,20 @@ def parse_milestone(payload: dict[str, object]) -> tuple[
             "t32_commits",
             "t32_design_sha256",
             "t33_design_sha256",
+            "t33_restart_design_sha256",
             "clause",
             "provenance",
+            "seed_pair_count",
+            "region_test_count",
+            "search_transcript",
             "primary_safety_status",
         },
         "milestone",
     )
-    if payload["schema"] != "t33-base19-safe-region-milestone-v1":
+    if payload["schema"] != "t33-base19-safe-region-milestone-v2":
         raise Reject("milestone schema changed")
+    if payload["status"] != "PASS":
+        raise Reject("milestone status changed")
     if payload["source_digests"] != {
         name: SOURCE_DIGESTS[name] for name in ("equations", "frontier", "provenances")
     }:
@@ -914,11 +1277,27 @@ def parse_milestone(payload: dict[str, object]) -> tuple[
     if (
         payload["t32_design_sha256"] != T32_DESIGN_SHA256
         or payload["t33_design_sha256"] != T33_DESIGN_SHA256
+        or payload["t33_restart_design_sha256"] != T33_RESTART_DESIGN_SHA256
     ):
         raise Reject("milestone design boundary changed")
     if payload["primary_safety_status"] != "UNSAT":
         raise Reject("milestone primary safety status changed")
-    return parse_clause(payload["clause"]), payload["provenance"]
+    pair_count = payload["seed_pair_count"]
+    region_count = payload["region_test_count"]
+    if (
+        not is_int(pair_count)
+        or not 1 <= pair_count <= 153
+        or not is_int(region_count)
+        or not 1 <= region_count <= 2_000
+    ):
+        raise Reject("milestone counters differ")
+    return (
+        parse_clause(payload["clause"]),
+        payload["provenance"],
+        payload["search_transcript"],
+        pair_count,
+        region_count,
+    )
 
 
 def _add_raw_arguments(parser: argparse.ArgumentParser) -> None:
@@ -944,10 +1323,22 @@ def _add_raw_arguments(parser: argparse.ArgumentParser) -> None:
 def audit_milestone(args: argparse.Namespace) -> dict[str, object]:
     equations, frontier, q0 = load_frozen_sources(args)
     _, candidate = load_object(args.candidate, "safe-region milestone")
-    atoms, provenance = parse_milestone(candidate)
-    domains, constraints, _, input_map, output_map, promoted = layer_relation(
+    atoms, provenance, transcript, pair_count, region_count = parse_milestone(candidate)
+    domains, constraints, selected, input_map, output_map, promoted = layer_relation(
         equations, frontier
     )
+    query_by_digest, pairs = parse_incremental_transcript(
+        transcript,
+        promoted,
+        domains,
+        constraints,
+        selected,
+        input_map,
+        output_map,
+        q0,
+    )
+    if len(pairs) != pair_count or len(query_by_digest) != region_count:
+        raise Reject("milestone transcript counter differs")
     bad = first_bad_solution(
         domains, constraints, input_map, output_map, q0, atoms
     )
@@ -969,6 +1360,8 @@ def audit_milestone(args: argparse.Namespace) -> dict[str, object]:
         input_map,
         output_map,
         q0,
+        query_by_digest,
+        pairs,
     )
     if len(promoted_indices) < 2 or extent < 4:
         raise Reject("safe-region diversity gate failed")
@@ -987,7 +1380,7 @@ def audit_milestone(args: argparse.Namespace) -> dict[str, object]:
     if predicate_bytes >= table_bytes:
         raise Reject("safe-region milestone is not compact")
     return {
-        "schema": "t33-base19-safe-region-milestone-independent-v1",
+        "schema": "t33-base19-safe-region-milestone-independent-v2",
         "status": "PASS",
         "repository_imports": [],
         "seed_indices": list(seed_indices),
@@ -997,6 +1390,11 @@ def audit_milestone(args: argparse.Namespace) -> dict[str, object]:
         "covered_table_bytes": table_bytes,
         "safety_status": "UNSAT",
         "enumerated_input_count": 77_824,
+        "seed_pair_count": pair_count,
+        "region_test_count": region_count,
+        "query_record_count": len(query_by_digest),
+        "transcript_status": "PASS",
+        "t33_restart_design_sha256": T33_RESTART_DESIGN_SHA256,
     }
 
 

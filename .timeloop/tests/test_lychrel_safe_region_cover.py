@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 from dataclasses import replace
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -64,11 +65,13 @@ from t33_base19_safe_region_cover import (  # noqa: E402
     RegionBudgetExhausted,
     RegionSearchBudget,
     _load_t33_inputs_uncached,
+    _milestone_payload,
     branch_atoms,
     countermodel_guided_search,
     deletion_minimize_core,
     exact_bad_input_status,
     find_first_safe_region,
+    input_assignment_from_witness,
     load_t33_inputs,
     query_bad_input,
     query_safe_conjunction,
@@ -723,60 +726,100 @@ def test_independent_seed_pool_matches_primary_canonical_bytes() -> None:
     assert module.generate_seed_pair_pool(first, second) == primary
 
 
+@cache
 def weak_milestone_payload() -> dict[str, object]:
-    frontier = json.loads(FRONTIER.read_text(encoding="utf-8"))
-    layer = next(item for item in frontier["layers"] if item["layer"] == 31)
-    rows = [transition["input_state"] for transition in layer["transitions"]]
-    atom = {"relation": "le", "terms": [["D0", 1]], "constant": 18}
+    inputs = load_t33_inputs(ROOT)
+    seed_pair = SeedPair((0, 1), inputs.promoted_rows[:2])
+    pool = generate_seed_pair_pool(*seed_pair.rows)
+    promoted = tuple(row_assignment(row) for row in inputs.promoted_rows)
+    root = query_safe_conjunction(inputs, ())
+    assert root.witness is not None
+    root_assignment = input_assignment_from_witness(root.witness)
+    prior = (tuple((name, root_assignment[name]) for name in P30_VARIABLES),)
+    violated, branches = branch_atoms(root, pool, prior, promoted)
+    assert len(branches) >= 2
+    atom = branches[0]
+    acquisition = RegionQueryRecord.from_query((atom,), status="UNSAT")
     atom_digest = hashlib.sha256(canonical_bytes(atom)).hexdigest()
-    core_digest = hashlib.sha256(canonical_bytes([atom])).hexdigest()
-    return {
-        "schema": "t33-base19-safe-region-milestone-v1",
-        "source_digests": {
-            "equations": "ff79f31cbc55d7c463e6a14faedaad58d880509d5769e56b9a4bd06ebacd9040",
-            "frontier": "0d25cf4645b3c187c74511b0677ea1481c4ba6c923a726ffea9747ee1b4a64c0",
-            "provenances": "cac34c9317e8209bfea6a4e4fb37ef204346ccde54424f8c93dd8a8e40619302",
-        },
-        "t29_artifact_digests": {
-            "certificate": "1c234891f001cb3a59e5670560ab26e3cb248a943e249aee049aac7d32c7db5a",
-            "dataset": "6603e381805db845ef9388d234e36f31eba510d838ac98c143c238c2ff144995",
-            "evidence": "c1e3dc4bc4ab07207a6ab49d6a9c9fd86486013abeaf016b6ecd59c9755e1d32",
-            "independent": "9f926208cc7416e24d811f6cd54485d19741b6f8ffe44f3b365b2f816e579644",
-            "trace": "c56877975293c10575009a691b1d1bbde376838f805d232a2c18a4d00b2c4715",
-        },
-        "t30_artifact_digests": {
-            "certificate": "3ac0b6ae254ad8bb7c7b19754335ea6a81bea77a0dc808e7eda1cd8994839892",
-            "evidence": "4b327e826a8b2462eedffa2cf572b77155fc95d8e7b94a4430d7f0331f75bd2a",
-            "independent": "56037d658f628ffa526f9adb710746231806450717f7bde5c0655f4ed6388639",
-            "report": "3ea55f8410887d3a522436be38bf3d9b5c010ac3c412d48405cd69f19828b95c",
-        },
-        "t32_source_digests": T32_SOURCE_DIGESTS,
-        "t32_commits": ["df191a5", "515bbdd", "b5ff122", "e4bc16d", "9d17f77"],
-        "t32_design_sha256": "93cecb3d3ce2c6a2610454f63302e26e2bbe57c7eba1825474bc808ad9ff76bd",
-        "t33_design_sha256": "dadd1fe42f32d6f61b72609394f2172ca4fac3a6979660d03453058a221322a0",
-        "clause": {"atoms": [atom]},
-        "provenance": {
-            "clause": {"atoms": [atom]},
-            "seed_pair": {"indices": [0, 1], "rows": rows[:2]},
-            "pool_size": 1,
-            "pool_sha256": hashlib.sha256(canonical_bytes([atom])).hexdigest(),
-            "solver_version": "test",
-            "solver_parameters": [["phase_selection", 0], ["random_seed", 0]],
-            "named_core": [atom],
-            "named_core_sha256": core_digest,
-            "minimization_trace": [
-                {
-                    "removed_atom_sha256": atom_digest,
-                    "candidate_sha256": hashlib.sha256(canonical_bytes([])).hexdigest(),
-                    "status": "SAT",
-                    "retained": True,
-                }
-            ],
-            "promoted_indices": list(range(18)),
-            "bounded_extent": 77_824,
-        },
-        "primary_safety_status": "UNSAT",
-    }
+    violated_digests = tuple(
+        hashlib.sha256(canonical_bytes(item)).hexdigest() for item in violated
+    )
+    branch_digests = tuple(
+        hashlib.sha256(canonical_bytes(item)).hexdigest() for item in branches
+    )
+    visits = (
+        SearchVisit(
+            "ROOT",
+            None,
+            root.conjunction_sha256,
+            True,
+            violated_digests,
+            branch_digests,
+        ),
+        SearchVisit(
+            "SEARCH",
+            root.conjunction_sha256,
+            acquisition.conjunction_sha256,
+            True,
+            (),
+            (),
+        ),
+        SearchVisit(
+            "REDUCTION",
+            acquisition.conjunction_sha256,
+            root.conjunction_sha256,
+            False,
+            violated_digests,
+            branch_digests,
+        ),
+        SearchVisit(
+            "ACCEPTANCE_REPLAY",
+            acquisition.conjunction_sha256,
+            acquisition.conjunction_sha256,
+            False,
+            (),
+            (),
+        ),
+    )
+    pool_digest = hashlib.sha256(
+        canonical_bytes([item.to_payload() for item in pool])
+    ).hexdigest()
+    trace = SeedPairSearchTrace(
+        seed_pair,
+        len(pool),
+        pool_digest,
+        visits,
+    )
+    transcript = IncrementalSearchTranscript((root, acquisition), (trace,))
+    clause = SafeRegionClause((atom,))
+    promoted_indices = tuple(
+        index
+        for index, assignment in enumerate(promoted)
+        if evaluate_safe_clause(clause, assignment)
+    )
+    reduction = (
+        CoreReductionStep(
+            atom_digest,
+            root.conjunction_sha256,
+            "SAT",
+            True,
+        ),
+    )
+    provenance = SafeRegionProvenance(
+        clause=clause,
+        seed_pair=seed_pair,
+        pool_size=len(pool),
+        pool_sha256=pool_digest,
+        solver_version="fixture",
+        solver_parameters=(("phase_selection", 0), ("random_seed", 0)),
+        core_candidate=(atom,),
+        core_candidate_sha256=acquisition.conjunction_sha256,
+        acquisition_query_sha256=acquisition.conjunction_sha256,
+        minimization_trace=reduction,
+        promoted_indices=promoted_indices,
+        bounded_extent=clause_extent(clause),
+    )
+    return _milestone_payload(inputs, clause, provenance, transcript)
 
 
 def run_independent_milestone(
@@ -810,12 +853,57 @@ def run_independent_milestone(
     )
 
 
-def test_independent_milestone_rejects_a_bad_successor(tmp_path: Path) -> None:
+def run_independent_payload(
+    payload: dict[str, object], tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
     candidate = tmp_path / "candidate.json"
-    candidate.write_bytes(canonical_bytes(weak_milestone_payload()) + b"\n")
-    completed = run_independent_milestone(candidate)
+    candidate.write_bytes(canonical_bytes(payload) + b"\n")
+    return run_independent_milestone(candidate)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    (
+        (
+            lambda payload: payload["search_transcript"]["queries"][0].__setitem__(
+                "conjunction_sha256", "0" * 64
+            ),
+            "query digest",
+        ),
+        (
+            lambda payload: payload["search_transcript"]["pairs"][0]["visits"][
+                0
+            ].__setitem__("fresh_query", False),
+            "fresh-query",
+        ),
+        (
+            lambda payload: payload["search_transcript"]["pairs"][0]["visits"][
+                0
+            ]["branch_atom_sha256s"].reverse(),
+            "branch order",
+        ),
+        (
+            lambda payload: payload.__setitem__(
+                "region_test_count", payload["region_test_count"] + 1
+            ),
+            "counter",
+        ),
+    ),
+)
+def test_independent_rejects_corrupted_incremental_transcript(
+    mutate, message: str, tmp_path: Path
+) -> None:
+    payload = copy.deepcopy(weak_milestone_payload())
+    mutate(payload)
+    completed = run_independent_payload(payload, tmp_path)
     assert completed.returncode != 0
-    assert "safe-region counterexample" in completed.stderr
+    assert message in completed.stderr
+
+
+def test_independent_milestone_rejects_a_bad_successor(tmp_path: Path) -> None:
+    completed = run_independent_payload(weak_milestone_payload(), tmp_path)
+    assert completed.returncode != 0
+    assert "claimed UNSAT query is SAT" in completed.stderr
 
 
 def test_independent_milestone_rejects_a_mutated_equation_source(
