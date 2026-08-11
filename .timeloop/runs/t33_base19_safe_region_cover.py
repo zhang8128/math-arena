@@ -993,6 +993,39 @@ def _milestone_payload(
     }
 
 
+def milestone_result_payload(
+    inputs: T33Inputs, result: FirstSafeRegionResult
+) -> dict[str, object]:
+    """Serialize one PASS or hard STOP with the complete frozen boundary."""
+    source = dict(inputs.source_digests)
+    payload: dict[str, object] = {
+        "schema": "t33-base19-safe-region-milestone-v2",
+        "status": result.status,
+        "source_digests": {
+            name: source[name] for name in ("equations", "frontier", "provenances")
+        },
+        "t29_artifact_digests": dict(inputs.t29_artifact_digests),
+        "t30_artifact_digests": dict(inputs.t30_artifact_digests),
+        "t32_source_digests": dict(inputs.t32_source_digests),
+        "t32_commits": list(inputs.t32_commits),
+        "t32_design_sha256": inputs.t32_design_sha256,
+        "t33_design_sha256": inputs.t33_design_sha256,
+        "t33_restart_design_sha256": inputs.t33_restart_design_sha256,
+        "seed_pair_count": result.seed_pair_count,
+        "region_test_count": result.region_test_count,
+        "search_transcript": result.search_transcript.to_payload(),
+        "primary_safety_status": result.primary_safety_status,
+        "independent_status": result.independent_status,
+        "stop_detail": result.stop_detail,
+    }
+    if result.status == "PASS":
+        if result.clause is None or result.provenance is None:
+            raise AssertionError("PASS result omitted its candidate")
+        payload["clause"] = result.clause.to_payload()
+        payload["provenance"] = result.provenance.to_payload()
+    return payload
+
+
 def _run_independent_milestone(
     inputs: T33Inputs,
     clause: SafeRegionClause,
@@ -1247,8 +1280,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command != "milestone":
         raise EvidenceError(f"unsupported command: {args.command}")
-    result = find_first_safe_region(load_t33_inputs(Path(__file__).resolve().parents[2]))
-    print(canonical_bytes(result.to_payload()).decode("utf-8"))
+    inputs = load_t33_inputs(Path(__file__).resolve().parents[2])
+    result = find_first_safe_region(inputs)
+    print(canonical_bytes(milestone_result_payload(inputs, result)).decode("utf-8"))
     return 0
 
 

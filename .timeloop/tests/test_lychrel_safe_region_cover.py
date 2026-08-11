@@ -61,6 +61,7 @@ from t33_base19_safe_region_cover import (  # noqa: E402
     T32_SOURCE_DIGESTS,
     CandidateDecision,
     EvidenceError,
+    FirstSafeRegionResult,
     PairBudgetExhausted,
     RegionBudgetExhausted,
     RegionSearchBudget,
@@ -73,6 +74,7 @@ from t33_base19_safe_region_cover import (  # noqa: E402
     find_first_safe_region,
     input_assignment_from_witness,
     load_t33_inputs,
+    milestone_result_payload,
     query_bad_input,
     query_safe_conjunction,
     verify_region_candidate,
@@ -616,6 +618,41 @@ def test_t33_adapter_rejects_a_mutated_restart_design(tmp_path: Path) -> None:
     )
     with pytest.raises(EvidenceError, match="restart design raw SHA-256 changed"):
         _load_t33_inputs_uncached(ROOT, restart_design_path=changed)
+
+
+def test_milestone_stop_payload_binds_boundary_and_omits_candidate() -> None:
+    inputs = load_t33_inputs(ROOT)
+    seed_pair = SeedPair((0, 1), inputs.promoted_rows[:2])
+    pool = generate_seed_pair_pool(*seed_pair.rows)
+    query = RegionQueryRecord.from_query((), status="UNSAT")
+    visit = SearchVisit(
+        "ROOT", None, query.conjunction_sha256, True, (), ()
+    )
+    trace = SeedPairSearchTrace(
+        seed_pair,
+        len(pool),
+        hashlib.sha256(
+            canonical_bytes([atom.to_payload() for atom in pool])
+        ).hexdigest(),
+        (visit,),
+    )
+    transcript = IncrementalSearchTranscript((query,), (trace,))
+    result = FirstSafeRegionResult(
+        status="UNKNOWN",
+        clause=None,
+        provenance=None,
+        seed_pair_count=1,
+        region_test_count=1,
+        primary_safety_status=None,
+        independent_status=None,
+        stop_detail="synthetic stop",
+        search_transcript=transcript,
+    )
+    payload = milestone_result_payload(inputs, result)
+    assert payload["t33_restart_design_sha256"] == inputs.t33_restart_design_sha256
+    assert payload["stop_detail"] == "synthetic stop"
+    assert "clause" not in payload
+    assert "provenance" not in payload
 
 
 def load_independent_module() -> object:
