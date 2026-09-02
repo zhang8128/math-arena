@@ -311,7 +311,7 @@ One line per turn, the ground truth for yield and stall detection:
   "frames_filed": [],
   "started": "2026-09-03T02:14:09Z",
   "seconds": 1043.2,
-  "commit": "abc1234",
+  "base_commit": "abc1234",
   "exit_reason": "completed",
   "invalid_reason": null,
   "brief_digest": "sha256:...",
@@ -320,7 +320,12 @@ One line per turn, the ground truth for yield and stall detection:
 ```
 
 `exit_reason` is one of `completed`, `timeout`, `nonzero_exit`,
-`schema`, `interrupted`. `turn_id` continues the ledger's `T<n>`
+`schema`, `interrupted`. `base_commit` is HEAD before the turn's commit;
+the record cannot hold its own commit hash because writing the hash would
+change the commit. The turn's commit is the child of `base_commit` whose
+message begins with `turn: <turn_id>`. Lines in the turn log that carry an
+`event` field instead of `turn_id` are run events (`halt`, `lease_expired`,
+`interrupted`) and are skipped when computing yield. `turn_id` continues the ledger's `T<n>`
 numbering: the dispatcher takes one plus the largest `T<n>` present in
 either the ledger or the turn log. The ledger line a productive turn
 appends must begin with that id.
@@ -491,8 +496,15 @@ Gates in order. Each must pass before the next starts.
 - Who numbers turns? The dispatcher, continuing the ledger's `T<n>` series.
 - Who writes `frames.jsonl`? Only the recorder, from the result JSON.
 - What if the working tree is dirty? The recorder acts only on the delta
-  created during the turn. Pre-existing changes are never staged or
-  reverted.
+  created during the turn, judged by content hash rather than git status
+  code. A dirty file the turn does not touch is never staged or reverted. A
+  dirty file the turn does edit, such as an uncommitted ledger, is committed
+  whole with the turn, pending edits included; `bin/research` warns about
+  dirty paths under `.timeloop/` before starting. The dispatcher's own
+  writes (parking, the brief) are committed with the turn but are not held
+  against the model in the files-changed check, which is why the recorder
+  takes one snapshot before the dispatcher acts and one right before the
+  model starts.
 - What if a turn needs hours of compute? It records the plan as NEXT and
   stops. The room rule stands: a smaller verified range beats a larger
   unverified one.
