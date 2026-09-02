@@ -134,3 +134,118 @@ def test_apply_stalls_parks_and_unpark_revives(tmp_path: Path) -> None:
     rec = next(r for r in read_jsonl(root / "pool.jsonl") if r["slug"] == "a")
     assert rec["status"] == "open" and "cooldown_until" not in rec
     assert rec["parked_reason"].startswith("3 consecutive")  # history kept
+
+
+import dataclasses  # noqa: E402
+
+from driver.dispatcher import Brief, select  # noqa: E402, F401
+from driver.state import State, Target, next_turn_id  # noqa: E402, F401
+
+
+def with_next(root: Path, slug: str) -> State:
+    """Load state and inject a NEXT line for one target, as the loop does from index.md."""
+    s = load_state(root)
+    targets = tuple(
+        dataclasses.replace(t, raw={**t.raw, "_next": "try the other residue"})
+        if t.slug == slug else t
+        for t in s.targets
+    )
+    return dataclasses.replace(s, targets=targets)
+
+
+def test_scheduled_kinds_and_collision(tmp_path: Path) -> None:
+    cfg = DriverConfig()
+    root = room(tmp_path, [])
+    s = load_state(root)
+    assert select(s, cfg, 25).kind == "patrol"
+    assert select(s, cfg, 50).kind == "patrol"
+    assert select(s, cfg, 10).kind == "adversarial"
+    assert select(s, cfg, 51).kind == "adversarial"   # deferred from the 50 collision
+    assert select(s, cfg, 26).kind not in ("patrol", "adversarial")
+
+
+def test_rotation_forces_distinct_then_fresh_frame(tmp_path: Path) -> None:
+    cfg = DriverConfig(
+        combine_share=0.0, forage_target_share=0.0, forage_frontier_share=0.0, exploration_floor=0.0
+    )
+    root = room(tmp_path, [turn("T1", "attack", "a", ["fx"], "negative")])
+    b = select(with_next(root, "a"), cfg, 2)
+    assert b.kind == "attack" and b.target == "a" and b.frames != ("fx",)
+    root2 = room(tmp_path / "r2", [
+        turn("T1", "attack", "a", ["fx"], "negative"),
+        turn("T2", "attack", "a", ["fy"], "negative"),
+    ])
+    b2 = select(with_next(root2, "a"), cfg, 3)
+    assert b2.target == "a" and b2.frames == ("fg",)  # the only unseen eligible frame
+
+
+def test_no_fourth_consecutive_turn_even_with_next(tmp_path: Path) -> None:
+    cfg = DriverConfig(
+        combine_share=0.0, forage_target_share=0.0, forage_frontier_share=0.0, exploration_floor=0.0
+    )
+    root = room(tmp_path, [
+        turn("T1", "attack", "a", ["fx"], "negative"),
+        turn("T2", "attack", "a", ["fy"], "negative"),
+        turn("T3", "attack", "a", ["fg"], "negative"),
+    ])
+    assert select(with_next(root, "a"), cfg, 4).target == "b"
+
+
+def test_parked_target_revives_only_with_unseen_frame(tmp_path: Path) -> None:
+    cfg = DriverConfig(
+        combine_share=0.0, forage_target_share=0.0, forage_frontier_share=0.0, exploration_floor=0.0
+    )
+    root = room(tmp_path, [
+        turn("T1", "attack", "b", ["fg"], "nothing"),
+        turn("T2", "attack", "b", ["fg"], "nothing"),
+    ])
+    pool = read_jsonl(root / "pool.jsonl")
+    pool[0].update({"status": "parked", "cooldown_until": 30})
+    pool[1].update({"status": "parked", "cooldown_until": 5})
+    (root / "pool.jsonl").write_text("".join(json.dumps(p) + "\n" for p in pool))
+    s = load_state(root)
+    # b's only eligible frame is fg, already seen: nothing eligible at index 6
+    assert select(s, cfg, 6).kind == "forage-target"
+    # give b an unseen frame
+    new_frame = {
+        "slug": "fz", "title": "", "statement": "", "shape": ["z"], "source": {"kind": "pool"},
+        "filed_by": "seed", "applied_to": [], "superseded_by": None,
+    }
+    (root / "frames.jsonl").open("a").write(json.dumps(new_frame) + "\n")
+    b = select(load_state(root), cfg, 6)
+    assert b.target == "b" and b.revive and b.frames == ("fz",)
+
+
+def test_combine_needs_unpaired_productive_frames(tmp_path: Path) -> None:
+    cfg = DriverConfig(
+        combine_share=1.0, forage_target_share=0.0, forage_frontier_share=0.0, exploration_floor=0.0
+    )
+    root = room(tmp_path, [])
+    frames = read_jsonl(root / "frames.jsonl")
+    # fy productive
+    frames[1]["applied_to"] = [{"target": "b", "turn": "T1", "outcome": "structure"}]
+    (root / "frames.jsonl").write_text("".join(json.dumps(f) + "\n" for f in frames))
+    pool = read_jsonl(root / "pool.jsonl")
+    pool[1].update({"status": "parked", "cooldown_until": 100})  # only a is eligible
+    (root / "pool.jsonl").write_text("".join(json.dumps(p) + "\n" for p in pool))
+    b = select(load_state(root), cfg, 2)
+    assert b.kind == "combine" and b.target == "a" and set(b.frames) == {"fx", "fy"}
+    root2 = room(tmp_path / "r2", [turn("T1", "combine", "a", ["fx", "fy"], "nothing")])
+    frames2 = read_jsonl(root2 / "frames.jsonl")
+    frames2[1]["applied_to"] = [{"target": "b", "turn": "T0", "outcome": "structure"}]
+    (root2 / "frames.jsonl").write_text("".join(json.dumps(f) + "\n" for f in frames2))
+    b2 = select(load_state(root2), cfg, 2)
+    # the only productive pair is already paired on a; b has one productive frame
+    assert b2.kind == "attack"
+
+
+def test_exploration_floor_and_determinism(tmp_path: Path) -> None:
+    cfg = DriverConfig(combine_share=0.0, forage_target_share=0.0, forage_frontier_share=0.0)
+    root = room(tmp_path, [turn("T1", "attack", "a", ["fx"], "negative")])
+    # a has a concrete NEXT and a productive last turn, so it wins outside the floor
+    s = with_next(root, "a")
+    picks = [select(s, cfg, i).target for i in range(1, 1001) if i % 10 != 0 and i % 25 != 0]
+    share_b = picks.count("b") / len(picks)
+    assert 0.06 < share_b < 0.16   # half of the 20% floor lands on b
+    assert select(s, cfg, 3) == select(s, cfg, 3)
+    assert next_turn_id(s) == select(s, cfg, 3).turn_id
