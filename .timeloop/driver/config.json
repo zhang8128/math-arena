@@ -1,0 +1,20 @@
+{
+  "seed": 1,
+  "combine_share": 0.15,
+  "forage_target_share": 0.10,
+  "forage_frontier_share": 0.10,
+  "rotation_cap": 3,
+  "stall_window": 3,
+  "cooldown_turns": 20,
+  "exploration_floor": 0.2,
+  "patrol_period": 25,
+  "adversarial_period": 10,
+  "arxiv_categories": ["math.NT", "math.CO", "cs.LO"],
+  "turn_timeout_seconds": 1800,
+  "model": null,
+  "effort": null,
+  "allowed_tools": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"],
+  "breaker_threshold": 5,
+  "stale_lease_seconds": 2700,
+  "claude_executable": "claude"
+}
