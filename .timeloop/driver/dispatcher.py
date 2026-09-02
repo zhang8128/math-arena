@@ -252,7 +252,8 @@ def select(state: State, config: DriverConfig, turn_index: int) -> Brief:
     if turn_index % config.patrol_period == 0:
         return Brief(turn_id, "patrol", None, (), None, None, False, "scheduled patrol")
     prev_collision = (
-        (turn_index - 1) % config.patrol_period == 0
+        turn_index > 1
+        and (turn_index - 1) % config.patrol_period == 0
         and (turn_index - 1) % config.adversarial_period == 0
     )
     if turn_index % config.adversarial_period == 0 or prev_collision:
@@ -269,6 +270,8 @@ def select(state: State, config: DriverConfig, turn_index: int) -> Brief:
             latest = max(parked, key=lambda t: int(t.raw.get("cooldown_until", 0)))  # type: ignore[call-overload]
             reason = "most recently parked target"
             return Brief(turn_id, kind, latest.slug, (), None, None, False, reason)
+        if not state.targets:
+            return Brief(turn_id, kind, None, (), None, None, False, "empty pool")
         fewest = min(state.targets, key=lambda t: (len(eligible_frames(state, t)), t.slug))
         return Brief(turn_id, kind, fewest.slug, (), None, None, False, "fewest eligible frames")
     target = _pick_target(state, config, turn_index, rng)

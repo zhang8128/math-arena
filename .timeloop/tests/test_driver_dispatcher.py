@@ -249,3 +249,17 @@ def test_exploration_floor_and_determinism(tmp_path: Path) -> None:
     assert 0.06 < share_b < 0.16   # half of the 20% floor lands on b
     assert select(s, cfg, 3) == select(s, cfg, 3)
     assert next_turn_id(s) == select(s, cfg, 3).turn_id
+
+
+def test_first_turn_is_not_a_phantom_collision(tmp_path: Path) -> None:
+    cfg = DriverConfig(combine_share=0.0, forage_target_share=0.0, forage_frontier_share=0.0)
+    root = room(tmp_path, [])
+    assert select(load_state(root), cfg, 1).kind == "attack"
+
+
+def test_forage_target_on_empty_pool_does_not_crash(tmp_path: Path) -> None:
+    cfg = DriverConfig(combine_share=0.0, forage_target_share=1.0, forage_frontier_share=0.0)
+    root = room(tmp_path, [])
+    (root / "pool.jsonl").write_text("")
+    b = select(load_state(root), cfg, 2)
+    assert b.kind == "forage-target" and b.target is None and b.reason == "empty pool"
