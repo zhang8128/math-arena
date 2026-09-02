@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 TIMELOOP = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TIMELOOP))
 
@@ -17,6 +19,7 @@ from driver.state import (  # noqa: E402
     load_state,
     next_turn_id,
     read_jsonl,
+    validate_frame,
     write_pool,
 )
 
@@ -90,3 +93,28 @@ def test_productive_set_and_pool_roundtrip(tmp_path: Path) -> None:
     write_pool(root, records)
     assert read_jsonl(root / "pool.jsonl")[0]["status"] == "parked"
     assert read_jsonl(root / "pool.jsonl")[0]["slug"] == "a"
+
+
+def test_validate_frame_requires_url_outside_pool_and_own() -> None:
+    base = {"slug": "s", "title": "t", "statement": "p", "shape": ["x"]}
+    arxiv_frame = {
+        **base,
+        "source": {"kind": "arxiv", "id": "1", "url": "https://arxiv.org/abs/1"},
+    }
+    ok = validate_frame(arxiv_frame, set())
+    assert ok.slug == "s" and ok.filed_by == ""
+    validate_frame({**base, "source": {"kind": "own"}}, set())
+    with pytest.raises(ValueError, match="url"):
+        validate_frame({**base, "source": {"kind": "web"}}, set())
+    with pytest.raises(ValueError, match="duplicate"):
+        validate_frame({**base, "source": {"kind": "pool"}}, {"s"})
+    with pytest.raises(ValueError, match="shape"):
+        validate_frame({**base, "shape": [], "source": {"kind": "pool"}}, set())
+
+
+def test_seeded_registry_loads_and_has_general_frames() -> None:
+    root = Path(__file__).resolve().parents[1]
+    s = load_state(root)
+    assert len(s.frames) >= 12
+    assert any("*" in f.shape for f in s.frames)
+    assert len({f.slug for f in s.frames}) == len(s.frames)

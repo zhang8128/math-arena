@@ -135,6 +135,36 @@ def _frame(raw: dict[str, object]) -> Frame:
     )
 
 
+SOURCE_KINDS = frozenset({"arxiv", "doi", "oeis", "web", "pool", "own"})
+
+
+def validate_frame(raw: dict[str, object], existing: set[str]) -> Frame:
+    for key in ("slug", "title", "statement", "shape", "source"):
+        if key not in raw:
+            raise ValueError(f"frame missing {key}")
+    slug = str(raw["slug"])
+    if slug in existing:
+        raise ValueError(f"duplicate frame slug {slug}")
+    shape = raw["shape"]
+    if not isinstance(shape, list) or not shape:
+        raise ValueError("frame shape must be a non-empty list")
+    source = raw["source"]
+    if not isinstance(source, dict) or source.get("kind") not in SOURCE_KINDS:
+        raise ValueError(f"frame source kind must be one of {sorted(SOURCE_KINDS)}")
+    if source["kind"] not in ("pool", "own") and not source.get("url"):
+        raise ValueError("frame source needs a url")
+    return Frame(
+        slug=slug,
+        title=str(raw["title"]),
+        statement=str(raw["statement"]),
+        shape=tuple(str(t) for t in shape),
+        source=dict(source),
+        filed_by=str(raw.get("filed_by", "")),
+        applied_to=tuple(),
+        superseded_by=None,
+    )
+
+
 def _turn(raw: dict[str, object]) -> TurnRecord:
     return TurnRecord(
         turn_id=str(raw["turn_id"]),
