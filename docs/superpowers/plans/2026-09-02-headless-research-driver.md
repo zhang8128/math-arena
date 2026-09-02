@@ -1657,7 +1657,7 @@ FRAME_SCHEMA: dict[str, object] = {
         "source": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["kind", "url"],
+            "required": ["kind"],
             "properties": {
                 "kind": {"enum": ["arxiv", "doi", "oeis", "web", "own"]},
                 "id": {"type": "string"},
