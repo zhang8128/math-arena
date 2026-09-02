@@ -91,13 +91,39 @@ def check_ledger_agrees() -> list[str]:
     return out
 
 
+def check_pool_tags() -> list[str]:
+    """Every pool record needs shape tags so the driver can match frames to it.
+
+    Descends from: the frames registry, whose eligibility rule is tag overlap.
+    An untagged target is invisible to every frame except general ones."""
+    out = []
+    pool = ROOT / "pool.jsonl"
+    if not pool.exists():
+        return ["pool.jsonl missing"]
+    for line in pool.read_text(errors="ignore").splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if not r.get("tags"):
+            out.append(f"pool.jsonl: target '{r.get('slug')}' has no tags")
+    return out
+
+
 CHECKS = [
     ("notebook schema", check_notebooks),
     ("ledger agrees with notebooks", check_ledger_agrees),
+    ("pool tags", check_pool_tags),
 ]
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--index":
+        sys.path.insert(0, str(ROOT))
+        from driver.index import build_index  # noqa: PLC0415
+        text = build_index(ROOT)
+        (ROOT / "index.md").write_text(text)
+        print(f"wrote {ROOT / 'index.md'} ({text.count(chr(10)) - 4} targets)")
+        return 0
     report = len(sys.argv) > 1 and sys.argv[1] == "--report"
     findings = []
     for name, fn in CHECKS:
