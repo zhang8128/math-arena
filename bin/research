@@ -18,9 +18,9 @@ case "${1:-run}" in
     claude auth status >/dev/null 2>&1 || { echo "claude is not logged in; run: claude auth login" >&2; exit 2; }
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git repository" >&2; exit 2; }
     [ -f .timeloop/frames.jsonl ] || { echo ".timeloop/frames.jsonl missing" >&2; exit 2; }
-    blocked="$(git status --porcelain --untracked-files=all \
+    blocked="$(git status --porcelain --untracked-files=all --no-renames \
       | awk '{ $1=""; sub(/^ /, ""); print }' \
-      | grep -Ev '^(\.timeloop/(ledger\.md|notebook/|pool\.jsonl|lib/|runs/|tests/|lean/arena/|driver/)|\.superpowers/)' \
+      | grep -Ev '^(\.timeloop/ledger\.md|\.timeloop/notebook/|\.timeloop/pool\.jsonl|\.timeloop/lib/|\.timeloop/runs/|\.timeloop/tests/|\.timeloop/lean/arena/|\.timeloop/driver/results/|\.timeloop/driver/briefs/|\.timeloop/driver/turns\.jsonl|\.timeloop/driver/lease\.json)' \
       || true)"
     if [ -n "$blocked" ]; then
       echo "refusing to start: uncommitted changes outside the driver's write set." >&2

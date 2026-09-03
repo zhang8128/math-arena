@@ -217,3 +217,22 @@ def test_one_signal_stops_at_the_boundary(tmp_path: Path) -> None:
     assert log[-1]["event"] == "interrupted" and "hard" not in log[-1]
     assert all(t["exit_reason"] == "completed" for t in log if "turn_id" in t)
     assert 1 <= sum(1 for t in log if "turn_id" in t) < 50
+
+
+def test_bin_research_allow_list_matches_the_protected_write_set() -> None:
+    """The refusal filter must allow exactly what recorder.py protects from revert.
+
+    The write set lives in three places: ALLOWED_WRITES, is_driver_owned, and
+    this bash regex. This test is the only thing tying the third to the first two.
+    """
+    from driver.brief import ALLOWED_WRITES
+    from driver.recorder import DRIVER_OWNED_FILES, DRIVER_OWNED_PREFIXES
+
+    script = (TIMELOOP.parent / "bin" / "research").read_text()
+    pattern = next(ln for ln in script.splitlines() if "grep -Ev" in ln)
+    for path in (*ALLOWED_WRITES, *DRIVER_OWNED_PREFIXES, *DRIVER_OWNED_FILES,
+                 ".timeloop/driver/lease.json"):
+        assert path.replace(".", r"\.") in pattern, path
+    assert r"\.timeloop/driver/|" not in pattern and not pattern.endswith(r"\.timeloop/driver/)")
+    assert r"\.superpowers/" not in pattern
+    assert "--no-renames" in script
