@@ -247,6 +247,30 @@ def record(
         # from files_changed. See spec's outcome table: a disallowed write is
         # `invalid`, not whatever the model otherwise reported.
         outcome, reason = "invalid", "disallowed_write"
+    pool_rel = ".timeloop/pool.jsonl"
+    if pool_rel in model_delta:
+        try:
+            pool_ok = all("slug" in r for r in read_jsonl(tl / "pool.jsonl"))
+        except ValueError:
+            # read_jsonl raises ValueError (json.JSONDecodeError is a subclass)
+            # on a malformed line or a non-object line.
+            pool_ok = False
+        if not pool_ok:
+            # Must run, and the file must be reverted, before any hook (lint,
+            # exam) reads pool.jsonl from disk: default_hooks().exam() shells
+            # out to the real exam, whose driver/rotation-cap item loads this
+            # same file and would otherwise KeyError on the malformed record,
+            # which the exam's own per-item try/except turns into a failing
+            # item rather than a nonzero exit -- exam_ok would already be
+            # False by the time this ran if it ran after hooks.exam(), and
+            # the ExamFailure raised below would wrongly halt the whole run
+            # instead of quietly marking this one turn invalid.
+            _run(repo_root, "git", "checkout", "--", pool_rel)
+            if outcome != "invalid":
+                # Don't clobber an earlier reason (e.g. disallowed_write):
+                # the first detected reason is the one recorded.
+                reason = "pool_invalid"
+            outcome = "invalid"
     filed: list[str] = []
     if outcome != "invalid":
         filed, rejected = _file_frames(repo_root, brief, run)
@@ -264,17 +288,6 @@ def record(
     exam_ok = hooks.exam()
     hooks.reap()
     hooks.index()
-    pool_rel = ".timeloop/pool.jsonl"
-    if pool_rel in model_delta:
-        try:
-            pool_ok = all("slug" in r for r in read_jsonl(tl / "pool.jsonl"))
-        except ValueError:
-            # read_jsonl raises ValueError (json.JSONDecodeError is a subclass)
-            # on a malformed line or a non-object line.
-            pool_ok = False
-        if not pool_ok:
-            _run(repo_root, "git", "checkout", "--", pool_rel)
-            outcome, reason = "invalid", "pool_invalid"
     (tl / "driver" / "results").mkdir(parents=True, exist_ok=True)
     (tl / "driver" / "results" / f"{brief.turn_id}.json").write_text(
         json.dumps(dataclasses.asdict(run), indent=1), encoding="utf-8"

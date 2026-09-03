@@ -235,6 +235,90 @@ def test_malformed_pool_forces_invalid_and_is_reverted(tmp_path: Path) -> None:
     assert (repo / ".timeloop" / "pool.jsonl").read_text() == original_pool
 
 
+def _real_exam_like_hooks(repo: Path) -> Hooks:
+    """A Hooks.exam that behaves like the real exam's driver/rotation-cap
+    item: it reads .timeloop/pool.jsonl from disk *at call time* and fails
+    if the file doesn't parse or any record lacks `slug`. lint/reap/index
+    are no-ops so only the ordering between the pool check and exam() is
+    exercised."""
+    pool_path = repo / ".timeloop" / "pool.jsonl"
+
+    def exam() -> bool:
+        try:
+            return all("slug" in r for r in read_jsonl(pool_path))
+        except ValueError:
+            return False
+
+    return Hooks(lint=lambda: [], exam=exam, reap=lambda: None, index=lambda: None)
+
+
+def test_pool_reverted_before_exam_reads_it(tmp_path: Path) -> None:
+    """I4 ordering regression, found in re-review: the pool-validity check
+    ran *after* hooks.exam(). In production, default_hooks().exam() shells
+    out to the real `bin/exam --report`, whose driver/rotation-cap item
+    loads pool.jsonl itself; a malformed record made that item KeyError,
+    which the exam's own per-item try/except turns into a failing item
+    (not a nonzero exit), so exam_ok was already False by the time the
+    recorder got around to reverting the file. The trailing
+    `if not exam_ok: raise ExamFailure` then halted the whole run instead
+    of quietly marking this one turn invalid -- defeating I4's purpose.
+
+    This test's `exam` mirrors that real behaviour: it reads pool.jsonl
+    itself, at call time, so it only passes if the pool check ran (and
+    reverted the file) *before* exam() was called. It fails before the fix
+    (ExamFailure escapes) and passes after."""
+    repo = make_repo(tmp_path)
+    before = snapshot(repo)
+    ledger_before = (repo / ".timeloop" / "ledger.md").read_text()
+    original_pool = (repo / ".timeloop" / "pool.jsonl").read_text()
+    (repo / ".timeloop" / "ledger.md").write_text(
+        ledger_before + "\nT2 | a | negative | ruled out n<10\n"
+    )
+    (repo / ".timeloop" / "pool.jsonl").write_text(
+        json.dumps({"status": "open", "tags": ["x"]}) + "\n"   # no slug
+    )
+    rec = record(
+        repo, brief(), "brief",
+        result(
+            "negative", "T2 | a | negative | ruled out n<10",
+            [".timeloop/ledger.md", ".timeloop/pool.jsonl"],
+        ),
+        before, before, ledger_before, "2026-09-02T00:00:00Z",
+        _real_exam_like_hooks(repo),
+    )
+    assert rec.outcome == "invalid" and rec.invalid_reason == "pool_invalid"
+    assert (repo / ".timeloop" / "pool.jsonl").read_text() == original_pool
+
+
+def test_disallowed_write_reason_wins_over_pool_invalid(tmp_path: Path) -> None:
+    """Minor fold-in from the same re-review: when a turn is invalid for two
+    reasons at once (an undeclared disallowed write and a malformed pool),
+    the first-detected reason must not be clobbered by the later check. The
+    outcome stays `invalid` either way, but the reason stays
+    `disallowed_write`, not `pool_invalid`."""
+    repo = make_repo(tmp_path)
+    before = snapshot(repo)
+    ledger_before = (repo / ".timeloop" / "ledger.md").read_text()
+    (repo / ".timeloop" / "ledger.md").write_text(
+        ledger_before + "\nT2 | a | negative | ruled out n<10\n"
+    )
+    (repo / ".timeloop" / "pool.jsonl").write_text(
+        json.dumps({"status": "open", "tags": ["x"]}) + "\n"   # no slug
+    )
+    (repo / "src").mkdir()
+    (repo / "src" / "foo.py").write_text("undeclared\n")
+    rec = record(
+        repo, brief(), "brief",
+        result(
+            "negative", "T2 | a | negative | ruled out n<10",
+            [".timeloop/ledger.md", ".timeloop/pool.jsonl"],
+        ),
+        before, before, ledger_before, "2026-09-02T00:00:00Z", stub_hooks(),
+    )
+    assert rec.outcome == "invalid" and rec.invalid_reason == "disallowed_write"
+    assert not (repo / "src" / "foo.py").exists()
+
+
 def test_record_files_frames_and_rejects_bad_ones(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
     before = snapshot(repo)
