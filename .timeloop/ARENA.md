@@ -93,8 +93,7 @@ target, answer "has this been retired, and why."
 5. **Technique retrieval** — the pool's `forges` field is a flat list. It should
    be matchable: given a new target, surface the techniques that have worked on
    its shape. The degenerate first version of the transfer graph.
-6. **Instrumentation** — no way currently to tell whether turn 50 is better than
-   turn 5. Without it, "improving" is an assertion.
+6. ~~**Instrumentation**~~ — `driver/turns.jsonl` records every turn's outcome class; `bin/research status` reports yield over the last 10, 50, and all turns. Whether turn 50 beats turn 5 is now a number.
 
 ## The moonshot, stated honestly
 
