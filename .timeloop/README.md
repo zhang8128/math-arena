@@ -162,3 +162,42 @@ structural.
 attacks. This is where a counterexample is actually likely, because nobody has
 looked. A forged conjecture that survives scrutiny is a small real result; one
 that breaks in ten minutes cost ten minutes.
+
+## Running the room autonomously
+
+`bin/research` runs turns back to back through headless Claude Code until
+stopped. The dispatcher, not the model, chooses each turn: it rotates
+angles before targets (a target gets at most three consecutive turns, each
+with a different frame, the third with a frame it has never seen), parks a
+target after three non-productive turns or three refinements, forages
+online for new frames about one turn in five, combines productive frames,
+re-verifies a prior claim every tenth turn, and re-checks novelty every
+twenty-fifth.
+
+```sh
+bin/research --max-turns 3      # supervised batch
+bin/research --max-hours 8      # overnight
+bin/research status             # from another terminal
+bin/research stop               # clean stop after the current turn
+```
+
+Every turn's brief is in `driver/briefs/`, its raw result in
+`driver/results/`, and its record in `driver/turns.jsonl`. Frames live in
+`frames.jsonl` and are written only by the recorder. `index.md` is the
+one-line-per-target orientation the turn reads first; regenerate it with
+`bin/lint --index`. The design is
+`docs/superpowers/specs/2026-09-02-headless-research-driver-design.md`.
+
+Start a run with the tree clean. The recorder commits only what a turn
+changed, judged by file content, so a file that was already dirty and that
+the turn also edits is committed whole, your pending edits included. Worse,
+a dirty file *outside* the driver's write set that a turn touches is
+reverted to HEAD, which would discard your work. So `bin/research` refuses
+to start when anything is uncommitted outside that set: `ledger.md`,
+`notebook/`, `pool.jsonl`, `lib/`, `runs/`, `tests/`, `lean/arena/`, and the
+driver's own `driver/results/`, `driver/briefs/`, `driver/turns.jsonl`, and
+`driver/lease.json`. Commit or stash anything else first.
+
+One Ctrl-C lets the current turn finish and then stops; a second kills the
+turn. A failed `git commit` or a failing blind exam halts the run rather
+than letting the damage compound into the next turn.
