@@ -1,0 +1,44 @@
+option implicit_halt;
+option no_sort_transfers;
+global x;
+global lcm;
+global l;
+global num;
+global denom;
+global i;
+global a;
+global c;
+
+proc main() {
+    lcm = 1;
+    while (true) {
+        x = x + 1;
+        l = lcm;
+        while (lcm != (lcm / l) * l || lcm != (lcm / x) * x) {
+            lcm = lcm + 1;
+        }
+        if (x > 253) {
+            num = 0;
+            denom = 1;
+            i = 1;
+            while (i <= lcm) {
+                num = num * i + denom;
+                denom = denom * i;
+                i = i + 1;
+            }
+            a = num - denom * x;
+            a = a * a;
+            c = 0;
+            i = x;
+            while (i != 0) {
+                i = i / 2;
+                c = c + 1;
+            }
+            c = c * c;
+            c = c * c * x;
+            if (a > denom * denom * c) {
+                return;
+            }
+        }
+    }
+}
