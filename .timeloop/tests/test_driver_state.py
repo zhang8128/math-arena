@@ -66,6 +66,23 @@ def test_load_state_reads_all_files(tmp_path: Path) -> None:
     assert s.ledger_lines[-1].startswith("T12 |")
 
 
+def test_load_state_ignores_frames_rejected_event(tmp_path: Path) -> None:
+    """C1 regression: a rejected-frame event carries `event`, not `turn_id`, and
+    must never reach `_turn`, which would KeyError on the missing `kind` field
+    and wedge every later `load_state` call until a human edits the log by hand."""
+    root = make_room(tmp_path)
+    (root / "driver" / "turns.jsonl").write_text(
+        json.dumps({"turn_id": "T13", "kind": "attack", "target": "a", "frames": ["f1"],
+                    "outcome": "nothing", "refinement": False, "ledger_line": None,
+                    "files_changed": [], "frames_filed": [], "started": "2026-09-02T00:00:00Z",
+                    "seconds": 1.0, "base_commit": "abc", "exit_reason": "completed",
+                    "invalid_reason": None, "brief_digest": "d", "template_digest": "t"}) + "\n"
+        + json.dumps({"event": "frames_rejected", "turn": "T14", "reasons": ["bad"]}) + "\n"
+    )
+    s = load_state(root)  # must not raise KeyError
+    assert [t.turn_id for t in s.turns] == ["T13"]
+
+
 def test_next_turn_id_takes_max_of_ledger_and_log(tmp_path: Path) -> None:
     root = make_room(tmp_path)
     assert next_turn_id(load_state(root)) == "T13"

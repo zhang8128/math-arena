@@ -155,6 +155,21 @@ def test_usage_limit_halts_immediately(tmp_path: Path, monkeypatch: pytest.Monke
     assert sum(1 for t in log if "turn_id" in t) == 1 and log[-1]["reason"] == "usage_limit"
 
 
+def test_missing_executable_halts_like_usage_limit(tmp_path: Path) -> None:
+    """I6 regression: a `claude` binary that vanishes mid-run (this machine
+    keeps several CLI versions behind a symlink that updates swap) must halt
+    the run cleanly instead of a FileNotFoundError traceback escaping main."""
+    repo = make_repo(tmp_path)
+    bad_cfg = cfg(claude_executable=str(tmp_path / "no-such-claude-binary"))
+    code = run_loop(repo, bad_cfg, max_turns=10, max_hours=None, hooks=hooks())
+    assert code == 4
+    log = read_jsonl(repo / ".timeloop" / "driver" / "turns.jsonl")
+    assert sum(1 for t in log if "turn_id" in t) == 1
+    assert log[-1]["event"] == "halt" and log[-1]["reason"] == "missing_executable"
+    turns = [t for t in log if "turn_id" in t]
+    assert turns[-1]["exit_reason"] == "nonzero_exit"
+
+
 def test_lease_contention_and_stale_expiry(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
     root = repo / ".timeloop"
@@ -224,14 +239,24 @@ def test_bin_research_allow_list_matches_the_protected_write_set() -> None:
 
     The write set lives in three places: ALLOWED_WRITES, is_driver_owned, and
     this bash regex. This test is the only thing tying the third to the first two.
+
+    Both directions are asserted. ALLOWED_WRITES-in-pattern (below) catches a
+    path the recorder protects but the shell refusal doesn't recognise, which
+    would make bin/research refuse to start on a perfectly legitimate leftover.
+    STAGEABLE_EXTRA-in-pattern (I1) is the direction that actually bit: a path a
+    turn legitimately leaves dirty (such as .timeloop/exam/results.jsonl) but
+    that isn't in this regex blocks every subsequent run until a human
+    intervenes, and only this converse check would have caught it.
     """
     from driver.brief import ALLOWED_WRITES
-    from driver.recorder import DRIVER_OWNED_FILES, DRIVER_OWNED_PREFIXES
+    from driver.recorder import DRIVER_OWNED_FILES, DRIVER_OWNED_PREFIXES, STAGEABLE_EXTRA
 
     script = (TIMELOOP.parent / "bin" / "research").read_text()
     pattern = next(ln for ln in script.splitlines() if "grep -Ev" in ln)
     for path in (*ALLOWED_WRITES, *DRIVER_OWNED_PREFIXES, *DRIVER_OWNED_FILES,
                  ".timeloop/driver/lease.json"):
+        assert path.replace(".", r"\.") in pattern, path
+    for path in STAGEABLE_EXTRA:
         assert path.replace(".", r"\.") in pattern, path
     assert r"\.timeloop/driver/|" not in pattern and not pattern.endswith(r"\.timeloop/driver/)")
     assert r"\.superpowers/" not in pattern

@@ -191,7 +191,8 @@ def load_state(root: Path) -> State:
     targets = tuple(_target(r) for r in read_jsonl(root / "pool.jsonl"))
     frames = tuple(_frame(r) for r in read_jsonl(root / "frames.jsonl"))
     turns = tuple(
-        _turn(r) for r in read_jsonl(root / "driver" / "turns.jsonl") if "turn_id" in r
+        _turn(r) for r in read_jsonl(root / "driver" / "turns.jsonl")
+        if "turn_id" in r and "event" not in r
     )
     ledger = root / "ledger.md"
     lines: tuple[str, ...] = ()

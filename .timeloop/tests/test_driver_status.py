@@ -28,6 +28,15 @@ def test_yield_report_windows_and_kinds() -> None:
     assert yield_report([])["all"]["share"] is None
 
 
+def test_yield_report_excludes_frames_rejected_event() -> None:
+    """C1 regression: a frames_rejected event carries `turn` (not `turn_id`) and
+    `event`; it must never be counted as a turn in the yield report."""
+    turns = [rec(1, "attack", "negative")]
+    turns.append({"event": "frames_rejected", "turn": "T2", "reasons": ["bad"]})
+    r = yield_report(turns)
+    assert r["all"]["turns"] == 1 and r["all"]["productive"] == 1
+
+
 def test_format_status_reports_lease_and_yield(tmp_path: Path) -> None:
     root = tmp_path / ".timeloop"
     (root / "driver").mkdir(parents=True)

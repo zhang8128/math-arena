@@ -20,7 +20,7 @@ case "${1:-run}" in
     [ -f .timeloop/frames.jsonl ] || { echo ".timeloop/frames.jsonl missing" >&2; exit 2; }
     blocked="$(git status --porcelain --untracked-files=all --no-renames \
       | awk '{ $1=""; sub(/^ /, ""); print }' \
-      | grep -Ev '^(\.timeloop/ledger\.md|\.timeloop/notebook/|\.timeloop/pool\.jsonl|\.timeloop/lib/|\.timeloop/runs/|\.timeloop/tests/|\.timeloop/lean/arena/|\.timeloop/driver/results/|\.timeloop/driver/briefs/|\.timeloop/driver/turns\.jsonl|\.timeloop/driver/lease\.json)' \
+      | grep -Ev '^(\.timeloop/ledger\.md|\.timeloop/notebook/|\.timeloop/pool\.jsonl|\.timeloop/lib/|\.timeloop/runs/|\.timeloop/tests/|\.timeloop/lean/arena/|\.timeloop/driver/results/|\.timeloop/driver/briefs/|\.timeloop/driver/turns\.jsonl|\.timeloop/driver/lease\.json|\.timeloop/exam/results\.jsonl|\.timeloop/index\.md|\.timeloop/frames\.jsonl)' \
       || true)"
     if [ -n "$blocked" ]; then
       echo "refusing to start: uncommitted changes outside the driver's write set." >&2

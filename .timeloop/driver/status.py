@@ -17,7 +17,7 @@ def _triple(turns: list[dict[str, object]]) -> dict[str, object]:
 
 
 def yield_report(turns: list[dict[str, object]]) -> dict[str, object]:
-    real = [t for t in turns if "turn_id" in t]
+    real = [t for t in turns if "turn_id" in t and "event" not in t]
     kinds = Counter(str(t.get("kind")) for t in real)
     return {
         "last_10": _triple(real[-10:]),

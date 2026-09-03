@@ -196,7 +196,10 @@ reverted to HEAD, which would discard your work. So `bin/research` refuses
 to start when anything is uncommitted outside that set: `ledger.md`,
 `notebook/`, `pool.jsonl`, `lib/`, `runs/`, `tests/`, `lean/arena/`, and the
 driver's own `driver/results/`, `driver/briefs/`, `driver/turns.jsonl`, and
-`driver/lease.json`. Commit or stash anything else first.
+`driver/lease.json`. Commit or stash anything else first. This refusal is
+only a start-time check: if you edit a tracked file outside the driver's
+write set while a run is already in progress, and a turn happens to touch
+that same file, the recorder will revert it to HEAD and your edit is lost.
 
 One Ctrl-C lets the current turn finish and then stops; a second kills the
 turn. A failed `git commit` or a failing blind exam halts the run rather

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -82,3 +84,52 @@ def test_run_turn_interrupt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "sleep")
     r = run_turn("brief", cfg(), tmp_path, timeout=20, interrupt=lambda: True)
     assert r.exit_reason == "interrupted" and r.seconds < 10
+
+
+def test_run_turn_missing_executable_returns_result_not_traceback(tmp_path: Path) -> None:
+    """I6 regression: a missing/renamed `claude` binary must come back as a
+    RunResult the loop can halt on, not a FileNotFoundError escaping run_turn."""
+    bad_cfg = DriverConfig(claude_executable=str(tmp_path / "no-such-claude-binary"))
+    r = run_turn("brief", bad_cfg, tmp_path, timeout=5)
+    assert r.exit_reason == "nonzero_exit"
+    assert r.exit_code is None
+    assert r.seconds == 0.0
+    assert r.structured is None
+    assert r.error == "missing_executable"
+
+
+def test_run_turn_post_kill_communicate_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I5 regression: after SIGTERM/SIGKILL to the process group, a Bash tool
+    call inside the turn can have started a detached (setsid) grandchild that
+    escapes the group and keeps the inherited stdout/stderr pipes open. The
+    post-kill `proc.communicate()` then blocks forever with no timeout.
+
+    A real fake-claude mode that forks a setsid grandchild holding the pipes
+    open is awkward and platform-fragile to build reliably in the test
+    fixture (fork() semantics, session detachment, pipe inheritance all need
+    to line up exactly), so this instead monkeypatches `Popen.communicate` to
+    hang -- by raising TimeoutExpired, same as a real blocked read would
+    eventually surface once bounded -- specifically on the post-kill call,
+    identified by the timeout=30 that only that call passes. It proves
+    run_turn still returns quickly with the graceful "", "" fallback instead
+    of hanging indefinitely.
+    """
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "sleep")
+    real_communicate = subprocess.Popen.communicate
+
+    def flaky_communicate(
+        self: subprocess.Popen[str], input: str | None = None, timeout: float | None = None
+    ) -> tuple[str, str]:
+        if timeout == 30:
+            raise subprocess.TimeoutExpired(cmd="fake_claude", timeout=timeout)
+        return real_communicate(self, input=input, timeout=timeout)  # type: ignore[return-value]
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", flaky_communicate)
+    started = time.monotonic()
+    r = run_turn("brief", cfg(), tmp_path, timeout=2)
+    elapsed = time.monotonic() - started
+    assert r.exit_reason == "timeout"
+    assert r.stdout == "" and r.stderr == ""
+    assert elapsed < 40  # bounded by the post-kill guard, not left hanging

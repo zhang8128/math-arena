@@ -90,15 +90,18 @@ def run_turn(
     interrupt: Callable[[], bool] | None = None,
 ) -> RunResult:
     started = time.monotonic()
-    proc = subprocess.Popen(
-        build_command(config, repo_root),
-        cwd=repo_root,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            build_command(config, repo_root),
+            cwd=repo_root,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+    except (FileNotFoundError, PermissionError) as e:
+        return RunResult("nonzero_exit", None, 0.0, "", str(e), None, "missing_executable")
     reason = "completed"
     pending_input: str | None = brief_text
     while True:
@@ -114,7 +117,14 @@ def run_turn(
             else:
                 continue
             _kill_group(proc)
-            out, err = proc.communicate()
+            # A Bash tool call inside the turn can start a detached (setsid)
+            # grandchild that escapes the killed process group and holds the
+            # inherited stdout/stderr pipes open. Without a timeout here this
+            # drain can block forever, silently stopping an unattended run.
+            try:
+                out, err = proc.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                out, err = "", ""
             break
     seconds = round(time.monotonic() - started, 3)
     if reason != "completed":

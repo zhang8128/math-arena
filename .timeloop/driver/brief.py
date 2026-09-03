@@ -17,6 +17,16 @@ ALLOWED_WRITES: tuple[str, ...] = (
     ".timeloop/runs/", ".timeloop/tests/", ".timeloop/lean/arena/", ".timeloop/driver/results/",
 )
 
+# What the brief tells the model it may write. Excludes .timeloop/driver/results/:
+# that path is driver-owned (the recorder writes the raw result there itself), and
+# `validate` excludes driver-owned paths from the files_changed comparison, so a
+# model that honestly declares a write there would get `files_mismatch`. Kept
+# separate from ALLOWED_WRITES, which recorder.py's `is_allowed` still enforces
+# unchanged, so this display-only trim cannot change what gets reverted or staged.
+BRIEF_WRITE_SET: tuple[str, ...] = tuple(
+    p for p in ALLOWED_WRITES if p != ".timeloop/driver/results/"
+)
+
 FRAME_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
@@ -192,7 +202,7 @@ def render_brief(brief: Brief, state: State, config: DriverConfig, root: Path) -
         ledger_block=_ledger_block(brief, state),
         frames_block=_frames_block(brief, state),
         honesty_rules=honesty_rules(root),
-        allowed_writes=", ".join(ALLOWED_WRITES),
+        allowed_writes=", ".join(BRIEF_WRITE_SET),
         notebook_slug=brief.target or "<slug>",
         result_schema=json.dumps(RESULT_SCHEMA, indent=1),
     )

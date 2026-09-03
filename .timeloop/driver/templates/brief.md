@@ -55,6 +55,7 @@ Finish by replying with JSON matching this schema and nothing else:
 $result_schema
 ```
 
-files_changed must list every path you created or modified, relative to the
-repository root. frames_filed entries need slug, title, statement, shape
-tags, and source with kind and url.
+files_changed must list every path that exists at the end of your turn and
+that you created or modified, relative to the repository root. frames_filed
+entries need slug, title, statement, shape tags, and source with kind and
+url; a source needs a url unless its kind is `own`.

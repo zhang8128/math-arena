@@ -16,6 +16,7 @@ from driver.recorder import (  # noqa: E402
     CommitFailure,
     ExamFailure,
     Hooks,
+    default_hooks,
     delta,
     is_allowed,
     record,
@@ -155,8 +156,6 @@ def test_record_commits_delta_and_preserves_dirty_files(tmp_path: Path) -> None:
         ledger_before + "\nT2 | a | negative | ruled out n<10\n"
     )
     (repo / ".timeloop" / "notebook" / "a.md").write_text("## STATUS\nopen\n")
-    (repo / "src.py").write_text("forbidden\n")
-    (repo / "publication" / "new.pdf").write_text("forbidden\n")
     rec = record(
         repo, brief(), "brief",
         result(
@@ -166,7 +165,6 @@ def test_record_commits_delta_and_preserves_dirty_files(tmp_path: Path) -> None:
         pre, before, ledger_before, "2026-09-02T00:00:00Z", stub_hooks(),
     )
     assert rec.outcome == "negative" and rec.invalid_reason is None
-    assert not (repo / "src.py").exists() and not (repo / "publication" / "new.pdf").exists()
     assert (repo / "publication" / "keep.txt").read_text() == "human edit in progress\n"
     assert (repo / "scratch.txt").exists()
     log = git(repo, "log", "--format=%s", "-1").strip()
@@ -184,6 +182,57 @@ def test_record_commits_delta_and_preserves_dirty_files(tmp_path: Path) -> None:
     assert ".timeloop/pool.jsonl" in committed  # the dispatcher's parking write rides along
     # but is not blamed on the model
     assert rec.files_changed == (".timeloop/ledger.md", ".timeloop/notebook/a.md")
+
+
+def test_undeclared_disallowed_write_forces_invalid(tmp_path: Path) -> None:
+    """I3 regression: a model that writes outside the allowed set and simply
+    omits the path from files_changed must not walk away with a clean
+    productive outcome. The write is still reverted, but the turn is now
+    `invalid`/`disallowed_write` so the circuit breaker can see it."""
+    repo = make_repo(tmp_path)
+    before = snapshot(repo)
+    ledger_before = (repo / ".timeloop" / "ledger.md").read_text()
+    (repo / ".timeloop" / "ledger.md").write_text(
+        ledger_before + "\nT2 | a | negative | ruled out n<10\n"
+    )
+    (repo / "src").mkdir()
+    (repo / "src" / "foo.py").write_text("undeclared\n")
+    rec = record(
+        repo, brief(), "brief",
+        result(
+            "negative", "T2 | a | negative | ruled out n<10",
+            [".timeloop/ledger.md"],
+        ),
+        before, before, ledger_before, "2026-09-02T00:00:00Z", stub_hooks(),
+    )
+    assert rec.outcome == "invalid" and rec.invalid_reason == "disallowed_write"
+    assert not (repo / "src" / "foo.py").exists()
+
+
+def test_malformed_pool_forces_invalid_and_is_reverted(tmp_path: Path) -> None:
+    """I4 regression: pool.jsonl is in the allowed write set, so nothing but the
+    recorder stops a record missing `slug` from being committed. The next
+    load_state would KeyError on it the same way C1's poisoned event line did."""
+    repo = make_repo(tmp_path)
+    before = snapshot(repo)
+    ledger_before = (repo / ".timeloop" / "ledger.md").read_text()
+    original_pool = (repo / ".timeloop" / "pool.jsonl").read_text()
+    (repo / ".timeloop" / "ledger.md").write_text(
+        ledger_before + "\nT2 | a | negative | ruled out n<10\n"
+    )
+    (repo / ".timeloop" / "pool.jsonl").write_text(
+        json.dumps({"status": "open", "tags": ["x"]}) + "\n"   # no slug
+    )
+    rec = record(
+        repo, brief(), "brief",
+        result(
+            "negative", "T2 | a | negative | ruled out n<10",
+            [".timeloop/ledger.md", ".timeloop/pool.jsonl"],
+        ),
+        before, before, ledger_before, "2026-09-02T00:00:00Z", stub_hooks(),
+    )
+    assert rec.outcome == "invalid" and rec.invalid_reason == "pool_invalid"
+    assert (repo / ".timeloop" / "pool.jsonl").read_text() == original_pool
 
 
 def test_record_files_frames_and_rejects_bad_ones(tmp_path: Path) -> None:
@@ -275,11 +324,47 @@ def test_model_edit_to_driver_code_is_reverted_not_committed(tmp_path: Path) -> 
         ".timeloop/driver/dispatcher.py"
         not in git(repo, "show", "--name-only", "--format=", "HEAD").split()
     )
-    assert rec.outcome == "nothing"
+    # I3: an undeclared disallowed write is reverted (above) AND penalised: the
+    # turn cannot walk away with a clean "nothing" just because it escaped the
+    # write set and left it out of files_changed.
+    assert rec.outcome == "invalid" and rec.invalid_reason == "disallowed_write"
 
 
 def test_commit_failure_raises(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
+    pre = snapshot(repo)
+    before = snapshot(repo)
+    lb = (repo / ".timeloop" / "ledger.md").read_text()
+    (repo / ".timeloop" / "notebook" / "a.md").write_text("## STATUS\nopen\n")
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    log = repo / ".timeloop" / "driver" / "turns.jsonl"
+    with pytest.raises(CommitFailure):
+        record(
+            repo, brief(), "brief",
+            result("nothing", None, [".timeloop/notebook/a.md"]),
+            pre, before, lb, "t", stub_hooks(),
+        )
+    # Cheap fix regression: a CommitFailure must not leave an orphan turn
+    # record with no matching commit. The log did not exist before this call,
+    # so it must not exist after the failed one either.
+    assert not log.exists()
+
+
+def test_commit_failure_rolls_back_a_pre_existing_log(tmp_path: Path) -> None:
+    """Same regression, but for the second turn onward: the log already had
+    content before this call, and a CommitFailure must restore exactly that,
+    not just delete the file."""
+    repo = make_repo(tmp_path)
+    log = repo / ".timeloop" / "driver" / "turns.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    prior = json.dumps({"turn_id": "T1", "kind": "attack", "target": "a", "frames": [],
+                         "outcome": "nothing", "refinement": False, "ledger_line": None,
+                         "files_changed": [], "frames_filed": [], "started": "",
+                         "seconds": 0.0, "base_commit": "", "exit_reason": "completed",
+                         "invalid_reason": None, "brief_digest": "", "template_digest": ""}) + "\n"
+    log.write_text(prior)
     pre = snapshot(repo)
     before = snapshot(repo)
     lb = (repo / ".timeloop" / "ledger.md").read_text()
@@ -293,3 +378,39 @@ def test_commit_failure_raises(tmp_path: Path) -> None:
             result("nothing", None, [".timeloop/notebook/a.md"]),
             pre, before, lb, "t", stub_hooks(),
         )
+    assert log.read_text() == prior
+
+
+def _write_script(path: Path, body: str) -> None:
+    path.write_text(f"#!/usr/bin/env python3\n{body}\n")
+    path.chmod(0o755)
+
+
+def test_default_hooks_lint_fails_closed_when_harness_crashes(tmp_path: Path) -> None:
+    """I2 regression: a lint harness that cannot run (missing uv, stale lockfile,
+    a crash) must report failure, not silently report health because stdout
+    happened to be empty."""
+    repo_root = tmp_path / "repo"
+    (repo_root / ".timeloop" / "bin").mkdir(parents=True)
+    _write_script(
+        repo_root / ".timeloop" / "bin" / "lint",
+        'import sys\nprint("boom", file=sys.stderr)\nsys.exit(1)\n',
+    )
+    hooks = default_hooks(repo_root)
+    problems = hooks.lint()
+    assert len(problems) == 1
+    assert "lint harness failed (exit 1)" in problems[0] and "boom" in problems[0]
+
+
+def test_default_hooks_exam_fails_closed_when_harness_crashes(tmp_path: Path) -> None:
+    """I2 regression: an exam harness that cannot run must report failure, not
+    health, since the instrument whose failure halts the run must not report
+    success when it cannot run at all."""
+    repo_root = tmp_path / "repo"
+    (repo_root / ".timeloop" / "bin").mkdir(parents=True)
+    _write_script(
+        repo_root / ".timeloop" / "bin" / "exam",
+        'import sys\nprint("crashed", file=sys.stderr)\nsys.exit(1)\n',
+    )
+    hooks = default_hooks(repo_root)
+    assert hooks.exam() is False

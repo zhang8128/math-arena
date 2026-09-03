@@ -166,7 +166,7 @@ def item_driver_yield_independent():
         return ("driver/yield-independent", 1, True, "no driver turns yet")
     rows = [json.loads(line) for line in log.read_text().splitlines()
             if line.strip()]
-    real = [r for r in rows if "turn_id" in r]
+    real = [r for r in rows if "turn_id" in r and "event" not in r]
     good = {"negative", "structure", "correction", "verified",
             "counterexample", "frames"}
     mine = (len(real), sum(r["outcome"] in good for r in real))

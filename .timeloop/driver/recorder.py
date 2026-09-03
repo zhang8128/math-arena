@@ -47,6 +47,8 @@ def default_hooks(repo_root: Path) -> Hooks:
 
     def lint() -> list[str]:
         p = _run(repo_root, str(tl / "bin" / "lint"), "--report")
+        if p.returncode != 0:
+            return [f"lint harness failed (exit {p.returncode}): {p.stderr.strip()[:200]}"]
         if not p.stdout.strip():
             return []
         msg = json.loads(p.stdout).get("systemMessage", "")
@@ -57,6 +59,8 @@ def default_hooks(repo_root: Path) -> Hooks:
             repo_root, "uv", "run", "--frozen", "--with", "sympy",
             str(tl / "bin" / "exam"), "--report",
         )
+        if p.returncode != 0:
+            return False
         return not p.stdout.strip()
 
     def reap() -> None:
@@ -197,11 +201,23 @@ def _apply_to_frames(repo_root: Path, brief: Brief, outcome: str) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
 
 
-STAGEABLE_EXTRA = (".timeloop/frames.jsonl", ".timeloop/index.md", ".timeloop/pool.jsonl")
+STAGEABLE_EXTRA = (
+    ".timeloop/frames.jsonl", ".timeloop/index.md", ".timeloop/pool.jsonl",
+    ".timeloop/exam/results.jsonl",
+)
 
 
 def _stageable(path: str) -> bool:
     return is_allowed(path) or is_driver_owned(path) or path in STAGEABLE_EXTRA
+
+
+def _restore_log(log: Path, prior_text: str | None) -> None:
+    """Undo an append_jsonl call. `None` means the log did not exist yet."""
+    if prior_text is None:
+        if log.exists():
+            log.unlink()
+    else:
+        log.write_text(prior_text, encoding="utf-8")
 
 
 def record(
@@ -220,19 +236,23 @@ def record(
     base_commit = _run(repo_root, "git", "rev-parse", "HEAD").stdout.strip()
     after = snapshot(repo_root)
     model_delta = delta(before_status, after)
-    revert(
-        repo_root,
-        {p for p in model_delta if not is_allowed(p) and not is_driver_owned(p)},
-    )
+    disallowed = {p for p in model_delta if not is_allowed(p) and not is_driver_owned(p)}
+    revert(repo_root, disallowed)
     ledger_path = tl / "ledger.md"
     ledger_after = ledger_path.read_text(encoding="utf-8") if ledger_path.exists() else ""
     outcome, reason, refinement = validate(brief, run, model_delta, ledger_before, ledger_after)
+    if disallowed:
+        # An undeclared write outside the allowed set was reverted above; the
+        # turn does not get a clean outcome just because the model omitted it
+        # from files_changed. See spec's outcome table: a disallowed write is
+        # `invalid`, not whatever the model otherwise reported.
+        outcome, reason = "invalid", "disallowed_write"
     filed: list[str] = []
     if outcome != "invalid":
         filed, rejected = _file_frames(repo_root, brief, run)
         if rejected:
             append_jsonl(
-                log, {"event": "frames_rejected", "turn_id": brief.turn_id, "reasons": rejected}
+                log, {"event": "frames_rejected", "turn": brief.turn_id, "reasons": rejected}
             )
         if outcome == "frames" and not filed:
             outcome, reason = "invalid", "no_frames_filed"
@@ -244,6 +264,17 @@ def record(
     exam_ok = hooks.exam()
     hooks.reap()
     hooks.index()
+    pool_rel = ".timeloop/pool.jsonl"
+    if pool_rel in model_delta:
+        try:
+            pool_ok = all("slug" in r for r in read_jsonl(tl / "pool.jsonl"))
+        except ValueError:
+            # read_jsonl raises ValueError (json.JSONDecodeError is a subclass)
+            # on a malformed line or a non-object line.
+            pool_ok = False
+        if not pool_ok:
+            _run(repo_root, "git", "checkout", "--", pool_rel)
+            outcome, reason = "invalid", "pool_invalid"
     (tl / "driver" / "results").mkdir(parents=True, exist_ok=True)
     (tl / "driver" / "results" / f"{brief.turn_id}.json").write_text(
         json.dumps(dataclasses.asdict(run), indent=1), encoding="utf-8"
@@ -276,10 +307,16 @@ def record(
         template_digest=template_digest(tl),
         claim=brief.claim,
     )
+    # The record is written to the log now (so it lands in the same commit as
+    # the rest of the turn's files, per the design), but only durably: if
+    # either git operation below fails, the append is rolled back so a
+    # CommitFailure can never leave a logged turn with no matching commit.
+    log_before = log.read_text(encoding="utf-8") if log.exists() else None
     append_jsonl(log, rec.to_json())
     to_stage = sorted(p for p in delta(pre_status, snapshot(repo_root)) if _stageable(p))
     added = _run(repo_root, "git", "add", "--", *to_stage)
     if added.returncode != 0:
+        _restore_log(log, log_before)
         raise CommitFailure(
             f"git add failed for {brief.turn_id}: {added.stderr.strip()[:400]}"
         )
@@ -288,6 +325,7 @@ def record(
         f"turn: {brief.turn_id} {brief.kind} {brief.target or '-'} {outcome}",
     )
     if committed.returncode != 0:
+        _restore_log(log, log_before)
         raise CommitFailure(
             f"git commit failed for {brief.turn_id}: {committed.stderr.strip()[:400]}"
         )

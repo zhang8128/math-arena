@@ -7,7 +7,10 @@ TIMELOOP = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TIMELOOP))
 
 from driver.brief import (  # noqa: E402
+    ALLOWED_WRITES,
+    BRIEF_WRITE_SET,
     RESULT_SCHEMA,
+    _ledger_block,
     honesty_rules,
     render_brief,
     template_digest,
@@ -59,7 +62,6 @@ def test_render_attack_brief_has_every_section() -> None:
         "lychrel-bases",
         "Treat reverse-and-add as a finite carry transducer",
         "ruled out:",
-        "T25 |",
         "begin with `T99 | `",
         "30 minutes",
         '"additionalProperties": false',
@@ -68,6 +70,29 @@ def test_render_attack_brief_has_every_section() -> None:
     ):
         assert needle in text, needle
     assert len(text) < 12_000
+    # The template keeps only the last three ledger lines for a target, so
+    # pinning a literal turn id (e.g. "T25 |") goes red the moment a fourth
+    # productive lychrel-bases turn lands. Assert the shape instead: some
+    # ledger history was found, and every line found is actually about this
+    # target.
+    ledger_block = _ledger_block(b, s)
+    assert ledger_block and ledger_block != "(no ledger lines mention this target yet)"
+    for line in ledger_block.split("\n\n"):
+        assert "lychrel-bases" in line, line
+
+
+def test_brief_write_set_hides_driver_results_but_enforcement_keeps_it() -> None:
+    """Cheap fix: a model that honestly declares a write under
+    .timeloop/driver/results/ would fail `validate`'s files_mismatch check,
+    since that path is driver-owned and excluded from the comparison. The
+    brief must not invite the write; recorder.py's enforcement (ALLOWED_WRITES)
+    is untouched."""
+    assert ".timeloop/driver/results/" not in BRIEF_WRITE_SET
+    assert ".timeloop/driver/results/" in ALLOWED_WRITES
+    s = load_state(TIMELOOP)
+    b = Brief("T99", "attack", "lychrel-bases", (), None, None, False, "")
+    text = render_brief(b, s, DriverConfig(), TIMELOOP)
+    assert ".timeloop/driver/results/" not in text
 
 
 def test_render_forage_and_adversarial_briefs() -> None:

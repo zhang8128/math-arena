@@ -155,7 +155,9 @@ def run_loop(
     started = time.monotonic()
     consecutive_invalid = 0
     done = 0
-    turn_index = len([t for t in read_jsonl(turns_log) if "turn_id" in t]) + 1
+    turn_index = (
+        len([t for t in read_jsonl(turns_log) if "turn_id" in t and "event" not in t]) + 1
+    )
     code = 0
 
     def halt(reason: str) -> None:
@@ -183,7 +185,8 @@ def run_loop(
             (root / "driver" / "briefs" / f"{brief.turn_id}.md").write_text(text, encoding="utf-8")
             heartbeat(root, brief)
             before = snapshot(repo_root)   # what the model is answerable for
-            ledger_before = (root / "ledger.md").read_text(encoding="utf-8")
+            ledger_path = root / "ledger.md"
+            ledger_before = ledger_path.read_text(encoding="utf-8") if ledger_path.exists() else ""
             started_iso = _now()
             frames = " ".join(brief.frames)
             head = f"[{started_iso}] {brief.turn_id} {brief.kind} {brief.target or '-'} {frames}"
@@ -208,7 +211,9 @@ def run_loop(
             done += 1
             turn_index += 1
             heartbeat(root, None)
-            if run.error in ("usage_limit", "auth"):
+            if run.error in ("usage_limit", "auth", "missing_executable"):
+                # Retrying cannot help any of these: the window is spent, the
+                # session is unauthenticated, or the binary simply isn't there.
                 halt(run.error)
                 code = 4
                 break
