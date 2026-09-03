@@ -13,6 +13,7 @@ sys.path.insert(0, str(TIMELOOP))
 
 from driver.dispatcher import Brief  # noqa: E402
 from driver.recorder import (  # noqa: E402
+    CommitFailure,
     ExamFailure,
     Hooks,
     delta,
@@ -254,3 +255,41 @@ def test_record_lint_failure_and_exam_failure(tmp_path: Path) -> None:
             now, now, lb, "t", stub_hooks(exam_ok=False),
         )
     assert git(repo, "log", "--format=%s", "-1").strip().startswith("turn: T2")
+
+
+def test_model_edit_to_driver_code_is_reverted_not_committed(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    (repo / ".timeloop" / "driver" / "dispatcher.py").write_text("original\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "driver code")
+    pre = snapshot(repo)
+    before = snapshot(repo)
+    lb = (repo / ".timeloop" / "ledger.md").read_text()
+    (repo / ".timeloop" / "driver" / "dispatcher.py").write_text("model tampered\n")
+    rec = record(
+        repo, brief(), "brief", result("nothing", None, []),
+        pre, before, lb, "t", stub_hooks(),
+    )
+    assert (repo / ".timeloop" / "driver" / "dispatcher.py").read_text() == "original\n"
+    assert (
+        ".timeloop/driver/dispatcher.py"
+        not in git(repo, "show", "--name-only", "--format=", "HEAD").split()
+    )
+    assert rec.outcome == "nothing"
+
+
+def test_commit_failure_raises(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    pre = snapshot(repo)
+    before = snapshot(repo)
+    lb = (repo / ".timeloop" / "ledger.md").read_text()
+    (repo / ".timeloop" / "notebook" / "a.md").write_text("## STATUS\nopen\n")
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    with pytest.raises(CommitFailure):
+        record(
+            repo, brief(), "brief",
+            result("nothing", None, [".timeloop/notebook/a.md"]),
+            pre, before, lb, "t", stub_hooks(),
+        )

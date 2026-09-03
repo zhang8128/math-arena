@@ -26,6 +26,10 @@ class ExamFailure(RuntimeError):
     """The blind exam failed after this turn; later verdicts cannot be trusted."""
 
 
+class CommitFailure(RuntimeError):
+    """A turn's git add or commit operation failed."""
+
+
 @dataclasses.dataclass(frozen=True)
 class Hooks:
     lint: Callable[[], list[str]]
@@ -95,10 +99,25 @@ def is_allowed(path: str) -> bool:
     return any(path == a or (a.endswith("/") and path.startswith(a)) for a in ALLOWED_WRITES)
 
 
+DRIVER_OWNED_PREFIXES = (".timeloop/driver/results/", ".timeloop/driver/briefs/")
+DRIVER_OWNED_FILES = (".timeloop/driver/turns.jsonl",)
+
+
+def is_driver_owned(path: str) -> bool:
+    """Paths the dispatcher and recorder write themselves.
+
+    Deliberately narrow: a turn that edits the driver's own code must be
+    reverted like any other disallowed write, not waved through by prefix.
+    """
+    return path in DRIVER_OWNED_FILES or path.startswith(DRIVER_OWNED_PREFIXES)
+
+
 def revert(repo_root: Path, paths: set[str]) -> None:
     if not paths:
         return
-    tracked = _run(repo_root, "git", "ls-files", "--", *sorted(paths)).stdout.split()
+    tracked = set(
+        _run(repo_root, "git", "ls-files", "-z", "--", *sorted(paths)).stdout.split("\0")
+    ) - {""}
     for p in sorted(paths):
         if p in tracked:
             _run(repo_root, "git", "checkout", "--", p)
@@ -127,7 +146,7 @@ def validate(
     if outcome == "verified" and brief.kind != "adversarial":
         return ("invalid", "verified_outside_adversarial", refinement)
     claimed = {str(p) for p in s.get("files_changed", [])}  # type: ignore[attr-defined]
-    turn_delta = {p for p in delta_paths if is_allowed(p) and not p.startswith(".timeloop/driver/")}
+    turn_delta = {p for p in delta_paths if is_allowed(p) and not is_driver_owned(p)}
     if claimed != turn_delta:
         return ("invalid", "files_mismatch", refinement)
     if outcome in PRODUCTIVE:
@@ -182,7 +201,7 @@ STAGEABLE_EXTRA = (".timeloop/frames.jsonl", ".timeloop/index.md", ".timeloop/po
 
 
 def _stageable(path: str) -> bool:
-    return is_allowed(path) or path.startswith(".timeloop/driver/") or path in STAGEABLE_EXTRA
+    return is_allowed(path) or is_driver_owned(path) or path in STAGEABLE_EXTRA
 
 
 def record(
@@ -203,7 +222,7 @@ def record(
     model_delta = delta(before_status, after)
     revert(
         repo_root,
-        {p for p in model_delta if not is_allowed(p) and not p.startswith(".timeloop/driver/")},
+        {p for p in model_delta if not is_allowed(p) and not is_driver_owned(p)},
     )
     ledger_path = tl / "ledger.md"
     ledger_after = ledger_path.read_text(encoding="utf-8") if ledger_path.exists() else ""
@@ -245,7 +264,7 @@ def record(
             str(s["ledger_line"]) if outcome in PRODUCTIVE and s.get("ledger_line") else None
         ),
         files_changed=tuple(sorted(
-            p for p in model_delta if is_allowed(p) and not p.startswith(".timeloop/driver/")
+            p for p in model_delta if is_allowed(p) and not is_driver_owned(p)
         )),
         frames_filed=tuple(filed),
         started=started_iso,
@@ -259,11 +278,19 @@ def record(
     )
     append_jsonl(log, rec.to_json())
     to_stage = sorted(p for p in delta(pre_status, snapshot(repo_root)) if _stageable(p))
-    _run(repo_root, "git", "add", "--", *to_stage)
-    _run(
+    added = _run(repo_root, "git", "add", "--", *to_stage)
+    if added.returncode != 0:
+        raise CommitFailure(
+            f"git add failed for {brief.turn_id}: {added.stderr.strip()[:400]}"
+        )
+    committed = _run(
         repo_root, "git", "commit", "-q", "-m",
         f"turn: {brief.turn_id} {brief.kind} {brief.target or '-'} {outcome}",
     )
+    if committed.returncode != 0:
+        raise CommitFailure(
+            f"git commit failed for {brief.turn_id}: {committed.stderr.strip()[:400]}"
+        )
     if not exam_ok:
         raise ExamFailure(f"blind exam failed after {brief.turn_id}")
     return rec
