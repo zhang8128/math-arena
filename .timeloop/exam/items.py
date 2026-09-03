@@ -152,6 +152,83 @@ def item_persistence_published():
             f"mismatch (b,got,want)={bad}" if bad else "matches published bases 3-12")
 
 
+# ─────────────────────────── level 1: the driver ──────────────────────────────
+# The driver grades its own turns. These items check its two load-bearing
+# numbers with code that shares nothing with driver/.
+
+def item_driver_yield_independent():
+    """Yield from turns.jsonl recomputed by a one-liner must equal status.py."""
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    log = root / "driver" / "turns.jsonl"
+    if not log.exists():
+        return ("driver/yield-independent", 1, True, "no driver turns yet")
+    rows = [json.loads(line) for line in log.read_text().splitlines()
+            if line.strip()]
+    real = [r for r in rows if "turn_id" in r]
+    good = {"negative", "structure", "correction", "verified",
+            "counterexample", "frames"}
+    mine = (len(real), sum(r["outcome"] in good for r in real))
+    sys.path.insert(0, str(root))
+    from driver.status import yield_report
+    theirs = yield_report(rows)["all"]
+    ok = mine == (theirs["turns"], theirs["productive"])
+    return ("driver/yield-independent", 1, ok,
+            f"independent {mine} vs status {theirs}")
+
+
+def item_driver_rotation_cap():
+    """200 simulated turns must never put more than 3 consecutive on one
+    target."""
+    import random
+    import tempfile
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
+    from driver.config import DriverConfig
+    from driver.dispatcher import apply_stalls, select, unpark
+    from driver.state import append_jsonl, load_state
+    with tempfile.TemporaryDirectory() as td:
+        tl = Path(td) / ".timeloop"
+        (tl / "driver").mkdir(parents=True)
+        (tl / "notebook").mkdir()
+        (tl / "pool.jsonl").write_text(
+            root.joinpath("pool.jsonl").read_text())
+        (tl / "frames.jsonl").write_text(
+            root.joinpath("frames.jsonl").read_text())
+        (tl / "ledger.md").write_text("T0 | seed | nothing | x\n")
+        cfg = DriverConfig(seed=11)
+        rng = random.Random(11)
+        worst = 0
+        run_target, run_len = None, 0
+        for i in range(1, 201):
+            state = apply_stalls(tl, load_state(tl), cfg, i)
+            b = select(state, cfg, i)
+            if b.revive and b.target:
+                unpark(tl, b.target)
+            if b.kind in ("attack", "combine"):
+                run_len = run_len + 1 if b.target == run_target else 1
+                run_target = b.target
+                worst = max(worst, run_len)
+            outcome = (
+                rng.choice(["negative", "nothing", "nothing", "structure"])
+                if b.kind in ("attack", "combine")
+                else ("frames" if b.kind.startswith("forage") else "nothing")
+            )
+            append_jsonl(
+                tl / "driver" / "turns.jsonl",
+                {"turn_id": b.turn_id, "kind": b.kind, "target": b.target,
+                 "frames": list(b.frames), "outcome": outcome,
+                 "refinement": False, "ledger_line": None,
+                 "files_changed": [], "frames_filed": [], "started": "",
+                 "seconds": 0.0, "base_commit": "", "exit_reason": "completed",
+                 "invalid_reason": None, "brief_digest": "",
+                 "template_digest": ""})
+        return ("driver/rotation-cap", 1, worst <= 3,
+                f"longest consecutive run on one target: {worst}")
+
+
 # ───────────────────────────── level 2: TRAP items ─────────────────────────────
 # These test the arena's characteristic failure, not its mathematics.
 
@@ -240,6 +317,8 @@ ITEMS = [
     item_digitmap_independent,
     item_kaprekar_published,
     item_persistence_published,
+    item_driver_yield_independent,
+    item_driver_rotation_cap,
     item_trap_exhaustion,
     item_trap_argmax_at_ceiling,
     item_trap_comment_is_not_code,
