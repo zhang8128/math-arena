@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# One command: run the time loop room autonomously through headless Claude Code.
+#   bin/research [--max-turns N] [--max-hours H]   run in the foreground under caffeinate
+#   bin/research status                              read-only, from any terminal
+#   bin/research stop                                SIGTERM the running researcher
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$ROOT"
+export PYTHONPATH="$ROOT/.timeloop${PYTHONPATH:+:$PYTHONPATH}"
+
+case "${1:-run}" in
+  status|stop)
+    exec uv run --frozen python -m driver.loop "$1"
+    ;;
+  run|--*)
+    [ "${1:-}" = "run" ] && shift
+    command -v claude >/dev/null || { echo "claude CLI not on PATH" >&2; exit 2; }
+    claude auth status >/dev/null 2>&1 || { echo "claude is not logged in; run: claude auth login" >&2; exit 2; }
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git repository" >&2; exit 2; }
+    [ -f .timeloop/frames.jsonl ] || { echo ".timeloop/frames.jsonl missing" >&2; exit 2; }
+    blocked="$(git status --porcelain --untracked-files=all \
+      | awk '{ $1=""; sub(/^ /, ""); print }' \
+      | grep -Ev '^(\.timeloop/(ledger\.md|notebook/|pool\.jsonl|lib/|runs/|tests/|lean/arena/|driver/)|\.superpowers/)' \
+      || true)"
+    if [ -n "$blocked" ]; then
+      echo "refusing to start: uncommitted changes outside the driver's write set." >&2
+      echo "A turn that touches one of these would revert it to HEAD, losing your work." >&2
+      echo "Commit, stash, or discard them first:" >&2
+      echo "$blocked" | head -20 >&2
+      exit 2
+    fi
+    .timeloop/bin/lint --index >/dev/null
+    exec caffeinate -i uv run --frozen python -m driver.loop run "$@"
+    ;;
+  *)
+    echo "usage: bin/research [run] [--max-turns N] [--max-hours H] | status | stop" >&2
+    exit 2
+    ;;
+esac
